@@ -778,7 +778,8 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
             apiResult = JY5320_AI_SetSampleRate(deviceHandle_, operation.sampleRate, nullptr);
             if (apiResult == Success) {
                 apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Single);
-                if (apiResult == Success) {                    unsigned char channels[] = {(unsigned char)operation.channel};
+                if (apiResult == Success) {                    
+                    unsigned char channels[] = {(unsigned char)operation.channel};
                     double lowRegion[] = {-10.0};
                     double highRegion[] = {10.0};
                     JY5320_AI_BandWidth bandwidth[] = {JY5320_AI_BandWidth_25K};
@@ -813,7 +814,8 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
                 stopAcquisition();
             }
             result.success = !acquisitionActive_;
-            break;        case DeviceCommand::READ_DATA:
+            break;        
+        case DeviceCommand::READ_DATA:
             // 读取数据 - 需要先启动采集
             {
                 // 确保通道已配置

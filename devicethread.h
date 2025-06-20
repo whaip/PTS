@@ -52,6 +52,14 @@ struct DeviceOperation {
     QString syncGroup;
     int syncDelay = 0;  // 微秒级延迟
     
+    // 数据采集相关参数
+    int samplesPerChannel = 1000;       // 每通道采样点数
+    QVector<int> channels;              // 多通道采集的通道列表
+    QString acquisitionMode = "single"; // "single", "multi", "continuous"
+    double inputRangeMin = -10.0;       // 输入范围最小值
+    double inputRangeMax = 10.0;        // 输入范围最大值
+    bool useCallback = false;           // 是否使用回调方式获取数据
+    
     DeviceOperation(DeviceCommand cmd = DeviceCommand::INITIALIZE) : command(cmd) {}
 };
 
@@ -189,6 +197,13 @@ public:
     explicit DAQDeviceThread(const QString& deviceName, int slot, QObject* parent = nullptr);
     ~DAQDeviceThread();
     
+    // 数据采集模式枚举
+    enum class AcquisitionMode {
+        SINGLE_POINT,    // 单点采集
+        MULTI_POINT,     // 多点采集 (有限采样)
+        CONTINUOUS       // 连续采集
+    };
+    
 protected:
     bool initializeDevice() override;
     void shutdownDevice() override;
@@ -202,10 +217,36 @@ private:
     double currentSampleRate_;
     bool acquisitionActive_;
     
+    // 数据采集相关
+    AcquisitionMode currentMode_;
+    int samplesPerChannel_;
+    QVector<double> dataBuffer_;
+    QTimer* dataFetchTimer_;
+    int enabledChannelCount_;
+    QVector<int> enabledChannels_;
+    
+    // 回调和数据处理
+    void processMultiPointData();
+    bool checkBufferStatus(unsigned long long& availableSamples, bool& overRun);
+    
     // 触发相关
     void setupTrigger();
     void startAcquisition();
     void stopAcquisition();
+    
+    // 数据采集方法
+    DeviceResult performSinglePointAcquisition(const DeviceOperation& operation);
+    DeviceResult configureMultiPointAcquisition(const DeviceOperation& operation);
+    DeviceResult startMultiPointAcquisition(const DeviceOperation& operation);
+    DeviceResult stopMultiPointAcquisition();
+    DeviceResult readMultiPointData(const DeviceOperation& operation);
+    
+private slots:
+    void onDataFetchTimer();
+    
+signals:
+    void multiPointDataReady(const QString& deviceName, const QVector<QVector<double>>& channelData);
+    void dataBufferUpdated(const QString& deviceName, const QVariantMap& bufferInfo);
 };
 
 // DMM设备线程 (JY8902)
