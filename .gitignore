@@ -1,0 +1,15 @@
+.vscode/
+5320/
+5711/
+8902/
+bin/
+build/
+debug/
+JYDevice/
+release/
+lib/
+.qmake.stash
+*.pro.user
+*.pro.user.*
+Makefile
+*.o
