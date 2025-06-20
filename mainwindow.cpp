@@ -23,9 +23,9 @@ MainWindow::MainWindow(QWidget *parent)
     , camera_control_(nullptr)
     , pcb_analyzer_(nullptr)
     , history_widget_(nullptr)
-    , detection_manager_(nullptr)
-    , board_management_widget_(nullptr)
+    , detection_manager_(nullptr)    , board_management_widget_(nullptr)
     , board_manager_(nullptr)
+    , device_test_window_(nullptr)  // 新增：设备管理器测试窗口
     , status_timer_(new QTimer(this))
     , wiring_resource_manager_(nullptr)
     , current_wiring_dialog_(nullptr)
@@ -172,9 +172,16 @@ MainWindow::~MainWindow()
     // 清理检测历史管理窗口
     if (history_widget_) {
         disconnect(history_widget_, nullptr, this, nullptr);
-        history_widget_->close();
-        history_widget_->deleteLater();
+        history_widget_->close();        history_widget_->deleteLater();
         history_widget_ = nullptr;
+    }
+    
+    // 清理设备管理器测试窗口
+    if (device_test_window_) {
+        disconnect(device_test_window_, nullptr, this, nullptr);
+        device_test_window_->close();
+        device_test_window_->deleteLater();
+        device_test_window_ = nullptr;
     }
     
     // 关闭设备管理器
@@ -439,8 +446,9 @@ void MainWindow::setupMenuBar()
     file_menu->addAction("退出", this, &QWidget::close);
       // 系统菜单
     QMenu* system_menu = menu_bar->addMenu("系统");
-    system_menu->addAction("初始化设备", this, &MainWindow::initializeSystem);
-    system_menu->addAction("关闭设备", this, &MainWindow::shutdownSystem);
+    system_menu->addAction("初始化设备", this, &MainWindow::initializeSystem);    system_menu->addAction("关闭设备", this, &MainWindow::shutdownSystem);
+    system_menu->addSeparator();
+    system_menu->addAction("设备管理器测试", this, &MainWindow::openDeviceManagerTest);
     system_menu->addSeparator();
     system_menu->addAction("接线引导", this, &MainWindow::startWiringGuide);
     
@@ -1212,10 +1220,29 @@ void MainWindow::openBoardManagement()
     if (!board_management_widget_) {
         return;
     }
-    
-    board_management_widget_->show();
+      board_management_widget_->show();
     board_management_widget_->raise();
     board_management_widget_->activateWindow();
+}
+
+void MainWindow::openDeviceManagerTest()
+{
+    if (!device_test_window_) {
+        device_test_window_ = new DeviceManagerTestWindow(device_manager_, this);
+        device_test_window_->setAttribute(Qt::WA_DeleteOnClose, false);
+        
+        // 连接信号，当测试窗口关闭时重置指针
+        connect(device_test_window_, &QWidget::destroyed, this, [this]() {
+            device_test_window_ = nullptr;
+        });
+    }
+    
+    // 设置为独立窗口并显示
+    device_test_window_->setWindowTitle("设备管理器测试");
+    device_test_window_->setMinimumSize(800, 600);
+    device_test_window_->show();
+    device_test_window_->raise();
+    device_test_window_->activateWindow();
 }
 
 // 新增：接线引导相关槽函数实现

@@ -38,6 +38,7 @@
 #include "pcbdetectionmanager.h"
 #include "pcbboardmanagementwidget.h"
 #include "pcbboardmanager.h"
+#include "devicemanagertestwindow.h"
 // 新增：接线引导相关包含
 #include "WiringGuide/wiringguidedialog.h"
 #include "WiringGuide/wiringresource.h"
@@ -77,8 +78,9 @@ private slots:
     void openPCBIdentification();  // 新增：打开PCB识别界面
     void openCameraControl();      // 新增：打开相机控制界面
     void openPCBAnalyzer();         // 新增：打开PCB综合分析器
-    void openDetectionHistory();    // 新增：打开检测历史管理
+    void openDetectionHistory();    // 新增：打开检测历史管理    
     void openBoardManagement();
+    void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
     void startWiringGuide();        // 开始接线引导
     void onWiringCompleted(const WiringConfiguration& config);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
@@ -94,9 +96,10 @@ private:
     CameraControlWidget* camera_control_;     // 新增：相机控制组件
     RealtimePCBAnalyzerWidget* pcb_analyzer_; // 新增：PCB综合分析器
     PCBDetectionHistoryWidget* history_widget_; // 新增：检测历史管理窗口
-    PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器
+    PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器    
     PCBBoardManagementWidget* board_management_widget_; // 新增：PCB板卡管理窗口
     PCBBoardManager* board_manager_;            // 新增：PCB板卡管理器
+    DeviceManagerTestWindow* device_test_window_;  // 新增：设备管理器测试窗口
     QTimer* status_timer_;
     
     // 新增：接线引导相关成员

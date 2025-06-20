@@ -330,11 +330,73 @@ bool AODeviceThread::initializeDevice()
         qDebug() << "Failed to open JY5711 AO device, error:" << result;
         return false;
     }
+
+    return true;
+}
+
+bool AODeviceThread::initializeChannel()
+{
+    shutdownDevice();
+    int32_t result = JY5710_Open(0, &deviceHandle_);
+    if (result != Success) {
+        qDebug() << "Failed to open JY5711 AO device, error:" << result;
+        return false;
+    }
+
+    // 初始化后将所有端口输出设置为0V，防止保留上次的输出值
+    qDebug() << "Resetting all AO channels to 0V...";
+    
+    // 设置所有32个通道为0V输出
+    const int maxChannels = 32;
+    std::vector<unsigned char> channels(maxChannels);
+    std::vector<double> lowRanges(maxChannels, -10.0);
+    std::vector<double> highRanges(maxChannels, 10.0);
+    std::vector<double> zeroValues(maxChannels, 0.0);
+    
+    // 准备通道数组 (0-31)
+    for (int i = 0; i < maxChannels; i++) {
+        channels[i] = static_cast<unsigned char>(i);
+    }
+      // 启用所有通道
+    result = JY5710_AO_EnableChannel(deviceHandle_, maxChannels,
+                                   channels.data(), lowRanges.data(), highRanges.data());
+    if (result != Success) {
+        qDebug() << "Warning: Failed to enable all channels for reset, error:" << result;
+        return false;
+    }
+    
+    // 设置为单点输出模式
+    result = JY5710_AO_SetMode(deviceHandle_, JY5710_AO_Single);
+    if (result != Success) {
+        qDebug() << "Warning: Failed to set single output mode, error:" << result;
+        return false;
+    }
+    
+    // 先启动任务以激活单点输出模式
+    result = JY5710_AO_Start(deviceHandle_);
+    if (result != Success) {
+        qDebug() << "Warning: Failed to start AO task, error:" << result;
+        return false;
+    }
+    
+    // 写入0值到所有通道 - 使用单点写入接口
+    for (int i = 0; i < maxChannels; i++) {
+        double zeroValue = 0.0;
+        result = JY5710_AO_WriteSinglePoint(deviceHandle_, &zeroValue, i);
+        if (result != Success) {
+            qDebug() << "Warning: Failed to write zero value to channel" << i << ", error:" << result;
+        }
+    }
+    
+    qDebug() << "Successfully reset all" << maxChannels << "channels to 0V using single-point output";
+    
+    // 清空通道状态记录
+    channelStates_.clear();
+    enabledChannels_.clear();
     
     qDebug() << "JY5711 AO device initialized successfully";
     return true;
 }
-
 void AODeviceThread::shutdownDevice()
 {
     if (deviceHandle_) {
@@ -359,14 +421,9 @@ DeviceResult AODeviceThread::executeOperation(const DeviceOperation& operation)
     switch (operation.command) {        
         case DeviceCommand::INITIALIZE:
             // Check if already initialized
-            if (deviceHandle_) {
-                result.success = true;
-                qDebug() << "AO device already initialized";
-            } else {
-                result.success = initializeDevice();
-                if (!result.success) {
-                    result.error = "Failed to initialize AO device";
-                }
+            result.success = initializeChannel();
+            if (!result.success) {
+                result.error = "Failed to initialize AO device";
             }
             return result;
             
@@ -430,6 +487,7 @@ DeviceResult AODeviceThread::configureChannelWithRestart(const DeviceOperation& 
     
     qDebug() << "Configuring AO channel with device restart...";
     
+    initializeChannel();
     // 1. 关闭当前设备
     shutdownDevice();
     QThread::msleep(100);

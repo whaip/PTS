@@ -18,6 +18,7 @@
 #include <QElapsedTimer>
 #include <QCoreApplication>
 #include <memory>
+#include <vector>
 #include "include/JY5320Core.h"
 #include "include/JY5710.h"
 #include "include/JY8902.h"
@@ -171,6 +172,8 @@ private:
     JY5710_DeviceHandle deviceHandle_;
     QMap<int, double> channelStates_;  // 记录各通道状态
     QSet<int> enabledChannels_;        // 记录已启用的通道
+
+    bool initializeChannel();
     
     // 新增的波形配置和输出方法
     DeviceResult configureChannelWithRestart(const DeviceOperation& operation);

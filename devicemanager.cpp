@@ -350,7 +350,7 @@ bool DeviceManager::outputVoltageAsync(int channel, double voltage, int timeout_
     operation.channel = channel;
     operation.value = voltage;
     operation.timeout = timeout_ms;
-    
+
     if (!submitOperation("JY5711", operation)) {
         setError("Failed to submit voltage output operation to JY5711 device");
         return false;

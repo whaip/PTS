@@ -37,12 +37,13 @@ win32 {
     LIBS += -lonnxruntime
 }
 
-SOURCES += \
+SOURCES += \    
     main.cpp \
     mainwindow.cpp \
     devicemanager.cpp \
     devicethread.cpp \
-    faultdiagnostic.cpp \
+    devicemanagertestwindow.cpp \
+    faultdiagnostic.cpp\
     testsequencemanager.cpp \
     resultexporter.cpp \
     pcbidentifier.cpp \
@@ -72,7 +73,8 @@ HEADERS += \
     mainwindow.h \
     devicemanager.h \
     devicethread.h \
-    faultdiagnostic.h \
+    devicemanagertestwindow.h \
+    faultdiagnostic.h\
     testsequencemanager.h \
     resultexporter.h \
     pcbidentifier.h \
