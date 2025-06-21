@@ -34,7 +34,8 @@ DiagnosticResult FaultDiagnostic::diagnoseComponent(const ComponentSpec& compone
     
     DiagnosticResult result;
     result.componentId = component.reference;
-    result.componentType = QString::number(static_cast<int>(component.type));    if (!device_manager_ || !device_manager_->isSystemReady()) {
+    result.componentType = QString::number(static_cast<int>(component.type));    
+    if (!device_manager_ || !device_manager_->isSystemReady()) {
         result.result = DiagnosticResult::ERROR;
         result.faultTypes.append("UNKNOWN_FAULT");
         result.notes = "测试系统未就绪";

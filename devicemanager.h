@@ -12,6 +12,7 @@
 #include <QMutex>
 #include <vector>
 #include <memory>
+#include <QEventLoop>
 
 // 设备状态枚举
 enum class DeviceStatus {
@@ -29,6 +30,13 @@ class DeviceManager : public QObject
 public:
     explicit DeviceManager(QObject *parent = nullptr);
     ~DeviceManager();
+
+    struct WaitResult {
+    bool success = false;
+    bool timeout = false;
+    int attempts = 0;
+    QString errorMessage;
+    };
 
     // 设备线程管理
     bool initializeDeviceThreads();
@@ -53,21 +61,67 @@ public:
     bool measureCurrent(int channel, double& result, int timeout_ms = 5000);
     bool measureResistance(double& result, int timeout_ms = 5000);
     bool outputVoltage(int channel, double voltage);
-      // 异步测量接口
-    bool measureVoltageAsync(const QString& deviceName, int channel, double& result, int timeout_ms = 5000);
-    bool measureCurrentAsync(double& result, int timeout_ms = 5000);
-    bool measureResistanceAsync(double& result, int timeout_ms = 5000);
-    bool outputVoltageAsync(int channel, double voltage, int timeout_ms = 5000);
     
-    // DMM配置接口
+    // 数据采集接口 - 单点采集
+    bool singlePointAcquisition(const QString& deviceName, int channel, double& result, 
+                               double rangeMin = -10.0, double rangeMax = 10.0, int timeout_ms = 5000);
+    bool singlePointAcquisition(const QString& deviceName, const QVector<int>& channels, 
+                               QVector<double>& results, double rangeMin = -10.0, double rangeMax = 10.0, int timeout_ms = 5000);
+    
+    // 数据采集接口 - 多点采集  
+    bool configureMultiPointAcquisition(const QString& deviceName, const QVector<int>& channels,
+                                       double sampleRate, int samplesPerChannel,
+                                       double rangeMin = -10.0, double rangeMax = 10.0);
+    bool startMultiPointAcquisition(const QString& deviceName);
+    bool readMultiPointData(const QString& deviceName, QVector<QVector<double>>& channelData, int timeout_ms = 5000);
+    bool stopMultiPointAcquisition(const QString& deviceName);
+    
+    // 数据采集接口 - 连续采集
+    bool configureContinuousAcquisition(const QString& deviceName, const QVector<int>& channels,
+                                       double sampleRate, int bufferSize = 10000,
+                                       double rangeMin = -10.0, double rangeMax = 10.0);
+    bool startContinuousAcquisition(const QString& deviceName);
+    bool readContinuousData(const QString& deviceName, QVector<QVector<double>>& channelData, 
+                           int keepSamples = 0, int timeout_ms = 1000);
+    bool stopContinuousAcquisition(const QString& deviceName);
+    
+    // 高级采集接口
+    bool configureAcquisition(const QString& deviceName, const QString& mode,
+                             const QVector<int>& channels, double sampleRate,
+                             int samplesPerChannel = 1000, double rangeMin = -10.0, double rangeMax = 10.0,
+                             int bufferSize = 10000);
+    
+    // 数据采集状态查询
+    bool isAcquisitionActive(const QString& deviceName);
+    QVariantMap getAcquisitionStatus(const QString& deviceName);
+    QVector<QString> getDAQDevices() const;
+    
+    // 采集数据导出
+    bool exportAcquisitionData(const QVector<QVector<double>>& channelData, 
+                              const QVector<int>& channels, const QString& fileName,
+                              const QString& format = "csv");
+    
+    // 实用工具方法
+    QString acquisitionModeToString(const QString& mode) const;
+    QStringList getSupportedAcquisitionModes() const;
+    
+    // DMM配置方法
     bool configureDMMForVoltage(int timeout_ms = 5000);
     bool configureDMMForCurrent(int timeout_ms = 5000);
     bool configureDMMForResistance(int timeout_ms = 5000);
     bool configureDMMForDiodeTest(int timeout_ms = 5000);
-    
-    // 设备可用性检查
-    bool checkDeviceAvailability();
-    QStringList getUnavailableDevices();
+
+    // 同步测试方法（简化版本用于测试）
+    bool testSynchronizedOutputAndAcquisition(double sineFreq = 1000.0, double sineAmplitude = 4.0, 
+                                            double sampleRate = 10000.0, int samplesPerChannel = 1000,
+                                            int timeout_ms = 15000);
+
+    // 通用的事件循环等待方法
+    WaitResult waitForDataWithEventLoop(const QString& deviceName, 
+                                       QVector<QVector<double>>& channelData,
+                                       int maxAttempts = 50,
+                                       int checkInterval = 100,
+                                       int timeout = 5000);
 
     QString getLastError() const { return last_error_; }
 
@@ -99,7 +153,17 @@ private:
     void setError(const QString& error);
     void initializeStatusMonitoring();
     DeviceStatus convertToStatus(bool ready) const;
-
+    
+    // 设备可用性检查
+    bool checkDeviceAvailability();
+    QStringList getUnavailableDevices();
+    
+    // 异步操作方法
+    bool measureVoltageAsync(const QString& deviceName, int channel, double& result, int timeout_ms = 5000);
+    bool measureCurrentAsync(double& result, int timeout_ms = 5000);
+    bool measureResistanceAsync(double& result, int timeout_ms = 5000);
+    bool outputVoltageAsync(int channel, double voltage, int timeout_ms = 5000);
+    
 private slots:
     void checkDeviceStatus();
 };

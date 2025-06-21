@@ -712,7 +712,17 @@ DAQDeviceThread::DAQDeviceThread(const QString& deviceName, int slot, QObject* p
     , slotNumber_(slot)
     , currentSampleRate_(1000.0)
     , acquisitionActive_(false)
+    , currentMode_(AcquisitionMode::SINGLE_POINT)
+    , samplesPerChannel_(1000)
+    , enabledChannelCount_(0)
+    , bufferWriteIndex_(0)
+    , bufferOverrun_(false)
+    , accumulatedSamples_(0)
 {
+    // 初始化数据获取定时器
+    dataFetchTimer_ = new QTimer(this);
+    connect(dataFetchTimer_, &QTimer::timeout, this, &DAQDeviceThread::onDataFetchTimer);
+    dataFetchTimer_->setInterval(100); // 100ms间隔检查数据
 }
 
 DAQDeviceThread::~DAQDeviceThread()
@@ -723,12 +733,15 @@ DAQDeviceThread::~DAQDeviceThread()
 bool DAQDeviceThread::initializeDevice()
 {
     int32_t result = JY5320_Open(slotNumber_, &deviceHandle_);
-    if (result != Success) {
-        qDebug() << "Failed to open" << deviceName_ << "device, error:" << result;
+    if (result != 0) {
+        qDebug() << "Failed to open" << deviceName_ << "device on slot" << slotNumber_ << ", error:" << result;
         return false;
     }
     
-    qDebug() << deviceName_ << "device initialized successfully";
+    // 设置设备属性
+    JY5320_SetDeviceProperty(deviceHandle_, JY5320_Independent);
+    
+    qDebug() << deviceName_ << "device initialized successfully on slot" << slotNumber_;
     return true;
 }
 
@@ -736,11 +749,16 @@ void DAQDeviceThread::shutdownDevice()
 {
     if (deviceHandle_) {
         if (acquisitionActive_) {
-            JY5320_AI_Stop(deviceHandle_);
-            acquisitionActive_ = false;
+            stopAcquisition();
         }
+        
+        if (dataFetchTimer_->isActive()) {
+            dataFetchTimer_->stop();
+        }
+        
         JY5320_Close(deviceHandle_);
         deviceHandle_ = nullptr;
+        qDebug() << deviceName_ << "device shutdown completed";
     }
 }
 
@@ -748,15 +766,13 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
 {
     DeviceResult result;
     
-    if (!deviceHandle_) {
+    if (!deviceHandle_ && operation.command != DeviceCommand::INITIALIZE) {
         result.error = "Device not initialized";
         return result;
     }
     
-    int32_t apiResult = 0;
       switch (operation.command) {        
         case DeviceCommand::INITIALIZE:
-            // Check if already initialized
             if (deviceHandle_) {
                 result.success = true;
                 qDebug() << "DAQ device" << deviceName_ << "already initialized";
@@ -766,101 +782,102 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
                     result.error = "Failed to initialize DAQ device";
                 }
             }
-            return result;
+            break;
             
         case DeviceCommand::SHUTDOWN:
             shutdownDevice();
             result.success = true;
-            return result;
+            break;
             
         case DeviceCommand::CONFIGURE_CHANNEL:
-            // 配置AI通道
-            apiResult = JY5320_AI_SetSampleRate(deviceHandle_, operation.sampleRate, nullptr);
-            if (apiResult == Success) {
-                apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Single);
-                if (apiResult == Success) {                    
-                    unsigned char channels[] = {(unsigned char)operation.channel};
-                    double lowRegion[] = {-10.0};
-                    double highRegion[] = {10.0};
-                    JY5320_AI_BandWidth bandwidth[] = {JY5320_AI_BandWidth_25K};
-                    apiResult = JY5320_AI_EnableChannel(deviceHandle_, 1, channels, lowRegion, highRegion, bandwidth);
-                    if (apiResult == Success) {
-                        channelEnabled_[operation.channel] = true;
-                        currentSampleRate_ = operation.sampleRate;
-                        result.success = true;
-                        qDebug() << deviceName_ << "channel" << operation.channel << "configured";
-                    } else {
-                        result.error = QString("Failed to enable AI channel %1, error: %2")
-                                     .arg(operation.channel).arg(apiResult);
-                    }
-                } else {
-                    result.error = QString("Failed to set AI mode, error: %1").arg(apiResult);
+            // 根据采集模式配置通道
+            {
+                QString modeStr = operation.parameters.value("mode", "single").toString();
+                if (modeStr == "single") {
+                    currentMode_ = AcquisitionMode::SINGLE_POINT;
+                } else if (modeStr == "multi" || modeStr == "finite") {
+                    currentMode_ = AcquisitionMode::MULTI_POINT;
+                } else if (modeStr == "continuous") {
+                    currentMode_ = AcquisitionMode::CONTINUOUS;
+                }
+                
+                QVector<int> channels;
+                if (operation.channels.isEmpty()) {
+                    if (operation.channel >= 0) {
+                        channels.append(operation.channel);
                 }
             } else {
-                result.error = QString("Failed to set AI sample rate, error: %1").arg(apiResult);
+                    channels = operation.channels;
+                }
+                
+                qDebug() << deviceName_ << "CONFIGURE_CHANNEL:"
+                         << "mode=" << modeStr
+                         << "channels=" << channels
+                         << "samplesPerChannel=" << operation.samplesPerChannel
+                         << "sampleRate=" << operation.sampleRate;
+                
+                if (channels.isEmpty()) {
+                    result.error = "No channels specified for configuration";
+                    qDebug() << deviceName_ << result.error;
+                    break;
+                }
+                
+                result = configureChannels(channels, operation.inputRangeMin, operation.inputRangeMax);
+                if (result.success) {
+                    result = setSampleRate(operation.sampleRate);
+                    if (result.success) {
+                        result = setAcquisitionMode(currentMode_);
+                        if (result.success) {
+                            samplesPerChannel_ = operation.samplesPerChannel;
+                            qDebug() << deviceName_ << "successfully configured for" << acquisitionModeToString(currentMode_)
+                                   << "mode, channels:" << channels << ", sample rate:" << operation.sampleRate
+                                   << ", samplesPerChannel:" << samplesPerChannel_;
+                        }
+                    }
+                }
             }
             break;
             
         case DeviceCommand::START_MEASUREMENT:
-            if (!acquisitionActive_) {
-                setupTrigger();
-                startAcquisition();
+            switch (currentMode_) {
+                case AcquisitionMode::SINGLE_POINT:
+                    // 单点模式不需要预先启动
+                    result.success = true;
+                    break;
+                case AcquisitionMode::MULTI_POINT:
+                    result = startMultiPointAcquisition(operation);
+                    break;
+                case AcquisitionMode::CONTINUOUS:
+                    result = startContinuousAcquisition(operation);
+                    break;
             }
-            result.success = acquisitionActive_;
             break;
             
         case DeviceCommand::STOP_MEASUREMENT:
-            if (acquisitionActive_) {
-                stopAcquisition();
+            switch (currentMode_) {
+                case AcquisitionMode::SINGLE_POINT:
+                    result.success = true;
+                    break;
+                case AcquisitionMode::MULTI_POINT:
+                    result = stopMultiPointAcquisition(operation);
+                    break;
+                case AcquisitionMode::CONTINUOUS:
+                    result = stopContinuousAcquisition();
+                    break;
             }
-            result.success = !acquisitionActive_;
             break;        
+            
         case DeviceCommand::READ_DATA:
-            // 读取数据 - 需要先启动采集
-            {
-                // 确保通道已配置
-                if (!channelEnabled_[operation.channel]) {
-                    // 如果通道未配置，使用默认配置
-                    unsigned char channels[] = {(unsigned char)operation.channel};
-                    double lowRegion[] = {-10.0};
-                    double highRegion[] = {10.0};
-                    JY5320_AI_BandWidth bandwidth[] = {JY5320_AI_BandWidth_25K};
-                    
-                    apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Single);
-                    if (apiResult == Success) {
-                        apiResult = JY5320_AI_EnableChannel(deviceHandle_, 1, channels, lowRegion, highRegion, bandwidth);
-                        if (apiResult == Success) {
-                            channelEnabled_[operation.channel] = true;
-                        }
-                    }
-                }
-                
-                if (apiResult == Success || channelEnabled_[operation.channel]) {
-                    // 启动AI采集
-                    apiResult = JY5320_AI_Start(deviceHandle_);
-                    if (apiResult == Success) {
-                        // 读取单点数据
-                        double voltage = 0.0;
-                        apiResult = JY5320_AI_ReadSinglePoint(deviceHandle_, &voltage, operation.channel);
-                        if (apiResult == Success) {
-                            result.success = true;
-                            result.value = voltage;
-                            qDebug() << deviceName_ << "read voltage" << voltage << "V from channel" << operation.channel;
-                        } else {
-                            result.error = QString("Failed to read AI data from channel %1, error: %2")
-                                         .arg(operation.channel).arg(apiResult);
-                        }
-                        
-                        // 停止AI采集
-                        JY5320_AI_Stop(deviceHandle_);
-                    } else {
-                        result.error = QString("Failed to start AI acquisition for %1, error: %2")
-                                     .arg(deviceName_).arg(apiResult);
-                    }
-                } else {
-                    result.error = QString("Failed to configure channel %1 for %2")
-                                 .arg(operation.channel).arg(deviceName_);
-                }
+            switch (currentMode_) {
+                case AcquisitionMode::SINGLE_POINT:
+                    result = performSinglePointAcquisition(operation);
+                    break;
+                case AcquisitionMode::MULTI_POINT:
+                    result = readMultiPointData(operation);
+                    break;
+                case AcquisitionMode::CONTINUOUS:
+                    result = readContinuousData(operation);
+                    break;
             }
             break;
             
@@ -872,6 +889,763 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
     return result;
 }
 
+DeviceResult DAQDeviceThread::performSinglePointAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    
+    // 设置单点模式
+    int32_t apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Single);
+    if (apiResult != 0) {
+        result.error = QString("Failed to set single point mode, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 启动采集
+    apiResult = JY5320_AI_Start(deviceHandle_);
+    if (apiResult != 0) {
+        result.error = QString("Failed to start single point acquisition, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 读取数据
+    if (operation.channel >= 0) {
+        // 读取指定通道
+                        double voltage = 0.0;
+                        apiResult = JY5320_AI_ReadSinglePoint(deviceHandle_, &voltage, operation.channel);
+        if (apiResult == 0) {
+                            result.success = true;
+                            result.value = voltage;
+            result.data["channel"] = operation.channel;
+            result.data["voltage"] = voltage;
+                        } else {
+            result.error = QString("Failed to read single point from channel %1, error: %2")
+                                         .arg(operation.channel).arg(apiResult);
+                        }
+    } else {
+        // 读取所有启用的通道
+        QVariantMap channelData;
+        bool allSuccess = true;
+        
+        for (int channel : enabledChannels_) {
+            double voltage = 0.0;
+            apiResult = JY5320_AI_ReadSinglePoint(deviceHandle_, &voltage, channel);
+            if (apiResult == 0) {
+                channelData[QString("ch%1").arg(channel)] = voltage;
+                    } else {
+                allSuccess = false;
+                result.error += QString("Failed to read channel %1; ").arg(channel);
+            }
+        }
+        
+        if (allSuccess || !channelData.isEmpty()) {
+            result.success = true;
+            result.data = channelData;
+        }
+    }
+    
+    // 停止采集
+    JY5320_AI_Stop(deviceHandle_);
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::configureMultiPointAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    // 解析参数
+    const QVariantMap& params = operation.parameters;
+    QVector<int> channels = params["channels"].value<QVector<int>>();
+    double sampleRate = params["sampleRate"].toDouble();
+    int samplesPerChannel = params["samplesPerChannel"].toInt();
+    double rangeMin = params.value("rangeMin", -10.0).toDouble();
+    double rangeMax = params.value("rangeMax", 10.0).toDouble();
+    
+    if (channels.isEmpty()) {
+        result.success = false;
+        result.error = "No channels specified";
+        return result;
+    }
+    
+    qDebug() << deviceName_ << "Configuring multi-point acquisition (based on official example):"
+             << "channels:" << channels
+             << "sampleRate:" << sampleRate
+             << "samplesPerChannel:" << samplesPerChannel
+             << "range:" << rangeMin << "to" << rangeMax;
+    
+    // 停止当前任何正在进行的采集
+    if (acquisitionActive_) {
+        JY5320_AI_Stop(deviceHandle_);
+        acquisitionActive_ = false;
+    }
+    
+    // 准备通道配置数组
+    enabledChannelCount_ = channels.size();
+    std::vector<unsigned char> channelArray(enabledChannelCount_);
+    std::vector<double> rangeLowArray(enabledChannelCount_);
+    std::vector<double> rangeHighArray(enabledChannelCount_);
+    std::vector<JY5320_AI_BandWidth> bandWidthArray(enabledChannelCount_);
+    
+    for (int i = 0; i < enabledChannelCount_; ++i) {
+        channelArray[i] = static_cast<unsigned char>(channels[i]);
+        rangeLowArray[i] = rangeMin;
+        rangeHighArray[i] = rangeMax;
+        bandWidthArray[i] = JY5320_AI_BandWidth_25K; // 默认带宽
+    }
+    
+    // 1. 启用通道 - 按照官方示例
+    int32_t apiResult = JY5320_AI_EnableChannel(deviceHandle_, enabledChannelCount_,
+                                               channelArray.data(), rangeLowArray.data(),
+                                               rangeHighArray.data(), bandWidthArray.data());
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to enable channels, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 2. 设置模式为有限模式（多点采集）- 按照官方示例
+    apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Finite);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set finite mode, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 3. 设置采样数量 - 按照官方示例
+    apiResult = JY5320_AI_SetSamplesToAcquire(deviceHandle_, samplesPerChannel);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set samples to acquire, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 4. 设置采样率 - 按照官方示例
+    double actualSampleRate = 0.0;
+    apiResult = JY5320_AI_SetSampleRate(deviceHandle_, sampleRate, &actualSampleRate);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set sample rate, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 注意：按照官方示例，Finite模式下不设置触发类型，使用默认的立即触发
+    // 这样Start后会自动开始采集，不需要发送软件触发
+    
+    // 保存配置参数
+    currentParams_.sampleRate = actualSampleRate;
+    currentParams_.samplesPerChannel = samplesPerChannel;
+    currentParams_.channels = channels;
+    currentParams_.rangeMin = rangeMin;
+    currentParams_.rangeMax = rangeMax;
+    currentMode_ = AcquisitionMode::MULTI_POINT;
+    
+    qDebug() << deviceName_ << "Multi-point acquisition configured successfully (official example style)."
+             << "Actual sample rate:" << actualSampleRate;
+    
+    result.success = true;
+    result.data["actualSampleRate"] = actualSampleRate;
+    result.data["totalSamples"] = samplesPerChannel;
+    result.data["channels"] = QVariant::fromValue(channels);
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::startMultiPointAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    if (acquisitionActive_) {
+        result.success = false;
+        result.error = "Acquisition already active";
+        return result;
+    }
+    
+    qDebug() << deviceName_ << "Starting multi-point acquisition (official example style)...";
+    
+    // 按照官方示例，先分配数据缓冲区
+    int totalSamples = currentParams_.samplesPerChannel * enabledChannelCount_;
+    dataBuffer_.resize(totalSamples);
+    
+    // 1. 启动AI采集 - 按照官方示例，Finite模式下Start后自动开始采集
+    int32_t apiResult = JY5320_AI_Start(deviceHandle_);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to start AI, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 重置采集状态和数据缓存
+    {
+        QMutexLocker locker(&dataMutex_);
+        dataReadyFlag_ = false;
+        lastMultiPointData_.clear();
+        tempMultiPointData_.clear();
+    }
+    
+    acquisitionActive_ = true;
+    currentMode_ = AcquisitionMode::MULTI_POINT;
+    
+    qDebug() << deviceName_ << "Multi-point acquisition started (no trigger needed in Finite mode)";
+    
+    // 启动数据读取定时器 - 确保在正确的线程中启动
+    QMetaObject::invokeMethod(dataFetchTimer_, [this]() {
+        dataFetchTimer_->start(50); // 50ms间隔，与官方示例一致
+    }, Qt::QueuedConnection);
+    
+    result.success = true;
+    result.data["mode"] = "multi-point";
+    result.data["samplesPerChannel"] = currentParams_.samplesPerChannel;
+    result.data["channels"] = QVariant::fromValue(currentParams_.channels);
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::readMultiPointData(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    if (currentMode_ != AcquisitionMode::MULTI_POINT) {
+        result.success = false;
+        result.error = "Not in multi-point acquisition mode";
+        return result;
+    }
+    
+    // 检查定时器是否已经读取了数据
+    {
+        QMutexLocker locker(&dataMutex_);
+        if (dataReadyFlag_ && !lastMultiPointData_.isEmpty()) {
+            // 验证数据有效性
+            bool hasValidData = false;
+            for (int ch = 0; ch < lastMultiPointData_.size(); ch++) {
+                if (!lastMultiPointData_[ch].isEmpty()) {
+                    hasValidData = true;
+                    break;
+                }
+            }
+            
+            if (hasValidData) {
+                // 数据已准备好且有效，返回数据
+                result.success = true;
+                result.data["channelData"] = QVariant::fromValue(lastMultiPointData_);  // 修复：使用channelData键名
+                result.data["channels"] = QVariant::fromValue(lastMultiPointData_);     // 保持兼容性
+                result.data["samplesPerChannel"] = lastMultiPointData_.isEmpty() ? 0 : lastMultiPointData_[0].size();
+                result.data["channelCount"] = lastMultiPointData_.size();
+                
+                qDebug() << deviceName_ << "Returning cached multi-point data -" 
+                         << "Channels:" << lastMultiPointData_.size()
+                         << "Samples per channel:" << (lastMultiPointData_.isEmpty() ? 0 : lastMultiPointData_[0].size());
+                
+                return result;
+            } else {
+                qDebug() << deviceName_ << "数据标记为准备好但实际为空，重置标志继续等待";
+                dataReadyFlag_ = false;  // 重置标志
+            }
+        }
+    }
+    
+    // 数据还没准备好，检查采集状态
+    if (!acquisitionActive_) {
+        result.success = false;
+        result.error = "Device not active or acquisition not started";
+        return result;
+    }
+    
+    // 采集还在进行中，检查当前缓冲区状态
+    unsigned long long availableSamples = 0;
+    unsigned long long transferredSamples = 0;
+    bool overRun = false;
+    
+    // int32_t apiResult = JY5320_AI_CheckBufferStatus(deviceHandle_, &availableSamples, 
+    //                                                &transferredSamples, &overRun);
+    // if (apiResult != 0) {
+    //     result.success = false;
+    //     result.error = QString("Failed to check buffer status, error: %1").arg(apiResult);
+    //     return result;
+    // }
+    
+    // // 返回当前状态信息
+    // int expectedTotalSamples = currentParams_.samplesPerChannel * enabledChannelCount_;
+    result.success = false;
+    // result.error = QString("Data not ready, available: %1, required total: %2 (samplesPerChannel: %3 × channels: %4)")
+    //                .arg(availableSamples)
+    //                .arg(expectedTotalSamples)
+    //                .arg(currentParams_.samplesPerChannel)
+    //                .arg(enabledChannelCount_);
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::stopMultiPointAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    qDebug() << deviceName_ << "Stopping multi-point acquisition...";
+    
+    // 停止数据读取定时器
+    if (dataFetchTimer_->isActive()) {
+        dataFetchTimer_->stop();
+    }
+    
+    // 停止AI采集
+    if (acquisitionActive_) {
+        int32_t apiResult = JY5320_AI_Stop(deviceHandle_);
+        if (apiResult != 0) {
+            qDebug() << deviceName_ << "Warning: Failed to stop AI, error:" << apiResult;
+            // 继续执行，不要因为停止失败而报错
+        }
+        acquisitionActive_ = false;
+    }
+    
+    qDebug() << deviceName_ << "Multi-point acquisition stopped";
+    
+    result.success = true;
+    result.data["stopped"] = true;
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::startContinuousAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    
+    // 设置连续模式
+    int32_t apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Continuous);
+    if (apiResult != 0) {
+        result.error = QString("Failed to set continuous mode, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 设置触发
+    setupTrigger();
+    
+    // 初始化连续采集缓冲区
+    QMutexLocker locker(&bufferMutex_);
+    continuousDataBuffer_.clear();
+    continuousDataBuffer_.resize(enabledChannelCount_);
+    for (int ch = 0; ch < enabledChannelCount_; ++ch) {
+        continuousDataBuffer_[ch].reserve(currentParams_.bufferSize);
+    }
+    bufferWriteIndex_ = 0;
+    bufferOverrun_ = false;
+    
+    // 启动采集
+    apiResult = JY5320_AI_Start(deviceHandle_);
+    if (apiResult == 0) {
+        acquisitionActive_ = true;
+        // 确保在正确的线程中启动定时器
+        QMetaObject::invokeMethod(dataFetchTimer_, [this]() {
+            dataFetchTimer_->start(1000); // 1000ms间隔
+        }, Qt::QueuedConnection);
+        result.success = true;
+        qDebug() << deviceName_ << "continuous acquisition started";
+    } else {
+        result.error = QString("Failed to start continuous acquisition, error: %1").arg(apiResult);
+    }
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::readContinuousData(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    
+    if (!acquisitionActive_) {
+        result.error = "Continuous acquisition not active";
+        return result;
+    }
+    
+    QMutexLocker locker(&bufferMutex_);
+    
+    // 检查是否有数据可读
+    bool hasData = false;
+    for (int ch = 0; ch < enabledChannelCount_; ++ch) {
+        if (!continuousDataBuffer_[ch].isEmpty()) {
+            hasData = true;
+            break;
+        }
+    }
+    
+    if (hasData) {
+        // 返回当前缓冲区中的数据
+        QVector<QVector<double>> channelData = continuousDataBuffer_;
+        
+        result.success = true;
+        result.data["channelData"] = QVariant::fromValue(channelData);
+        result.data["channels"] = QVariant::fromValue(enabledChannels_);
+        result.data["bufferOverrun"] = bufferOverrun_;
+        
+        // 清空缓冲区或保留部分数据
+        int keepSamples = operation.parameters.value("keepSamples", 0).toInt();
+        if (keepSamples > 0) {
+            for (int ch = 0; ch < enabledChannelCount_; ++ch) {
+                if (continuousDataBuffer_[ch].size() > keepSamples) {
+                    continuousDataBuffer_[ch] = continuousDataBuffer_[ch].mid(
+                        continuousDataBuffer_[ch].size() - keepSamples);
+                }
+            }
+        } else {
+            // 清空所有缓冲区
+            for (int ch = 0; ch < enabledChannelCount_; ++ch) {
+                continuousDataBuffer_[ch].clear();
+            }
+        }
+        
+        bufferOverrun_ = false;
+        
+        emit continuousDataReady(deviceName_, channelData);
+    } else {
+        result.success = false;
+        result.error = "No continuous data available";
+    }
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::stopContinuousAcquisition()
+{
+    DeviceResult result;
+    
+    if (acquisitionActive_) {
+        dataFetchTimer_->stop();
+        
+        int32_t apiResult = JY5320_AI_Stop(deviceHandle_);
+        if (apiResult == 0) {
+            acquisitionActive_ = false;
+            result.success = true;
+            qDebug() << deviceName_ << "continuous acquisition stopped";
+            emit acquisitionCompleted(deviceName_, AcquisitionMode::CONTINUOUS);
+        } else {
+            result.error = QString("Failed to stop continuous acquisition, error: %1").arg(apiResult);
+        }
+    } else {
+        result.success = true; // 已经停止
+    }
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::configureChannels(const QVector<int>& channels, double rangeMin, double rangeMax)
+{
+    DeviceResult result;
+    
+    qDebug() << deviceName_ << "configureChannels called with channels:" << channels
+             << "range:" << rangeMin << "to" << rangeMax;
+    
+    if (channels.isEmpty()) {
+        result.error = "No channels specified";
+        qDebug() << deviceName_ << result.error;
+        return result;
+    }
+    
+    // 准备通道配置数组
+    std::vector<unsigned char> channelIds(channels.size());
+    std::vector<double> lowRegion(channels.size(), rangeMin);
+    std::vector<double> highRegion(channels.size(), rangeMax);
+    std::vector<JY5320_AI_BandWidth> bandwidths(channels.size(), JY5320_AI_BandWidth_25K);
+    
+    for (int i = 0; i < channels.size(); ++i) {
+        channelIds[i] = static_cast<unsigned char>(channels[i]);
+        qDebug() << deviceName_ << "Channel" << i << ":" << channels[i] << "-> channelId" << channelIds[i];
+    }
+    
+    // 启用通道
+    qDebug() << deviceName_ << "Calling JY5320_AI_EnableChannel with" << channels.size() << "channels";
+    int32_t apiResult = JY5320_AI_EnableChannel(deviceHandle_, channels.size(),
+                                               channelIds.data(), lowRegion.data(), 
+                                               highRegion.data(), bandwidths.data());
+    
+    qDebug() << deviceName_ << "JY5320_AI_EnableChannel result:" << apiResult;
+    
+    if (apiResult == 0) {
+        // 更新内部状态
+        channelEnabled_.clear();
+        enabledChannels_ = channels;
+        enabledChannelCount_ = channels.size();
+        
+        for (int channel : channels) {
+            channelEnabled_[channel] = true;
+        }
+        
+        result.success = true;
+        qDebug() << deviceName_ << "configured channels successfully:"
+                 << "enabledChannels_=" << enabledChannels_
+                 << "enabledChannelCount_=" << enabledChannelCount_
+                 << "range:" << rangeMin << "to" << rangeMax;
+    } else {
+        result.error = QString("Failed to configure channels, error: %1").arg(apiResult);
+        qDebug() << deviceName_ << result.error;
+    }
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::setSampleRate(double sampleRate)
+{
+    DeviceResult result;
+    
+    double actualSampleRate = 0.0;
+    int32_t apiResult = JY5320_AI_SetSampleRate(deviceHandle_, sampleRate, &actualSampleRate);
+    
+    if (apiResult == 0) {
+        currentSampleRate_ = actualSampleRate;
+        result.success = true;
+        result.value = actualSampleRate;
+        qDebug() << deviceName_ << "sample rate set to" << actualSampleRate << "Hz (requested:" << sampleRate << "Hz)";
+        } else {
+        result.error = QString("Failed to set sample rate, error: %1").arg(apiResult);
+    }
+    
+    return result;
+}
+
+DeviceResult DAQDeviceThread::setAcquisitionMode(AcquisitionMode mode)
+{
+    DeviceResult result;
+    
+    JY5320_AI_SampleMode jyMode = convertToJY5320Mode(mode);
+    int32_t apiResult = JY5320_AI_SetMode(deviceHandle_, jyMode);
+    
+    if (apiResult == 0) {
+        currentMode_ = mode;
+        result.success = true;
+        qDebug() << deviceName_ << "acquisition mode set to" << acquisitionModeToString(mode);
+    } else {
+        result.error = QString("Failed to set acquisition mode, error: %1").arg(apiResult);
+    }
+    
+    return result;
+}
+
+void DAQDeviceThread::onDataFetchTimer()
+{
+    if (!acquisitionActive_ || !deviceHandle_) {
+        return;
+    }
+    
+    if (currentMode_ == AcquisitionMode::CONTINUOUS) {
+        processContinuousData();
+    } else if (currentMode_ == AcquisitionMode::MULTI_POINT) {
+        processMultiPointData();
+    }
+}
+
+void DAQDeviceThread::processMultiPointData()
+{
+    if (!deviceHandle_ || !acquisitionActive_ || currentMode_ != AcquisitionMode::MULTI_POINT) {
+        return;
+    }
+    
+    // 先检查缓冲区状态，确保数据确实可用
+    unsigned long long currentAvailable = 0;
+    unsigned long long currentTransferred = 0;
+    unsigned long long currentTransferred_1 = 0;
+    unsigned int actualReadLength = 0;
+    bool currentOverrun = false;
+    
+    unsigned long long totalSamplesToRead = currentParams_.samplesPerChannel * enabledChannelCount_;
+    int samplesPerChannelToRead = currentParams_.samplesPerChannel;
+    int32_t statusResult = JY5320_AI_CheckBufferStatus(deviceHandle_, &currentAvailable,
+                                                      &currentTransferred, &currentOverrun);
+    if (statusResult == 0) {
+        qDebug() << deviceName_ << "读取前缓冲区状态 - Available:" << currentAvailable 
+                 << "Transferred:" << currentTransferred << "Overrun:" << currentOverrun;
+    }
+    
+    // 修复：正确计算要读取的每通道样本数
+    // ReadLength应该是每通道的样本数，而不是总样本数
+    if(currentAvailable < totalSamplesToRead - currentTransferred) return;
+
+    int actualSamplesToRead = totalSamplesToRead - currentTransferred;
+    int mod = actualSamplesToRead % enabledChannelCount_;
+    if (mod != 0) {
+        if(actualSamplesToRead - mod > 0)
+        actualSamplesToRead -= mod; // 确保读取的样本数是每通道样本数的整数倍
+    }
+    
+    qDebug() << deviceName_ << "修正后的读取参数 - 每通道可用样本:" << currentAvailable
+             << "实际读样本:" << totalSamplesToRead;
+    
+    std::unique_ptr<double[]> pDataBuf = std::make_unique<double[]>(actualSamplesToRead * enabledChannelCount_);
+    // 按照官方示例：JY5320_AI_ReadData的dataLength参数是每通道样本数
+    statusResult = JY5320_AI_ReadData(deviceHandle_, pDataBuf.get(), 
+                                   qMin(actualSamplesToRead, samplesPerChannelToRead),
+                                   -1, &actualReadLength);                           
+    if (statusResult != 0) {
+        qDebug() << deviceName_ << "数据读取错误:" << statusResult;
+        return;
+    }
+
+    statusResult = JY5320_AI_CheckBufferStatus(deviceHandle_, &currentAvailable,
+                                                      &currentTransferred_1, &currentOverrun);
+    actualReadLength = currentTransferred_1 - currentTransferred;
+    for(int i = 0; i < actualReadLength; ++i) {
+        tempMultiPointData_.append(pDataBuf[i]);
+    }
+
+    if(currentTransferred_1 < totalSamplesToRead) return;
+
+
+    // 保存读取的数据
+    {
+        QMutexLocker locker(&dataMutex_);
+        QVector<QVector<double>> DataPoints(enabledChannelCount_);
+        for(int ch = 0; ch < enabledChannelCount_; ++ch) {
+            for (int sample = 0; sample < samplesPerChannelToRead; ++sample) {
+                int index = sample * enabledChannelCount_ + ch;
+                DataPoints[ch].append(tempMultiPointData_[index]);
+            }
+        }
+        lastMultiPointData_ = DataPoints;
+        dataReadyFlag_ = true;
+        qDebug() << deviceName_ << "数据已保存到lastMultiPointData_，通道数：" << lastMultiPointData_.size()
+                 << "每通道样本数：" << (lastMultiPointData_.empty() ? 0 : lastMultiPointData_[0].size());
+    }
+    
+    qDebug() << deviceName_ << "Data parsed and saved successfully";
+
+    if (dataFetchTimer_->isActive()) {
+        dataFetchTimer_->stop();
+    }
+    
+    acquisitionActive_ = false;
+}
+
+void DAQDeviceThread::processContinuousData()
+{
+    // 检查是否有新数据可用
+    unsigned long long availableSamples = 0;
+    bool overrun = false;
+    
+    if (!checkBufferStatus(availableSamples, overrun)) {
+        return;
+    }
+    
+    if (overrun) {
+        QMutexLocker locker(&bufferMutex_);
+        bufferOverrun_ = true;
+        qDebug() << deviceName_ << "data overrun detected in continuous mode";
+    }
+    
+    // 读取可用数据
+    if (availableSamples > 0) {
+        // 确保不超过可用样本数，并限制单次读取量
+        unsigned long long maxRead = qMin(availableSamples, static_cast<unsigned long long>(1000));
+        int samplesToRead = static_cast<int>(maxRead); // 一次最多读1000个样本
+        QVector<double> tempBuffer(samplesToRead * enabledChannelCount_);
+        
+        unsigned int actualReadLength = 0;
+        int32_t apiResult = JY5320_AI_ReadData(deviceHandle_, tempBuffer.data(),
+                                               samplesToRead, 100, &actualReadLength);
+        
+        if (apiResult == 0 && actualReadLength > 0) {
+            // 将数据添加到连续缓冲区
+            QMutexLocker locker(&bufferMutex_);
+            
+            for (int sample = 0; sample < actualReadLength; ++sample) {
+                for (int ch = 0; ch < enabledChannelCount_; ++ch) {
+                    double value = tempBuffer[sample * enabledChannelCount_ + ch];
+                    
+                    // 检查缓冲区大小
+                    if (continuousDataBuffer_[ch].size() >= currentParams_.bufferSize) {
+                        // 移除最旧的数据
+                        continuousDataBuffer_[ch].removeFirst();
+                        bufferOverrun_ = true;
+                    }
+                    
+                    continuousDataBuffer_[ch].append(value);
+                }
+            }
+            
+            // 发送缓冲区状态更新
+            QVariantMap bufferInfo;
+            bufferInfo["availableSamples"] = static_cast<int>(availableSamples);
+            bufferInfo["samplesRead"] = actualReadLength;
+            bufferInfo["bufferOverrun"] = bufferOverrun_;
+            bufferInfo["bufferFillLevel"] = continuousDataBuffer_.isEmpty() ? 0 : continuousDataBuffer_[0].size();
+            
+            emit dataBufferUpdated(deviceName_, bufferInfo);
+        }
+    }
+}
+
+bool DAQDeviceThread::checkBufferStatus(unsigned long long& availableSamples, bool& overRun)
+{
+    unsigned long long transferredSamples = 0;
+    int32_t apiResult = JY5320_AI_CheckBufferStatus(deviceHandle_, &availableSamples, 
+                                                   &transferredSamples, &overRun);
+    return (apiResult == 0);
+}
+
+void DAQDeviceThread::setupTrigger()
+{
+    if (deviceHandle_) {
+        // 设置立即触发模式
+        JY5320_AI_SetStartTriggerType(deviceHandle_, JY5320_AI_Immediately);
+    }
+}
+
+void DAQDeviceThread::startAcquisition()
+{
+    // 这个方法被具体的采集模式方法替代
+}
+
+void DAQDeviceThread::stopAcquisition()
+{
+    if (deviceHandle_ && acquisitionActive_) {
+        dataFetchTimer_->stop();
+        JY5320_AI_Stop(deviceHandle_);
+            acquisitionActive_ = false;
+    }
+}
+
+QString DAQDeviceThread::acquisitionModeToString(AcquisitionMode mode) const
+{
+    switch (mode) {
+        case AcquisitionMode::SINGLE_POINT: return "Single Point";
+        case AcquisitionMode::MULTI_POINT: return "Multi Point";
+        case AcquisitionMode::CONTINUOUS: return "Continuous";
+        default: return "Unknown";
+    }
+}
+
+JY5320_AI_SampleMode DAQDeviceThread::convertToJY5320Mode(AcquisitionMode mode) const
+{
+    switch (mode) {
+        case AcquisitionMode::SINGLE_POINT: return JY5320_AI_Single;
+        case AcquisitionMode::MULTI_POINT: return JY5320_AI_Finite;
+        case AcquisitionMode::CONTINUOUS: return JY5320_AI_Continuous;
+        default: return JY5320_AI_Single;
+    }
+}
+
 void DAQDeviceThread::handleSyncTrigger()
 {
     // DAQ设备的同步触发处理
@@ -879,41 +1653,6 @@ void DAQDeviceThread::handleSyncTrigger()
         // 发送软件触发
         JY5320_AI_SendSoftTrigger(deviceHandle_, JY5320_StartTrigger);
         qDebug() << deviceName_ << "received sync trigger and sent soft trigger";
-    }
-}
-
-void DAQDeviceThread::setupTrigger()
-{
-    if (deviceHandle_) {
-        // 设置触发模式
-        JY5320_AI_SetStartTriggerType(deviceHandle_, JY5320_AI_Soft);
-        JY5320_AI_SetDigitalStartTrigger(deviceHandle_, JY5320_PFI0, JY5320_Rising);
-    }
-}
-
-void DAQDeviceThread::startAcquisition()
-{
-    if (deviceHandle_) {
-        int32_t result = JY5320_AI_Start(deviceHandle_);
-        if (result == Success) {
-            acquisitionActive_ = true;
-            qDebug() << deviceName_ << "acquisition started";
-        } else {
-            qDebug() << deviceName_ << "failed to start acquisition, error:" << result;
-        }
-    }
-}
-
-void DAQDeviceThread::stopAcquisition()
-{
-    if (deviceHandle_) {
-        int32_t result = JY5320_AI_Stop(deviceHandle_);
-        if (result == Success) {
-            acquisitionActive_ = false;
-            qDebug() << deviceName_ << "acquisition stopped";
-        } else {
-            qDebug() << deviceName_ << "failed to stop acquisition, error:" << result;
-        }
     }
 }
 

@@ -70,6 +70,7 @@ struct DeviceResult {
     QString error;
     QVariantMap data;
     QDateTime timestamp;
+    DeviceCommand command = DeviceCommand::INITIALIZE;  // 添加command成员
     
     DeviceResult(bool ok = false) : success(ok), timestamp(QDateTime::currentDateTime()) {}
 };
@@ -204,6 +205,22 @@ public:
         CONTINUOUS       // 连续采集
     };
     
+    // 采集参数结构体
+    struct AcquisitionParams {
+        AcquisitionMode mode = AcquisitionMode::SINGLE_POINT;
+        QVector<int> channels;              // 通道列表
+        double sampleRate = 1000.0;         // 采样率
+        int samplesPerChannel = 1000;       // 每通道采样点数（用于多点和连续模式）
+        double inputRangeMin = -10.0;       // 输入范围最小值
+        double inputRangeMax = 10.0;        // 输入范围最大值
+        double rangeMin = -10.0;            // 输入范围最小值（兼容性）
+        double rangeMax = 10.0;             // 输入范围最大值（兼容性）
+        JY5320_AI_BandWidth bandwidth = JY5320_AI_BandWidth_25K;  // 带宽设置
+        bool useBuffer = true;              // 是否使用缓冲区（连续模式）
+        int bufferSize = 10000;             // 缓冲区大小
+        int timeout = 5000;                 // 读取超时时间(ms)
+    };
+    
 protected:
     bool initializeDevice() override;
     void shutdownDevice() override;
@@ -224,9 +241,29 @@ private:
     QTimer* dataFetchTimer_;
     int enabledChannelCount_;
     QVector<int> enabledChannels_;
+    AcquisitionParams currentParams_;
+    
+    // 连续采集缓冲区管理
+    QVector<QVector<double>> continuousDataBuffer_;  // 每个通道一个缓冲区
+    QMutex bufferMutex_;
+    int bufferWriteIndex_;
+    bool bufferOverrun_;
+    
+    // 渐进式数据累积 (用于多点采集)
+    QVector<QVector<double>> accumulatedData_;  // 累积的数据缓冲区
+    int accumulatedSamples_;                    // 当前累积的样本数
+    const int BATCH_READ_SIZE = 20;             // 每次批量读取的样本数
+    const int BATCH_FETCH_INTERVAL = 50;        // 批次读取时间间隔(ms)
+    
+    // 数据缓存 (用于定时器读取的数据)
+    QVector<QVector<double>> lastMultiPointData_;  // 最后读取的多点采集数据
+    QVector<double> tempMultiPointData_;  // 临时缓存的多点采集数据
+    bool dataReadyFlag_ = false;                   // 数据准备标志
+    QMutex dataMutex_;                             // 数据访问互斥锁
     
     // 回调和数据处理
     void processMultiPointData();
+    void processContinuousData();
     bool checkBufferStatus(unsigned long long& availableSamples, bool& overRun);
     
     // 触发相关
@@ -238,15 +275,31 @@ private:
     DeviceResult performSinglePointAcquisition(const DeviceOperation& operation);
     DeviceResult configureMultiPointAcquisition(const DeviceOperation& operation);
     DeviceResult startMultiPointAcquisition(const DeviceOperation& operation);
-    DeviceResult stopMultiPointAcquisition();
+    DeviceResult stopMultiPointAcquisition(const DeviceOperation& operation = DeviceOperation());
     DeviceResult readMultiPointData(const DeviceOperation& operation);
+    
+    DeviceResult configureContinuousAcquisition(const DeviceOperation& operation);
+    DeviceResult startContinuousAcquisition(const DeviceOperation& operation);
+    DeviceResult stopContinuousAcquisition();
+    DeviceResult readContinuousData(const DeviceOperation& operation);
+    
+    // 通道配置
+    DeviceResult configureChannels(const QVector<int>& channels, double rangeMin = -10.0, double rangeMax = 10.0);
+    DeviceResult setSampleRate(double sampleRate);
+    DeviceResult setAcquisitionMode(AcquisitionMode mode);
+    
+    // 辅助方法
+    QString acquisitionModeToString(AcquisitionMode mode) const;
+    JY5320_AI_SampleMode convertToJY5320Mode(AcquisitionMode mode) const;
     
 private slots:
     void onDataFetchTimer();
     
 signals:
     void multiPointDataReady(const QString& deviceName, const QVector<QVector<double>>& channelData);
+    void continuousDataReady(const QString& deviceName, const QVector<QVector<double>>& channelData);
     void dataBufferUpdated(const QString& deviceName, const QVariantMap& bufferInfo);
+    void acquisitionCompleted(const QString& deviceName, AcquisitionMode mode);
 };
 
 // DMM设备线程 (JY8902)

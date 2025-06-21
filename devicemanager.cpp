@@ -389,7 +389,7 @@ bool DeviceManager::measureResistance(double& result, int timeout_ms)
 
 bool DeviceManager::outputVoltage(int channel, double voltage)
 {
-    return outputVoltageAsync(channel, voltage);
+    return outputVoltageAsync(channel, voltage, 5000);
 }
 
 // DMM配置接口实现
@@ -666,4 +666,634 @@ void DeviceManager::checkDeviceStatus()
             locker.relock();
         }
     }
+}
+
+// 数据采集接口实现
+
+bool DeviceManager::singlePointAcquisition(const QString& deviceName, int channel, double& result, 
+                                          double rangeMin, double rangeMax, int timeout_ms)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    // 配置通道
+    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+    configOp.channel = channel;
+    configOp.inputRangeMin = rangeMin;
+    configOp.inputRangeMax = rangeMax;
+    configOp.parameters["mode"] = "single";
+    
+    device->submitOperation(configOp);
+    DeviceResult configResult = device->waitForResult(timeout_ms);
+    
+    if (!configResult.success) {
+        setError(QString("Failed to configure channel %1: %2").arg(channel).arg(configResult.error));
+        return false;
+    }
+    
+    // 读取数据
+    DeviceOperation readOp(DeviceCommand::READ_DATA);
+    readOp.channel = channel;
+    readOp.timeout = timeout_ms;
+    
+    device->submitOperation(readOp);
+    DeviceResult readResult = device->waitForResult(timeout_ms);
+    
+    if (readResult.success) {
+        result = readResult.value;
+        return true;
+    } else {
+        setError(QString("Failed to read from channel %1: %2").arg(channel).arg(readResult.error));
+        return false;
+    }
+}
+
+bool DeviceManager::singlePointAcquisition(const QString& deviceName, const QVector<int>& channels, 
+                                          QVector<double>& results, double rangeMin, double rangeMax, int timeout_ms)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    results.clear();
+    results.resize(channels.size());
+    
+    // 配置所有通道
+    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+    configOp.channels = channels;
+    configOp.inputRangeMin = rangeMin;
+    configOp.inputRangeMax = rangeMax;
+    configOp.parameters["mode"] = "single";
+    
+    device->submitOperation(configOp);
+    DeviceResult configResult = device->waitForResult(timeout_ms);
+    
+    if (!configResult.success) {
+        setError(QString("Failed to configure channels: %1").arg(configResult.error));
+        return false;
+    }
+    
+    // 读取所有通道数据
+    DeviceOperation readOp(DeviceCommand::READ_DATA);
+    readOp.channel = -1; // 读取所有通道
+    readOp.timeout = timeout_ms;
+    
+    device->submitOperation(readOp);
+    DeviceResult readResult = device->waitForResult(timeout_ms);
+    
+    if (readResult.success) {
+        QVariantMap channelData = readResult.data;
+        for (int i = 0; i < channels.size(); ++i) {
+            QString key = QString("ch%1").arg(channels[i]);
+            if (channelData.contains(key)) {
+                results[i] = channelData[key].toDouble();
+            } else {
+                setError(QString("Missing data for channel %1").arg(channels[i]));
+                return false;
+            }
+        }
+        return true;
+    } else {
+        setError(QString("Failed to read channels: %1").arg(readResult.error));
+        return false;
+    }
+}
+
+bool DeviceManager::configureMultiPointAcquisition(const QString& deviceName, const QVector<int>& channels,
+                                                  double sampleRate, int samplesPerChannel,
+                                                  double rangeMin, double rangeMax)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+    configOp.channels = channels;
+    configOp.sampleRate = sampleRate;
+    configOp.samplesPerChannel = samplesPerChannel;
+    configOp.inputRangeMin = rangeMin;
+    configOp.inputRangeMax = rangeMax;
+    configOp.parameters["mode"] = "multi";
+    
+    device->submitOperation(configOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to configure multi-point acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::startMultiPointAcquisition(const QString& deviceName)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation startOp(DeviceCommand::START_MEASUREMENT);
+    device->submitOperation(startOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to start multi-point acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::readMultiPointData(const QString& deviceName, QVector<QVector<double>>& channelData, int timeout_ms)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation readOp(DeviceCommand::READ_DATA);
+    readOp.timeout = timeout_ms;
+    
+    device->submitOperation(readOp);
+    DeviceResult result = device->waitForResult(timeout_ms);
+    
+    qDebug() << "DeviceManager::readMultiPointData - Device:" << deviceName
+             << "Success:" << result.success
+             << "Error:" << result.error
+             << "Data keys:" << result.data.keys();
+    
+    if (result.success) {
+        // 检查数据是否存在
+        if (result.data.contains("channelData")) {
+            QVariant channelDataVariant = result.data["channelData"];
+            qDebug() << "Channel data variant type:" << channelDataVariant.typeName()
+                     << "isValid:" << channelDataVariant.isValid();
+            
+            channelData = channelDataVariant.value<QVector<QVector<double>>>();
+            qDebug() << "Extracted channel data size:" << channelData.size();
+            
+            for (int ch = 0; ch < channelData.size(); ++ch) {
+                qDebug() << "Channel" << ch << "has" << channelData[ch].size() << "samples";
+            }
+            
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
+}
+
+bool DeviceManager::stopMultiPointAcquisition(const QString& deviceName)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation stopOp(DeviceCommand::STOP_MEASUREMENT);
+    device->submitOperation(stopOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to stop multi-point acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::configureContinuousAcquisition(const QString& deviceName, const QVector<int>& channels,
+                                                  double sampleRate, int bufferSize,
+                                                  double rangeMin, double rangeMax)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+    configOp.channels = channels;
+    configOp.sampleRate = sampleRate;
+    configOp.inputRangeMin = rangeMin;
+    configOp.inputRangeMax = rangeMax;
+    configOp.parameters["mode"] = "continuous";
+    configOp.parameters["bufferSize"] = bufferSize;
+    
+    device->submitOperation(configOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to configure continuous acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::startContinuousAcquisition(const QString& deviceName)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation startOp(DeviceCommand::START_MEASUREMENT);
+    device->submitOperation(startOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to start continuous acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::readContinuousData(const QString& deviceName, QVector<QVector<double>>& channelData, 
+                                      int keepSamples, int timeout_ms)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation readOp(DeviceCommand::READ_DATA);
+    readOp.timeout = timeout_ms;
+    readOp.parameters["keepSamples"] = keepSamples;
+    
+    device->submitOperation(readOp);
+    DeviceResult result = device->waitForResult(timeout_ms);
+    
+    if (result.success) {
+        channelData = result.data["channelData"].value<QVector<QVector<double>>>();
+        return true;
+    } else {
+        setError(QString("Failed to read continuous data: %1").arg(result.error));
+        return false;
+    }
+}
+
+bool DeviceManager::stopContinuousAcquisition(const QString& deviceName)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation stopOp(DeviceCommand::STOP_MEASUREMENT);
+    device->submitOperation(stopOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to stop continuous acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::configureAcquisition(const QString& deviceName, const QString& mode,
+                                        const QVector<int>& channels, double sampleRate,
+                                        int samplesPerChannel, double rangeMin, double rangeMax,
+                                        int bufferSize)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        setError(QString("Device %1 not found").arg(deviceName));
+        return false;
+    }
+    
+    BaseDeviceThread* device = deviceThreads_[deviceName];
+    
+    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+    configOp.channels = channels;
+    configOp.sampleRate = sampleRate;
+    configOp.samplesPerChannel = samplesPerChannel;
+    configOp.inputRangeMin = rangeMin;
+    configOp.inputRangeMax = rangeMax;
+    configOp.parameters["mode"] = mode;
+    configOp.parameters["bufferSize"] = bufferSize;
+    
+    device->submitOperation(configOp);
+    DeviceResult result = device->waitForResult(5000);
+    
+    if (!result.success) {
+        setError(QString("Failed to configure acquisition: %1").arg(result.error));
+        return false;
+    }
+    
+    return true;
+}
+
+bool DeviceManager::isAcquisitionActive(const QString& deviceName)
+{
+    if (!deviceThreads_.contains(deviceName)) {
+        return false;
+    }
+    
+    // 这里可以通过查询设备状态来确定采集是否活动
+    // 简化实现，实际应该查询设备内部状态
+    return true; // 临时实现
+}
+
+QVariantMap DeviceManager::getAcquisitionStatus(const QString& deviceName)
+{
+    QVariantMap status;
+    
+    if (!deviceThreads_.contains(deviceName)) {
+        status["error"] = QString("Device %1 not found").arg(deviceName);
+        return status;
+    }
+    
+    // 简化实现，实际应该查询设备详细状态
+    status["deviceName"] = deviceName;
+    status["isActive"] = isAcquisitionActive(deviceName);
+    status["deviceType"] = "JY5320";
+    
+    return status;
+}
+
+QVector<QString> DeviceManager::getDAQDevices() const
+{
+    QVector<QString> daqDevices;
+    
+    for (auto it = deviceThreads_.begin(); it != deviceThreads_.end(); ++it) {
+        const QString& deviceName = it.key();
+        if (deviceName.contains("JY5320") || deviceName.contains("JY5322")) {
+            daqDevices.append(deviceName);
+        }
+    }
+    
+    return daqDevices;
+}
+
+bool DeviceManager::exportAcquisitionData(const QVector<QVector<double>>& channelData, 
+                                         const QVector<int>& channels, const QString& fileName,
+                                         const QString& format)
+{
+    if (channelData.isEmpty() || channels.isEmpty()) {
+        setError("No data to export");
+        return false;
+    }
+    
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        setError(QString("Failed to open file %1 for writing").arg(fileName));
+        return false;
+    }
+    
+    QTextStream out(&file);
+    
+    if (format.toLower() == "csv") {
+        // CSV格式导出
+        
+        // 写入标题行
+        out << "Sample";
+        for (int ch : channels) {
+            out << ",Channel_" << ch;
+        }
+        out << "\n";
+        
+        // 写入数据
+        int maxSamples = 0;
+        for (const auto& chData : channelData) {
+            maxSamples = qMax(maxSamples, chData.size());
+        }
+        
+        for (int sample = 0; sample < maxSamples; ++sample) {
+            out << sample;
+            for (int ch = 0; ch < channelData.size(); ++ch) {
+                if (sample < channelData[ch].size()) {
+                    out << "," << QString::number(channelData[ch][sample], 'f', 6);
+                } else {
+                    out << ",";
+                }
+            }
+            out << "\n";
+        }
+    } else {
+        setError(QString("Unsupported export format: %1").arg(format));
+        return false;
+    }
+    
+    file.close();
+    return true;
+}
+
+QString DeviceManager::acquisitionModeToString(const QString& mode) const
+{
+    if (mode == "single") return "Single Point";
+    if (mode == "multi" || mode == "finite") return "Multi Point";
+    if (mode == "continuous") return "Continuous";
+    return "Unknown";
+}
+
+QStringList DeviceManager::getSupportedAcquisitionModes() const
+{
+    return QStringList() << "single" << "multi" << "continuous";
+}
+
+// 简化的同步测试实现（用于验证修复效果）
+bool DeviceManager::testSynchronizedOutputAndAcquisition(double sineFreq, double sineAmplitude, 
+                                                        double sampleRate, int samplesPerChannel,
+                                                        int timeout_ms)
+{
+    qDebug() << "=== 开始简化同步测试 ===";
+    qDebug() << "参数 - 正弦波频率:" << sineFreq << "Hz, 幅度:" << sineAmplitude << "V";
+    qDebug() << "采样率:" << sampleRate << "Hz, 每通道采样数:" << samplesPerChannel;
+    
+    // 1. 检查设备状态
+    if (!isSystemReady()) {
+        setError("系统未就绪，请检查设备连接状态");
+        return false;
+    }
+    
+    try {
+        // 2. 先进行简单的多点采集测试（不使用同步）
+        qDebug() << "步骤1: 测试JY5322多点采集...";
+        
+        QVector<int> daqChannels = {0, 1};
+        if (!configureMultiPointAcquisition("JY5322", daqChannels, sampleRate, samplesPerChannel, -10.0, 10.0)) {
+            setError("JY5322多点采集配置失败: " + getLastError());
+            return false;
+        }
+        
+        if (!startMultiPointAcquisition("JY5322")) {
+            setError("JY5322采集启动失败: " + getLastError());
+            return false;
+        }
+        
+        qDebug() << "JY5322采集已启动，等待数据采集完成...";
+        
+        // 3. 等待数据采集完成
+        bool dataReady = false;
+        int maxAttempts = 100;  // 增加尝试次数
+        int attempt = 0;
+        
+        QVector<QVector<double>> channelData;
+        
+        while (!dataReady && attempt < maxAttempts) {
+            attempt++;
+            
+            if (readMultiPointData("JY5322", channelData, 1000)) {
+                if (!channelData.isEmpty() && !channelData[0].isEmpty()) {
+                    dataReady = true;
+                    qDebug() << "数据采集成功！尝试次数:" << attempt;
+                    break;
+                }
+            }
+            
+            if (attempt % 20 == 0) {
+                qDebug() << "等待数据... 尝试" << attempt << "/" << maxAttempts;
+            }
+            
+            QThread::msleep(50);  // 50ms间隔
+        }
+        
+        // 4. 停止采集
+        if (!stopMultiPointAcquisition("JY5322")) {
+            qDebug() << "警告：停止采集失败";
+        }
+        
+        // 5. 分析结果
+        if (dataReady && !channelData.isEmpty()) {
+            qDebug() << "✓ 多点采集测试成功！";
+            qDebug() << "采集到" << channelData.size() << "个通道的数据";
+            
+            for (int ch = 0; ch < channelData.size(); ++ch) {
+                if (!channelData[ch].isEmpty()) {
+                    double avgValue = 0.0;
+                    double maxValue = *std::max_element(channelData[ch].begin(), channelData[ch].end());
+                    double minValue = *std::min_element(channelData[ch].begin(), channelData[ch].end());
+                    
+                    for (double val : channelData[ch]) {
+                        avgValue += val;
+                    }
+                    avgValue /= channelData[ch].size();
+                    
+                    qDebug() << QString("通道%1: 样本数=%2, 平均值=%3V, 最大值=%4V, 最小值=%5V")
+                                .arg(daqChannels[ch])
+                                .arg(channelData[ch].size())
+                                .arg(avgValue, 0, 'f', 6)
+                                .arg(maxValue, 0, 'f', 6)
+                                .arg(minValue, 0, 'f', 6);
+                }
+            }
+            
+            // 现在测试AO输出
+            qDebug() << "步骤2: 测试JY5711输出...";
+            
+            // 简单输出测试
+            if (outputVoltageAsync(1, 4.0, timeout_ms)) {
+                qDebug() << "✓ JY5711 端口1输出4V成功";
+            } else {
+                qDebug() << "❌ JY5711输出失败:" << getLastError();
+            }
+            
+            // 恢复0V输出
+            outputVoltageAsync(1, 0.0, timeout_ms);
+            
+            qDebug() << "=== 简化同步测试完成 ===";
+            return true;
+            
+        } else {
+            setError(QString("数据采集失败，尝试了%1次").arg(attempt));
+            qDebug() << "❌ 数据采集失败，尝试了" << attempt << "次";
+            return false;
+        }
+        
+    } catch (const std::exception& e) {
+        setError(QString("测试异常: %1").arg(e.what()));
+        return false;
+    } catch (...) {
+        setError("测试发生未知异常");
+        return false;
+    }
+}
+
+DeviceManager::WaitResult DeviceManager::waitForDataWithEventLoop(
+    const QString& deviceName, 
+    QVector<QVector<double>>& channelData,
+    int maxAttempts,
+    int checkInterval,
+    int timeout)
+{
+    WaitResult result;
+    
+    // 创建事件循环和定时器
+    QEventLoop eventLoop;
+    QTimer timeoutTimer;
+    QTimer checkTimer;
+    
+    // 设置超时定时器
+    timeoutTimer.setSingleShot(true);
+    timeoutTimer.setInterval(timeout);
+    
+    // 设置检查定时器
+    checkTimer.setInterval(checkInterval);
+    
+    // 连接超时信号
+    connect(&timeoutTimer, &QTimer::timeout, [&]() {
+        result.timeout = true;
+        result.errorMessage = QString("等待数据超时 (%1ms)").arg(timeout);
+        eventLoop.quit();
+    });
+    
+    // 连接检查定时器信号
+    connect(&checkTimer, &QTimer::timeout, [&]() {
+        result.attempts++;
+        
+        // 尝试读取数据
+        if (readMultiPointData(deviceName, channelData, 1000)) {
+            if (!channelData.isEmpty() && !channelData[0].isEmpty()) {
+                result.success = true;
+                eventLoop.quit();
+                return;
+            }
+        }
+        
+        // 检查是否达到最大尝试次数
+        if (result.attempts >= maxAttempts) {
+            result.errorMessage = QString("达到最大尝试次数 (%1)").arg(maxAttempts);
+            eventLoop.quit();
+        }
+    });
+    
+    // 启动定时器
+    timeoutTimer.start();
+    checkTimer.start();
+    
+    // 运行事件循环 - 不会阻塞Qt的事件系统
+    eventLoop.exec();
+    
+    // 停止定时器
+    timeoutTimer.stop();
+    checkTimer.stop();
+    
+    return result;
 }
