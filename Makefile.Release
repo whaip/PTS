@@ -641,6 +641,7 @@ release\moc_mainwindow.cpp: mainwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDir \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QMenu \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		testsequencemanager.h \
@@ -1322,6 +1323,7 @@ release\moc_devicemanager.cpp: devicemanager.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
 	D:\ProgramData\anaconda3\Library\bin\moc.exe $(DEFINES) --compiler-flavor=msvc --include D:/FaultDetect/Program/FaultDetect/PTS/release/moc_predefs.h -ID:/ProgramData/anaconda3/Library/mkspecs/win32-msvc -ID:/FaultDetect/Program/FaultDetect/PTS -ID:/FaultDetect/Program/FaultDetect/PTS/include -ID:/FaultDetect/Program/FaultDetect/PTS/include/onnxruntime -ID:/FaultDetect/Program/FaultDetect/PTS/include/opencv2 -ID:/ProgramData/anaconda3/Library/include/qt -ID:/ProgramData/anaconda3/Library/include/qt/QtPrintSupport -ID:/ProgramData/anaconda3/Library/include/qt/QtOpenGL -ID:/ProgramData/anaconda3/Library/include/qt/QtWidgets -ID:/ProgramData/anaconda3/Library/include/qt/QtGui -ID:/ProgramData/anaconda3/Library/include/qt/QtANGLE -ID:/ProgramData/anaconda3/Library/include/qt/QtConcurrent -ID:/ProgramData/anaconda3/Library/include/qt/QtCore -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\include" -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\ATLMFC\include" -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include" -I"C:\Program Files (x86)\Windows Kits\10\include\10.0.22621.0\ucrt" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\um" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\shared" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\winrt" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\cppwinrt" devicemanager.h -o release\moc_devicemanager.cpp
@@ -1643,16 +1645,19 @@ release\moc_devicemanagertestwindow.cpp: devicemanagertestwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QTimer \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qtimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qbasictimer.h \
-		devicemanager.h \
-		include\JY5320Core.h \
-		include\JY5710.h \
-		include\JY8902.h \
-		devicethread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QThread \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qthread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdeadlinetimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qelapsedtimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMutex \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QElapsedTimer \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDateTime \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdatetime.h \
+		devicemanager.h \
+		include\JY5320Core.h \
+		include\JY5710.h \
+		include\JY8902.h \
+		devicethread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QWaitCondition \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qwaitcondition.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDeadlineTimer \
@@ -1663,12 +1668,9 @@ release\moc_devicemanagertestwindow.cpp: devicemanagertestwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QString \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QStringList \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVariantMap \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDateTime \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdatetime.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QObject \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMap \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QHash \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QElapsedTimer \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QCoreApplication \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qcoreapplication.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qeventloop.h \
@@ -1689,6 +1691,7 @@ release\moc_devicemanagertestwindow.cpp: devicemanagertestwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
 	D:\ProgramData\anaconda3\Library\bin\moc.exe $(DEFINES) --compiler-flavor=msvc --include D:/FaultDetect/Program/FaultDetect/PTS/release/moc_predefs.h -ID:/ProgramData/anaconda3/Library/mkspecs/win32-msvc -ID:/FaultDetect/Program/FaultDetect/PTS -ID:/FaultDetect/Program/FaultDetect/PTS/include -ID:/FaultDetect/Program/FaultDetect/PTS/include/onnxruntime -ID:/FaultDetect/Program/FaultDetect/PTS/include/opencv2 -ID:/ProgramData/anaconda3/Library/include/qt -ID:/ProgramData/anaconda3/Library/include/qt/QtPrintSupport -ID:/ProgramData/anaconda3/Library/include/qt/QtOpenGL -ID:/ProgramData/anaconda3/Library/include/qt/QtWidgets -ID:/ProgramData/anaconda3/Library/include/qt/QtGui -ID:/ProgramData/anaconda3/Library/include/qt/QtANGLE -ID:/ProgramData/anaconda3/Library/include/qt/QtConcurrent -ID:/ProgramData/anaconda3/Library/include/qt/QtCore -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\include" -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\ATLMFC\include" -I"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\VS\include" -I"C:\Program Files (x86)\Windows Kits\10\include\10.0.22621.0\ucrt" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\um" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\shared" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\winrt" -I"C:\Program Files (x86)\Windows Kits\10\\include\10.0.22621.0\\cppwinrt" devicemanagertestwindow.h -o release\moc_devicemanagertestwindow.cpp
@@ -1855,6 +1858,7 @@ release\moc_faultdiagnostic.cpp: faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
@@ -2035,6 +2039,7 @@ release\moc_testsequencemanager.cpp: testsequencemanager.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
@@ -2204,6 +2209,7 @@ release\moc_resultexporter.cpp: resultexporter.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
@@ -8214,6 +8220,7 @@ release\moc_wiringguidedialog.cpp: WiringGuide\wiringguidedialog.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDir \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QMenu \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qmenu.h \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		release\moc_predefs.h \
 		..\..\..\..\ProgramData\anaconda3\Library\bin\moc.exe
@@ -8663,6 +8670,7 @@ release\moc_wiringtaskgenerator.cpp: WiringGuide\wiringtaskgenerator.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		release\moc_predefs.h \
@@ -8911,6 +8919,7 @@ release\main.obj: main.cpp mainwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDir \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QMenu \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		testsequencemanager.h \
@@ -9648,6 +9657,7 @@ release\mainwindow.obj: mainwindow.cpp mainwindow.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDir \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QMenu \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		testsequencemanager.h \
@@ -10329,6 +10339,7 @@ release\devicemanager.obj: devicemanager.cpp devicemanager.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDebug \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMutexLocker
 
@@ -10655,16 +10666,19 @@ release\devicemanagertestwindow.obj: devicemanagertestwindow.cpp devicemanagerte
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QTimer \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qtimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qbasictimer.h \
-		devicemanager.h \
-		include\JY5320Core.h \
-		include\JY5710.h \
-		include\JY8902.h \
-		devicethread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QThread \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qthread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdeadlinetimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qelapsedtimer.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMutex \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QElapsedTimer \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDateTime \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdatetime.h \
+		devicemanager.h \
+		include\JY5320Core.h \
+		include\JY5710.h \
+		include\JY8902.h \
+		devicethread.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QWaitCondition \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qwaitcondition.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDeadlineTimer \
@@ -10675,12 +10689,9 @@ release\devicemanagertestwindow.obj: devicemanagertestwindow.cpp devicemanagerte
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QString \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QStringList \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVariantMap \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDateTime \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qdatetime.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QObject \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMap \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QHash \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QElapsedTimer \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QCoreApplication \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qcoreapplication.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\qeventloop.h \
@@ -10701,12 +10712,14 @@ release\devicemanagertestwindow.obj: devicemanagertestwindow.cpp devicemanagerte
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDebug \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QApplication \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qapplication.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qdesktopwidget.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtGui\qguiapplication.h \
-		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtGui\qinputmethod.h
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtGui\qinputmethod.h \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QMutexLocker
 
 release\faultdiagnostic.obj: faultdiagnostic.cpp faultdiagnostic.h \
 		devicemanager.h \
@@ -10870,6 +10883,7 @@ release\faultdiagnostic.obj: faultdiagnostic.cpp faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		testsequencemanager.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QJsonObject \
@@ -11064,6 +11078,7 @@ release\testsequencemanager.obj: testsequencemanager.cpp testsequencemanager.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QFile \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QStandardPaths \
@@ -11237,6 +11252,7 @@ release\resultexporter.obj: resultexporter.cpp resultexporter.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QFile \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QTextStream \
@@ -18269,6 +18285,7 @@ release\wiringguidedialog.obj: WiringGuide\wiringguidedialog.cpp WiringGuide\wir
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QDir \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QMenu \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qmenu.h \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QApplication \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qapplication.h \
@@ -18764,6 +18781,7 @@ release\wiringtaskgenerator.obj: WiringGuide\wiringtaskgenerator.cpp WiringGuide
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qaction.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\qactiongroup.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtWidgets\QAction \
+		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QEventLoop \
 		faultdiagnostic.h \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QVector \
 		..\..\..\..\ProgramData\anaconda3\Library\include\qt\QtCore\QStandardPaths \

@@ -1,6 +1,7 @@
 #include "faultdiagnostic.h"
 #include "testsequencemanager.h"
 #include "include/JY8902.h"
+#include "5711waveformconfig.h"
 #include <QDebug>
 #include <QThread>
 #include <QFile>
@@ -423,20 +424,98 @@ MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_vo
 {
     MeasurementResult result;
     
-    // 使用DMM测量电阻
-    double resistance;
-    bool success;
-    success = device_manager_->measureResistance(resistance, 5000);
-    if (!success) {
-        result.error_message = device_manager_->getLastError();
+    // 使用DMM测量电阻 - 使用DeviceOperation方式
+    qDebug() << "开始电阻测量 - 通道:" << channel << "测试电压:" << test_voltage;
+    
+    // 1. 配置DMM连续电阻测量
+    DeviceOperation configOp;
+    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    configOp.parameters["range"] = "auto";
+    configOp.parameters["samplesPerTrigger"] = 20;
+    configOp.parameters["sampleInterval"] = 0.02;
+    configOp.parameters["useNPLC"] = false;
+    configOp.parameters["apertureTime"] = 0.02;
+    configOp.parameters["nplcValue"] = 3;
+    configOp.parameters["triggerDelay"] = 10;
+    configOp.parameters["bufferSize"] = 1000;
+    configOp.parameters["timeout"] = 5000;
+    configOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY8902", configOp)) {
+        result.error_message = "DMM配置操作提交失败";
+        result.valid = false;
+        return result;
     }
     
-    if (success) {
-        result.primary_value = resistance;
+    DeviceResult configResult = device_manager_->waitForResult("JY8902", 5000);
+    if (!configResult.success) {
+        result.error_message = "DMM配置失败: " + configResult.error;
+        result.valid = false;
+        return result;
+    }
+    
+    // 2. 启动连续测量
+    DeviceOperation startOp;
+    startOp.command = DeviceCommand::START_MEASUREMENT;
+    startOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY8902", startOp)) {
+        result.error_message = "DMM启动操作提交失败";
+        result.valid = false;
+        return result;
+    }
+    
+    DeviceResult startResult = device_manager_->waitForResult("JY8902", 5000);
+    if (!startResult.success) {
+        result.error_message = "DMM启动失败: " + startResult.error;
+        result.valid = false;
+        return result;
+    }
+    
+    // 3. 发送软件触发
+    DeviceOperation triggerOp;
+    triggerOp.command = DeviceCommand::SYNC_TRIGGER;
+    triggerOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY8902", triggerOp)) {
+        result.error_message = "DMM软件触发操作提交失败";
+        result.valid = false;
+        return result;
+    }
+    
+    DeviceResult triggerResult = device_manager_->waitForResult("JY8902", 5000);
+    if (!triggerResult.success) {
+        result.error_message = "DMM软件触发失败: " + triggerResult.error;
+        result.valid = false;
+        return result;
+    }
+    
+    // 4. 读取电阻数据
+    QVector<QVector<double>> channelData;
+    
+    DeviceManager::WaitResult waitResult = device_manager_->waitForDataWithEventLoop(
+        "JY8902", channelData, 50, 100, 15000);
+    if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty()) {
+        QVector<double> resistanceData = channelData[0];
+        double avgResistance = 0.0;
+        for (double val : resistanceData) {
+            avgResistance += val;
+        }
+        avgResistance /= resistanceData.size();
+        result.primary_value = avgResistance;
         result.valid = true;
+        qDebug() << "电阻测量成功:" << result.primary_value << "Ω";
     } else {
+        result.error_message = "DMM读取失败: " + waitResult.errorMessage;
         result.valid = false;
     }
+    
+    // 5. 停止连续测量
+    DeviceOperation stopOp;
+    stopOp.command = DeviceCommand::STOP_MEASUREMENT;
+    stopOp.timeout = 3000;
+    device_manager_->submitOperation("JY8902", stopOp);
+    device_manager_->waitForResult("JY8902", 3000);
     
     return result;
 }
@@ -446,6 +525,8 @@ MeasurementResult FaultDiagnostic::measureCapacitance(int channel, double test_f
     MeasurementResult result;
     
     // 使用AC分析法测量电容
+    qDebug() << "开始电容测量 - 通道:" << channel << "测试频率:" << test_frequency;
+    
     // 1. 输出测试信号
     if (!applyTestVoltage(channel, 1.0)) {
         result.valid = false;
@@ -453,23 +534,67 @@ MeasurementResult FaultDiagnostic::measureCapacitance(int channel, double test_f
         return result;
     }
     
-    // 2. 测量响应
-    double voltage, current;
-    if (device_manager_->measureVoltage(channel, voltage) && 
-        device_manager_->measureCurrent(channel, current)) {
+    // 2. 测量电压 - 使用DAQ设备
+    DeviceOperation voltageReadOp;
+    voltageReadOp.command = DeviceCommand::READ_DATA;
+    voltageReadOp.channel = channel;
+    voltageReadOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
+        result.valid = false;
+        result.error_message = "电压测量操作提交失败";
+        return result;
+    }
+    
+    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
+    if (!voltageResult.success) {
+        result.valid = false;
+        result.error_message = "电压测量失败: " + voltageResult.error;
+        return result;
+    }
+    
+    double voltage = voltageResult.value;
+    
+    // 3. 测量电阻 - 使用DMM设备
+    DeviceOperation resistanceConfigOp;
+    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    resistanceConfigOp.parameters["range"] = "auto";
+    resistanceConfigOp.timeout = 3000;
+    
+    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
+        device_manager_->waitForResult("JY8902", 3000);
         
-        // 简化的电容计算 (实际应用中需要更复杂的频域分析)
-        double impedance = voltage / (current + 1e-12); // 避免除零
-        double capacitance = 1.0 / (2 * M_PI * test_frequency * impedance);
+        DeviceOperation resistanceReadOp;
+        resistanceReadOp.command = DeviceCommand::READ_DATA;
+        resistanceReadOp.timeout = 5000;
         
-        result.primary_value = qAbs(capacitance);
-        result.voltage = voltage;
-        result.current = current;
-        result.esr = impedance * 0.1; // 简化的ESR估算
-        result.valid = true;
+        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
+            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
+            if (resistanceResult.success) {
+                double resistance = resistanceResult.value;
+                
+                // 简化的电容计算 (基于电阻值估算)
+                double impedance = resistance; 
+                double capacitance = 1.0 / (2 * M_PI * test_frequency * impedance);
+                
+                result.primary_value = qAbs(capacitance);
+                result.voltage = voltage;
+                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
+                result.esr = impedance * 0.1; // 简化的ESR估算
+                result.valid = true;
+                
+                qDebug() << "电容测量成功:" << result.primary_value << "F";
+            } else {
+                result.valid = false;
+                result.error_message = "电阻测量失败: " + resistanceResult.error;
+            }
+        } else {
+            result.valid = false;
+            result.error_message = "电阻测量操作提交失败";
+        }
     } else {
         result.valid = false;
-        result.error_message = "测量失败";
+        result.error_message = "电阻测量配置失败";
     }
     
     return result;
@@ -480,26 +605,72 @@ MeasurementResult FaultDiagnostic::measureInductance(int channel, double test_fr
     MeasurementResult result;
     
     // 使用AC分析法测量电感
+    qDebug() << "开始电感测量 - 通道:" << channel << "测试频率:" << test_frequency;
+    
     if (!applyTestVoltage(channel, 1.0)) {
         result.valid = false;
         result.error_message = "无法输出测试信号";
         return result;
     }
     
-    double voltage, current;
-    if (device_manager_->measureVoltage(channel, voltage) && 
-        device_manager_->measureCurrent(channel, current)) {
+    // 测量电压 - 使用DAQ设备
+    DeviceOperation voltageReadOp;
+    voltageReadOp.command = DeviceCommand::READ_DATA;
+    voltageReadOp.channel = channel;
+    voltageReadOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
+        result.valid = false;
+        result.error_message = "电压测量操作提交失败";
+        return result;
+    }
+    
+    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
+    if (!voltageResult.success) {
+        result.valid = false;
+        result.error_message = "电压测量失败: " + voltageResult.error;
+        return result;
+    }
+    
+    double voltage = voltageResult.value;
+    
+    // 测量电阻 - 使用DMM设备
+    DeviceOperation resistanceConfigOp;
+    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    resistanceConfigOp.parameters["range"] = "auto";
+    resistanceConfigOp.timeout = 3000;
+    
+    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
+        device_manager_->waitForResult("JY8902", 3000);
         
-        double impedance = voltage / (current + 1e-12);
-        double inductance = impedance / (2 * M_PI * test_frequency);
+        DeviceOperation resistanceReadOp;
+        resistanceReadOp.command = DeviceCommand::READ_DATA;
+        resistanceReadOp.timeout = 5000;
         
-        result.primary_value = qAbs(inductance);
-        result.voltage = voltage;
-        result.current = current;
-        result.valid = true;
+        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
+            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
+            if (resistanceResult.success) {
+                double resistance = resistanceResult.value;
+                double impedance = resistance;
+                double inductance = impedance / (2 * M_PI * test_frequency);
+                
+                result.primary_value = qAbs(inductance);
+                result.voltage = voltage;
+                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
+                result.valid = true;
+                
+                qDebug() << "电感测量成功:" << result.primary_value << "H";
+            } else {
+                result.valid = false;
+                result.error_message = "电阻测量失败: " + resistanceResult.error;
+            }
+        } else {
+            result.valid = false;
+            result.error_message = "电阻测量操作提交失败";
+        }
     } else {
         result.valid = false;
-        result.error_message = "测量失败";
+        result.error_message = "电阻测量配置失败";
     }
     
     return result;
@@ -508,9 +679,9 @@ MeasurementResult FaultDiagnostic::measureInductance(int channel, double test_fr
 MeasurementResult FaultDiagnostic::measureDiodeCharacteristics(int channel)
 {
     MeasurementResult result;
-    
+
     qDebug() << "Starting diode characteristics measurement on channel:" << channel;
-    
+
     // 正向偏置测试 - 使用较低电压以防止过流
     qDebug() << "Step 1: Forward bias test";
     if (!applyTestVoltage(channel, 1.5)) {  // 降低测试电压，避免过流
@@ -518,87 +689,167 @@ MeasurementResult FaultDiagnostic::measureDiodeCharacteristics(int channel)
         result.error_message = "无法输出正向测试电压";
         return result;
     }
-    
+
     waitForStabilization(50);  // 增加稳定时间
+
+    // 测量正向电压 - 使用DAQ设备
+    qDebug() << "Measuring forward voltage using DAQ device";
+    DeviceOperation forwardVoltageOp;
+    forwardVoltageOp.command = DeviceCommand::READ_DATA;
+    forwardVoltageOp.channel = channel;
+    forwardVoltageOp.timeout = 10000;
     
-    // 先配置DMM为电压测量模式
-    qDebug() << "Configuring DMM for voltage measurement";
-    if (use_threaded_manager_) {
-        if (!threaded_device_manager_->configureDMMForVoltage()) {
-            qDebug() << "Failed to configure DMM for voltage measurement";
-            result.valid = false;
-            result.error_message = "DMM电压测量配置失败";
-            return result;
-        }
-    }
-    
-    double forward_voltage;
-    if (!device_manager_->measureVoltage(channel, forward_voltage, 10000)) {  // 增加超时到10秒
+    if (!device_manager_->submitOperation("JY5322", forwardVoltageOp)) {
         result.valid = false;
-        result.error_message = "正向电压测量失败: " + device_manager_->getLastError();
-        qDebug() << "Forward voltage measurement failed:" << device_manager_->getLastError();
+        result.error_message = "正向电压测量操作提交失败";
+        qDebug() << "Forward voltage operation submit failed";
         return result;
     }
     
+    DeviceResult forwardVoltageResult = device_manager_->waitForResult("JY5322", 10000);
+    if (!forwardVoltageResult.success) {
+        result.valid = false;
+        result.error_message = "正向电压测量失败: " + forwardVoltageResult.error;
+        qDebug() << "Forward voltage measurement failed:" << forwardVoltageResult.error;
+        return result;
+    }
+    
+    double forward_voltage = forwardVoltageResult.value;
     qDebug() << "Forward voltage measured:" << forward_voltage << "V";
+
+    // 测量正向电阻 - 使用DMM设备
+    qDebug() << "Measuring forward resistance using DMM device";
     
-    // 配置DMM为电流测量模式
-    qDebug() << "Configuring DMM for current measurement";
-    if (use_threaded_manager_) {
-        if (!threaded_device_manager_->configureDMMForCurrent()) {
-            qDebug() << "Failed to configure DMM for current measurement";
+    // 配置DMM
+    DeviceOperation forwardResConfigOp;
+    forwardResConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    forwardResConfigOp.parameters["range"] = "auto";
+    forwardResConfigOp.parameters["timeout"] = 10000;
+    forwardResConfigOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY8902", forwardResConfigOp)) {
+        result.valid = false;
+        result.error_message = "正向电阻配置操作提交失败";
+        return result;
+    }
+    
+    device_manager_->waitForResult("JY8902", 5000);
+    
+    // 启动DMM测量
+    DeviceOperation forwardResStartOp;
+    forwardResStartOp.command = DeviceCommand::START_MEASUREMENT;
+    forwardResStartOp.timeout = 5000;
+    
+    if (device_manager_->submitOperation("JY8902", forwardResStartOp)) {
+        device_manager_->waitForResult("JY8902", 5000);
+        
+        // 发送软件触发
+        DeviceOperation forwardResTriggerOp;
+        forwardResTriggerOp.command = DeviceCommand::SYNC_TRIGGER;
+        forwardResTriggerOp.timeout = 5000;
+        
+        if (device_manager_->submitOperation("JY8902", forwardResTriggerOp)) {
+            device_manager_->waitForResult("JY8902", 5000);
+            
+            // 读取电阻值
+            DeviceOperation forwardResReadOp;
+            forwardResReadOp.command = DeviceCommand::READ_DATA;
+            forwardResReadOp.parameters["timeout"] = 10000;
+            forwardResReadOp.timeout = 10000;
+            
+            if (!device_manager_->submitOperation("JY8902", forwardResReadOp)) {
+                result.valid = false;
+                result.error_message = "正向电阻读取操作提交失败";
+                qDebug() << "Forward resistance read operation submit failed";
+                return result;
+            }
+            
+            DeviceResult forwardResResult = device_manager_->waitForResult("JY8902", 10000);
+            if (!forwardResResult.success) {
+                result.valid = false;
+                result.error_message = "正向电阻测量失败: " + forwardResResult.error;
+                qDebug() << "Forward resistance measurement failed:" << forwardResResult.error;
+                return result;
+            }
+            
+            double forward_resistance = forwardResResult.value;
+            qDebug() << "Forward resistance measured:" << forward_resistance << "Ω";
+
+            // 反向偏置测试 - 使用较小的反向电压
+            qDebug() << "Step 2: Reverse bias test";
+            if (!applyTestVoltage(channel, -1.0)) {  // 降低反向电压，避免击穿
+                result.valid = false;
+                result.error_message = "无法输出反向测试电压";
+                return result;
+            }
+
+            waitForStabilization(100);  // 反向测试需要更长稳定时间
+
+            // 反向测试主要测量漏电阻 - 使用DMM设备
+            DeviceOperation reverseResTriggerOp;
+            reverseResTriggerOp.command = DeviceCommand::SYNC_TRIGGER;
+            reverseResTriggerOp.timeout = 5000;
+            
+            if (device_manager_->submitOperation("JY8902", reverseResTriggerOp)) {
+                device_manager_->waitForResult("JY8902", 5000);
+                
+                DeviceOperation reverseResReadOp;
+                reverseResReadOp.command = DeviceCommand::READ_DATA;
+                reverseResReadOp.parameters["timeout"] = 15000;
+                reverseResReadOp.timeout = 15000;
+                
+                double reverse_resistance = 1e6;  // 默认高阻值
+                
+                if (device_manager_->submitOperation("JY8902", reverseResReadOp)) {
+                    DeviceResult reverseResResult = device_manager_->waitForResult("JY8902", 15000);
+                    if (reverseResResult.success) {
+                        reverse_resistance = reverseResResult.value;
+                        qDebug() << "Reverse resistance measured:" << reverse_resistance << "Ω";
+                    } else {
+                        qDebug() << "Warning: Reverse resistance measurement failed, using default value";
+                    }
+                } else {
+                    qDebug() << "Warning: Reverse resistance read operation submit failed, using default value";
+                }
+
+                // 停止DMM测量
+                DeviceOperation stopOp;
+                stopOp.command = DeviceCommand::STOP_MEASUREMENT;
+                stopOp.timeout = 3000;
+                device_manager_->submitOperation("JY8902", stopOp);
+                device_manager_->waitForResult("JY8902", 3000);
+
+                // 恢复到0V
+                applyTestVoltage(channel, 0.0);
+
+                result.voltage = forward_voltage;
+                result.current = forward_voltage / (forward_resistance + 1e-12); // 基于欧姆定律估算正向电流
+                result.leakage_current = qAbs(1.0 / (reverse_resistance + 1e-12)); // 基于反向电阻估算漏电流
+                result.valid = true;
+
+                qDebug() << "Diode measurement completed successfully";
+                qDebug() << "Results: Vf=" << forward_voltage << "V, Rf=" << forward_resistance << "Ω, Rr=" << reverse_resistance << "Ω";
+            } else {
+                result.valid = false;
+                result.error_message = "反向电阻测量触发失败";
+            }
+        } else {
             result.valid = false;
-            result.error_message = "DMM电流测量配置失败";
-            return result;
+            result.error_message = "正向电阻测量触发失败";
         }
-    }
-    
-    double forward_current;
-    if (!device_manager_->measureCurrent(channel, forward_current, 10000)) {  // 增加超时到10秒
+    } else {
         result.valid = false;
-        result.error_message = "正向电流测量失败: " + device_manager_->getLastError();
-        qDebug() << "Forward current measurement failed:" << device_manager_->getLastError();
-        return result;
+        result.error_message = "正向电阻测量启动失败";
     }
-    
-    qDebug() << "Forward current measured:" << forward_current << "A";
-    
-    // 反向偏置测试 - 使用较小的反向电压
-    qDebug() << "Step 2: Reverse bias test";
-    if (!applyTestVoltage(channel, -1.0)) {  // 降低反向电压，避免击穿
-        result.valid = false;
-        result.error_message = "无法输出反向测试电压";
-        return result;
-    }
-    
-    waitForStabilization(100);  // 反向测试需要更长稳定时间
-    
-    // 反向测试主要测量漏电流
-    double reverse_current;
-    if (!device_manager_->measureCurrent(channel, reverse_current, 15000)) {  // 反向测量可能需要更长时间
-        qDebug() << "Warning: Reverse current measurement failed, using default value";
-        reverse_current = 0.0;  // 如果反向测量失败，使用默认值
-    }
-    
-    qDebug() << "Reverse current measured:" << reverse_current << "A";
-    
-    // 恢复到0V
-    applyTestVoltage(channel, 0.0);
-    
-    result.voltage = forward_voltage;
-    result.current = forward_current;
-    result.leakage_current = qAbs(reverse_current);
-    result.valid = true;
-    
-    qDebug() << "Diode measurement completed successfully";
-    qDebug() << "Results: Vf=" << forward_voltage << "V, If=" << forward_current << "A, Ir=" << result.leakage_current << "A";
-    
+
     return result;
 }
 
 MeasurementResult FaultDiagnostic::measureICParameters(int channel, const ComponentSpec& spec)
 {
     MeasurementResult result;
+    
+    qDebug() << "开始IC参数测量 - 通道:" << channel << "最大电压:" << spec.max_voltage;
     
     // 给IC上电
     if (!applyTestVoltage(channel, spec.max_voltage)) {
@@ -609,17 +860,62 @@ MeasurementResult FaultDiagnostic::measureICParameters(int channel, const Compon
     
     waitForStabilization(100); // IC上电稳定时间
     
-    double voltage, current;
-    if (device_manager_->measureVoltage(channel, voltage) && 
-        device_manager_->measureCurrent(channel, current)) {
+    // 测量电压 - 使用DAQ设备
+    DeviceOperation voltageReadOp;
+    voltageReadOp.command = DeviceCommand::READ_DATA;
+    voltageReadOp.channel = channel;
+    voltageReadOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
+        result.valid = false;
+        result.error_message = "电压测量操作提交失败";
+        return result;
+    }
+    
+    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
+    if (!voltageResult.success) {
+        result.valid = false;
+        result.error_message = "电压测量失败: " + voltageResult.error;
+        return result;
+    }
+    
+    double voltage = voltageResult.value;
+    
+    // 测量电阻 - 使用DMM设备
+    DeviceOperation resistanceConfigOp;
+    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    resistanceConfigOp.parameters["range"] = "auto";
+    resistanceConfigOp.timeout = 3000;
+    
+    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
+        device_manager_->waitForResult("JY8902", 3000);
         
-        result.voltage = voltage;
-        result.current = current;
-        result.power = voltage * current;
-        result.valid = true;
+        DeviceOperation resistanceReadOp;
+        resistanceReadOp.command = DeviceCommand::READ_DATA;
+        resistanceReadOp.timeout = 5000;
+        
+        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
+            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
+            if (resistanceResult.success) {
+                double resistance = resistanceResult.value;
+                
+                result.voltage = voltage;
+                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
+                result.power = voltage * result.current;
+                result.valid = true;
+                
+                qDebug() << "IC参数测量成功 - 电压:" << voltage << "V, 电阻:" << resistance << "Ω, 功率:" << result.power << "W";
+            } else {
+                result.valid = false;
+                result.error_message = "电阻测量失败: " + resistanceResult.error;
+            }
+        } else {
+            result.valid = false;
+            result.error_message = "电阻测量操作提交失败";
+        }
     } else {
         result.valid = false;
-        result.error_message = "IC参数测量失败";
+        result.error_message = "电阻测量配置失败";
     }
     
     return result;
@@ -627,13 +923,33 @@ MeasurementResult FaultDiagnostic::measureICParameters(int channel, const Compon
 
 bool FaultDiagnostic::checkComponentConnection(int channel)
 {
-    // 简单的连接性检查：测量开路电压
-    double voltage;
-    if (use_threaded_manager_) {
-        return threaded_device_manager_->measureVoltage(channel, voltage);
-    } else {
-        return device_manager_->measureVoltage(channel, voltage);
+    qDebug() << "检查元件连接 - 通道:" << channel;
+    
+    // 使用DAQ设备测量电压来检查连接
+    DeviceOperation voltageReadOp;
+    voltageReadOp.command = DeviceCommand::READ_DATA;
+    voltageReadOp.channel = channel;
+    voltageReadOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
+        qDebug() << "电压测量操作提交失败";
+        return false;
     }
+    
+    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
+    if (!voltageResult.success) {
+        qDebug() << "电压测量失败:" << voltageResult.error;
+        return false;
+    }
+    
+    double voltage = voltageResult.value;
+    qDebug() << "测量电压:" << voltage << "V";
+    
+    // 简单的连接检查：如果能读取到合理的电压值，认为连接正常
+    bool connected = (qAbs(voltage) < 50.0);  // 电压在合理范围内
+    
+    qDebug() << "元件连接状态:" << (connected ? "已连接" : "未连接");
+    return connected;
 }
 
 bool FaultDiagnostic::executeSyncMeasurement(const QString& syncGroup, const QStringList& deviceNames, 
@@ -808,15 +1124,76 @@ bool FaultDiagnostic::applyTestVoltage(int channel, double voltage)
         return false;
     }
     
-    bool result = device_manager_->outputVoltage(channel, voltage);
-    if (!result) {
-        qDebug() << "Failed to apply test voltage" << voltage << "V to channel" << channel;
-        qDebug() << "Device manager error:" << device_manager_->getLastError();
-    } else {
-        qDebug() << "Successfully applied" << voltage << "V to channel" << channel;
+    // 使用DeviceOperation方式配置和输出电压
+    DeviceOperation configOp;
+    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    configOp.parameters["channelCount"] = 1;
+    configOp.parameters["sampleRate"] = 1000000.0;
+    
+    QVariantList waveforms;
+    QVariantMap waveform;
+    waveform["channel"] = channel;
+    waveform["type"] = static_cast<int>(PXIe5711_testtype::HighLevelWave); // 直流电压输出
+    waveform["amplitude"] = qAbs(voltage);
+    waveform["frequency"] = 1.0; // 直流，频率设为1Hz
+    waveform["lowRange"] = -10.0;
+    waveform["highRange"] = 10.0;
+    if (voltage < 0) {
+        waveform["amplitude"] = -waveform["amplitude"].toDouble(); // 负电压
+    }
+    waveforms.append(waveform);
+    
+    configOp.parameters["waveforms"] = waveforms;
+    configOp.timeout = 5000;
+    
+    if (!device_manager_->submitOperation("JY5711", configOp)) {
+        qDebug() << "Failed to submit voltage configuration operation for channel" << channel;
+        return false;
     }
     
-    return result;
+    DeviceResult configResult = device_manager_->waitForResult("JY5711", 5000);
+    if (!configResult.success) {
+        qDebug() << "Failed to configure voltage output for channel" << channel << ":" << configResult.error;
+        return false;
+    }
+    
+    // 开始输出电压
+    DeviceOperation outputOp;
+    outputOp.command = DeviceCommand::WRITE_DATA;
+    outputOp.parameters["waveforms"] = waveforms;
+    outputOp.parameters["sampleRate"] = 1000000;
+    outputOp.parameters["samplesPerChannel"] = 1000000; // 1秒的数据，用于持续输出
+    outputOp.timeout = 10000;
+    
+    if (!device_manager_->submitOperation("JY5711", outputOp)) {
+        qDebug() << "Failed to submit voltage output operation for channel" << channel;
+        return false;
+    }
+    
+    DeviceResult outputResult = device_manager_->waitForResult("JY5711", 10000);
+    if (!outputResult.success) {
+        qDebug() << "Failed to start voltage output for channel" << channel << ":" << outputResult.error;
+        return false;
+    }
+    
+    // 发送软件触发开始输出
+    DeviceOperation triggerOp;
+    triggerOp.command = DeviceCommand::SYNC_TRIGGER;
+    triggerOp.timeout = 3000;
+    
+    if (!device_manager_->submitOperation("JY5711", triggerOp)) {
+        qDebug() << "Failed to submit trigger operation for channel" << channel;
+        return false;
+    }
+    
+    DeviceResult triggerResult = device_manager_->waitForResult("JY5711", 3000);
+    if (!triggerResult.success) {
+        qDebug() << "Failed to trigger voltage output for channel" << channel << ":" << triggerResult.error;
+        return false;
+    }
+    
+    qDebug() << "Successfully applied" << voltage << "V to channel" << channel;
+    return true;
 }
 
 void FaultDiagnostic::waitForStabilization(int delay_ms)

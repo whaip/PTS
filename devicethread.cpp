@@ -868,6 +868,7 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
             break;        
             
         case DeviceCommand::READ_DATA:
+            // 根据当前模式执行相应的读取操作
             switch (currentMode_) {
                 case AcquisitionMode::SINGLE_POINT:
                     result = performSinglePointAcquisition(operation);
@@ -878,6 +879,24 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
                 case AcquisitionMode::CONTINUOUS:
                     result = readContinuousData(operation);
                     break;
+                default:
+                    result.error = "Unknown acquisition mode";
+                    break;
+            }
+            break;
+            
+        case DeviceCommand::SYNC_TRIGGER:
+            // 发送软件触发
+            if (acquisitionActive_) {
+                int32_t apiResult = JY5320_AI_SendSoftTrigger(deviceHandle_, JY5320_StartTrigger);
+                if (apiResult == 0) {
+                    result.success = true;
+                    qDebug() << "DAQ soft trigger sent successfully";
+                } else {
+                    result.error = QString("Failed to send DAQ soft trigger, error: %1").arg(apiResult);
+                }
+            } else {
+                result.error = "DAQ measurement not active, cannot send trigger";
             }
             break;
             
@@ -1176,22 +1195,7 @@ DeviceResult DAQDeviceThread::readMultiPointData(const DeviceOperation& operatio
     unsigned long long transferredSamples = 0;
     bool overRun = false;
     
-    // int32_t apiResult = JY5320_AI_CheckBufferStatus(deviceHandle_, &availableSamples, 
-    //                                                &transferredSamples, &overRun);
-    // if (apiResult != 0) {
-    //     result.success = false;
-    //     result.error = QString("Failed to check buffer status, error: %1").arg(apiResult);
-    //     return result;
-    // }
-    
-    // // 返回当前状态信息
-    // int expectedTotalSamples = currentParams_.samplesPerChannel * enabledChannelCount_;
     result.success = false;
-    // result.error = QString("Data not ready, available: %1, required total: %2 (samplesPerChannel: %3 × channels: %4)")
-    //                .arg(availableSamples)
-    //                .arg(expectedTotalSamples)
-    //                .arg(currentParams_.samplesPerChannel)
-    //                .arg(enabledChannelCount_);
     
     return result;
 }
@@ -1656,13 +1660,34 @@ void DAQDeviceThread::handleSyncTrigger()
     }
 }
 
-// DMMDeviceThread 实现
+// DMMDeviceThread 实现 - 仅支持连续电阻测量（参考DAQDeviceThread结构）
 DMMDeviceThread::DMMDeviceThread(QObject* parent)
     : BaseDeviceThread("JY8902", parent)
     , deviceHandle_(nullptr)
-    , currentFunction_(JY8902_DC_Volts)
     , measurementActive_(false)
+    , currentMode_(ResistanceMeasurementMode::CONTINUOUS)
+    , samplesPerTrigger_(20)
+    , bufferWriteIndex_(0)
+    , bufferOverrun_(false)
+    , accumulatedSamples_(0)
 {
+    // 初始化数据获取定时器（参考DAQDeviceThread）
+    dataFetchTimer_ = new QTimer(this);
+    connect(dataFetchTimer_, &QTimer::timeout, this, &DMMDeviceThread::onDataFetchTimer);
+    dataFetchTimer_->setInterval(50); // 50ms间隔检查数据，与官方示例一致
+    
+    // 初始化默认参数（参考DAQDeviceThread的AcquisitionParams）
+    currentParams_.mode = ResistanceMeasurementMode::CONTINUOUS;
+    currentParams_.range = JY8902_2_Wire_Resistance_Auto;
+    currentParams_.samplesPerTrigger = 20;
+    currentParams_.sampleInterval = 0.02;
+    currentParams_.useNPLC = false;
+    currentParams_.apertureTime = 0.02;
+    currentParams_.nplcValue = 3;
+    currentParams_.triggerDelay = 10;
+    currentParams_.useBuffer = true;
+    currentParams_.bufferSize = 1000;
+    currentParams_.timeout = 10000;
 }
 
 DMMDeviceThread::~DMMDeviceThread()
@@ -1672,7 +1697,7 @@ DMMDeviceThread::~DMMDeviceThread()
 
 bool DMMDeviceThread::initializeDevice()
 {
-    qDebug() << "Attempting to initialize JY8902 DMM device...";
+    qDebug() << "Attempting to initialize JY8902 DMM device for continuous resistance measurement...";
     
     int32_t result = JY8902_Open(0, &deviceHandle_);
     if (result != 0) {
@@ -1709,15 +1734,6 @@ bool DMMDeviceThread::initializeDevice()
     }
       qDebug() << "JY8902 device opened successfully, handle:" << deviceHandle_;
     
-    // 基本配置（参考官方示例的简化流程）
-    if (!configureBasicSettings()) {
-        qDebug() << "Failed to configure basic settings";
-        JY8902_Close(deviceHandle_);
-        deviceHandle_ = nullptr;
-        return false;
-    }
-    
-    qDebug() << "JY8902 DMM device initialized successfully";
     return true;
 }
 
@@ -1725,11 +1741,16 @@ void DMMDeviceThread::shutdownDevice()
 {
     if (deviceHandle_) {
         if (measurementActive_) {
-            JY8902_DMM_Stop(deviceHandle_);
-            measurementActive_ = false;
+            stopMeasurement();
         }
+        
+        if (dataFetchTimer_->isActive()) {
+            dataFetchTimer_->stop();
+        }
+        
         JY8902_Close(deviceHandle_);
         deviceHandle_ = nullptr;
+        qDebug() << "JY8902 DMM device shutdown completed";
     }
 }
 
@@ -1741,7 +1762,8 @@ DeviceResult DMMDeviceThread::executeOperation(const DeviceOperation& operation)
         result.error = "Device not initialized";
         return result;
     }
-      switch (operation.command) {        case DeviceCommand::INITIALIZE:
+      switch (operation.command) {        
+        case DeviceCommand::INITIALIZE:
             // Check if already initialized
             if (deviceHandle_) {
                 result.success = true;
@@ -1760,40 +1782,36 @@ DeviceResult DMMDeviceThread::executeOperation(const DeviceOperation& operation)
             return result;
             
         case DeviceCommand::CONFIGURE_CHANNEL:
-            // 配置DMM测量功能
-            {
-                JY8902_DMM_MeasurementFunction function = 
-                    static_cast<JY8902_DMM_MeasurementFunction>(operation.parameters.value("function").toInt());
-                configureMeasurement(function);
-                result.success = true;
-                qDebug() << "DMM configured for function" << function;
-            }
-            break;        case DeviceCommand::START_MEASUREMENT:
-            if (!measurementActive_) {
-                int32_t apiResult = JY8902_DMM_Start(deviceHandle_);
-                if (apiResult == 0) {
-                    measurementActive_ = true;
-                    result.success = true;
-                    qDebug() << "DMM measurement started";
-                } else {
-                    result.error = QString("Failed to start DMM measurement, error: %1").arg(apiResult);
-                }
-            }
-            break;        case DeviceCommand::STOP_MEASUREMENT:
-            if (measurementActive_) {
-                int32_t apiResult = JY8902_DMM_Stop(deviceHandle_);
-                if (apiResult == 0) {
-                    measurementActive_ = false;
-                    result.success = true;
-                    qDebug() << "DMM measurement stopped";
-                } else {
-                    result.error = QString("Failed to stop DMM measurement, error: %1").arg(apiResult);
-                }
-            }
+            // 配置DMM连续电阻测量（参考DAQDeviceThread的CONFIGURE_CHANNEL）
+            result = configureContinuousResistanceMeasurement(operation);
+            break;
+
+        case DeviceCommand::START_MEASUREMENT:
+            result = startContinuousResistanceMeasurement(operation);
+            break;
+            
+        case DeviceCommand::STOP_MEASUREMENT:
+            result = stopContinuousResistanceMeasurement(operation);
             break;
             
         case DeviceCommand::READ_DATA:
-            result = performMeasurement();
+            // 根据当前模式执行电阻测量（参考DAQDeviceThread的READ_DATA）
+            result = readContinuousResistanceData(operation);
+            break;
+            
+        case DeviceCommand::SYNC_TRIGGER:
+            // 发送软件触发（参考DAQDeviceThread的SYNC_TRIGGER）
+            if (measurementActive_) {
+                int32_t apiResult = JY8902_DMM_SendSoftTrigger(deviceHandle_);
+                if (apiResult == 0) {
+                    result.success = true;
+                    qDebug() << "DMM continuous resistance measurement soft trigger sent successfully";
+                } else {
+                    result.error = QString("Failed to send DMM soft trigger, error: %1").arg(apiResult);
+                }
+            } else {
+                result.error = "DMM continuous measurement not active";
+            }
             break;
             
         default:
@@ -1805,357 +1823,520 @@ DeviceResult DMMDeviceThread::executeOperation(const DeviceOperation& operation)
 }
 
 void DMMDeviceThread::handleSyncTrigger()
-{    // DMM设备的同步触发处理
+{    // DMM设备的同步触发处理（参考DAQDeviceThread）
     if (deviceHandle_ && measurementActive_) {
-        // 发送软件触发开始测量
+        // 发送软件触发开始电阻测量
         JY8902_DMM_SendSoftTrigger(deviceHandle_);
-        qDebug() << "DMM received sync trigger and sent soft trigger";
+        qDebug() << "DMM received sync trigger and sent soft trigger for continuous resistance measurement";
     }
 }
 
-void DMMDeviceThread::configureMeasurement(JY8902_DMM_MeasurementFunction function)
-{
-    if (!deviceHandle_) {
-        qDebug() << "Cannot configure measurement - device handle is null";
-        return;
-    }
-    
-    qDebug() << "Configuring DMM measurement function:" << function;
-    currentFunction_ = function;
-    
-    int32_t result = 0;
-    
-    // 完整的DMM配置序列 - with error checking
-    result = JY8902_DMM_SetSampleMode(deviceHandle_, JY8902_SingleSample);
-    if (result != 0) {
-        qDebug() << "Failed to set sample mode, error:" << result;
-        return;
-    }
-    
-    result = JY8902_DMM_PowerLineFrequency(deviceHandle_, JY8902_50_Hz);
-    if (result != 0) {
-        qDebug() << "Failed to set power line frequency, error:" << result;
-        return;
-    }
-    
-    result = JY8902_DMM_SetMeasurementFunction(deviceHandle_, function);
-    if (result != 0) {
-        qDebug() << "Failed to set measurement function, error:" << result;
-        return;
-    }
-    
-    // Configure based on function type with optimized settings
-    if (function == JY8902_2_Wire_Resistance) {
-        result = JY8902_DMM_Set2WireResistance(deviceHandle_, JY8902_2_Wire_Resistance_Auto);
-        if (result != 0) {
-            qDebug() << "Failed to set 2-wire resistance range, error:" << result;
-        }
-    } else if (function == JY8902_DC_Volts) {
-        result = JY8902_DMM_SetDCVolt(deviceHandle_, JY8902_DC_Volt_Auto);
-        if (result != 0) {
-            qDebug() << "Failed to set DC voltage range, error:" << result;
-        }
-    } else if (function == JY8902_DC_Current) {
-        result = JY8902_DMM_SetDCCurrent(deviceHandle_, JY8902_DC_Current_Auto);
-        if (result != 0) {
-            qDebug() << "Failed to set DC current range, error:" << result;
-        }
-    }
-    
-    // Set aperture and timing - optimized for diode testing with higher NPLC
-    result = JY8902_DMM_SetApertureUnit(deviceHandle_, JY8902_NPLC);
-    if (result != 0) {
-        qDebug() << "Failed to set aperture unit, error:" << result;
-    }
-    
-    // Use higher NPLC values for better accuracy and noise reduction in diode testing
-    double nplcValue = 1.0;  // Default
-    if (function == JY8902_DC_Current) {
-        nplcValue = 10.0;  // Higher NPLC for current measurements (more stable for diode testing)
-        qDebug() << "Using high NPLC value for current measurement (diode testing optimization)";
-    } else if (function == JY8902_DC_Volts) {
-        nplcValue = 5.0;   // Medium NPLC for voltage measurements
-        qDebug() << "Using medium NPLC value for voltage measurement";
-    }
-    
-    result = JY8902_DMM_SetNPLC(deviceHandle_, nplcValue);
-    if (result != 0) {
-        qDebug() << "Failed to set NPLC to" << nplcValue << ", error:" << result;
-    } else {
-        qDebug() << "Successfully set NPLC to" << nplcValue;
-    }
-    
-    // Enable auto-zero for better accuracy (especially important for diode measurements)
-    result = JY8902_DMM_DisableCalibration(deviceHandle_, false);  // Enable calibration
-    if (result != 0) {
-        qDebug() << "Failed to enable auto-zero calibration, error:" << result;
-    } else {
-        qDebug() << "Auto-zero calibration enabled for improved accuracy";
-    }
-    
-    // Set longer trigger delays for diode testing (allows for proper settling)
-    double triggerDelay = 0.001;  // Default 1ms
-    if (function == JY8902_DC_Current) {
-        triggerDelay = 0.1;  // 100ms for current measurements (diode forward current settling)
-        qDebug() << "Using extended trigger delay for current measurement stability";
-    } else if (function == JY8902_DC_Volts) {
-        triggerDelay = 0.05; // 50ms for voltage measurements
-        qDebug() << "Using moderate trigger delay for voltage measurement";
-    }
-    
-    result = JY8902_DMM_SetTriggerDelay(deviceHandle_, triggerDelay);
-    if (result != 0) {
-        qDebug() << "Failed to set trigger delay to" << triggerDelay << "s, error:" << result;
-    } else {
-        qDebug() << "Successfully set trigger delay to" << triggerDelay << "s";
-    }
-    
-    // Use immediate trigger for simplicity and reliability
-    result = JY8902_DMM_SetTriggerType(deviceHandle_, JY8902_Immediately);
-    if (result != 0) {
-        qDebug() << "Failed to set trigger type, error:" << result;
-    }
-    
-    qDebug() << "DMM measurement configuration completed for function:" << function 
-             << "with optimized settings for diode testing";
-}
-
-bool DMMDeviceThread::configureBasicSettings()
-{
-    if (!deviceHandle_) {
-        qDebug() << "Cannot configure basic settings - device handle is null";
-        return false;
-    }
-    
-    qDebug() << "Configuring basic DMM settings based on official examples...";
-    
-    int32_t result = 0;
-    
-    // 基本配置序列（根据官方示例）
-    
-    // 1. 设置采样模式为单点测量
-    result = JY8902_DMM_SetSampleMode(deviceHandle_, JY8902_SingleSample);
-    if (result != 0) {
-        qDebug() << "Failed to set sample mode, error:" << result;
-        return false;
-    }
-    
-    // 2. 设置电源线频率（50Hz）
-    result = JY8902_DMM_PowerLineFrequency(deviceHandle_, JY8902_50_Hz);
-    if (result != 0) {
-        qDebug() << "Failed to set power line frequency, error:" << result;
-        return false;
-    }
-    
-    // 3. 设置默认测量功能（DC电压）
-    result = JY8902_DMM_SetMeasurementFunction(deviceHandle_, JY8902_DC_Volts);
-    if (result != 0) {
-        qDebug() << "Failed to set measurement function, error:" << result;
-        return false;
-    }
-    
-    // 4. 设置DC电压量程为自动
-    result = JY8902_DMM_SetDCVolt(deviceHandle_, JY8902_DC_Volt_Auto);
-    if (result != 0) {
-        qDebug() << "Failed to set DC voltage range, error:" << result;
-        return false;
-    }
-    
-    // 5. 设置孔径单位为NPLC
-    result = JY8902_DMM_SetApertureUnit(deviceHandle_, JY8902_NPLC);
-    if (result != 0) {
-        qDebug() << "Failed to set aperture unit, error:" << result;
-        return false;
-    }
-    
-    // 6. 设置NPLC为1（快速测量）
-    result = JY8902_DMM_SetNPLC(deviceHandle_, 1);
-    if (result != 0) {
-        qDebug() << "Failed to set NPLC, error:" << result;
-        return false;
-    }
-    
-    // 7. 禁用校准（加快初始化）
-    result = JY8902_DMM_DisableCalibration(deviceHandle_, true);
-    if (result != 0) {
-        qDebug() << "Failed to disable calibration, error:" << result;
-        return false;
-    }
-    
-    // 8. 设置触发延迟
-    result = JY8902_DMM_SetTriggerDelay(deviceHandle_, 10);
-    if (result != 0) {
-        qDebug() << "Failed to set trigger delay, error:" << result;
-        return false;
-    }
-    
-    // 9. 设置触发类型为立即触发
-    result = JY8902_DMM_SetTriggerType(deviceHandle_, JY8902_Immediately);
-    if (result != 0) {
-        qDebug() << "Failed to set trigger type, error:" << result;
-        return false;
-    }
-    
-    qDebug() << "Basic DMM settings configured successfully";
-    currentFunction_ = JY8902_DC_Volts;
-    return true;
-}
-
-DeviceResult DMMDeviceThread::performMeasurement()
+DeviceResult DMMDeviceThread::configureContinuousResistanceMeasurement(const DeviceOperation& operation)
 {
     DeviceResult result;
+    result.command = operation.command;
     
     if (!deviceHandle_) {
+        result.success = false;
         result.error = "Device not initialized";
         return result;
     }
     
-    qDebug() << "DMM performing measurement with function:" << currentFunction_;
+    // 解析参数（参考DAQDeviceThread的configureMultiPointAcquisition）
+    const QVariantMap& params = operation.parameters;
+    QString rangeStr = params.value("range", "auto").toString();
+    JY8902_DMM_2_Wire_ResistanceRange range = parseResistanceRange(rangeStr);
+    int samplesPerTrigger = params.value("samplesPerTrigger", 20).toInt();
+    double sampleInterval = params.value("sampleInterval", 0.02).toDouble();
+    bool useNPLC = params.value("useNPLC", false).toBool();
+    int nplcValue = params.value("nplcValue", 3).toInt();
+    double apertureTime = params.value("apertureTime", 0.02).toDouble();
+    int triggerDelay = params.value("triggerDelay", 10).toInt();
+    int bufferSize = params.value("bufferSize", 1000).toInt();
     
-    // 在开始测量前，先验证设备状态并重新配置
+    qDebug() << deviceName_ << "Configuring continuous resistance measurement (based on official example):"
+             << "range:" << static_cast<int>(range)
+             << "samplesPerTrigger:" << samplesPerTrigger
+             << "sampleInterval:" << sampleInterval;
+    
+    // 停止当前任何正在进行的测量
+    if (measurementActive_) {
+        stopMeasurement();
+    }
+    
+    // 配置参数（按照官方示例）
     int32_t apiResult = 0;
     
-    // 1. 停止任何正在进行的测量
-    JY8902_DMM_Stop(deviceHandle_);
-    QThread::msleep(100);
-    
-    // 2. 重新配置当前测量功能以确保状态正确
-    qDebug() << "Re-configuring measurement function before read:" << currentFunction_;
-    apiResult = JY8902_DMM_SetMeasurementFunction(deviceHandle_, currentFunction_);
+    // 1. 设置采样模式为连续多点模式（按照官方示例）
+    apiResult = JY8902_DMM_SetSampleMode(deviceHandle_, JY8902_ContinuousMultiPoint);
     if (apiResult != 0) {
-        result.error = QString("Failed to re-configure measurement function, error: %1").arg(apiResult);
+        result.success = false;
+        result.error = QString("Failed to set continuous multi-point mode, error: %1").arg(apiResult);
         return result;
     }
     
-    // 3. 配置适当的量程
-    if (currentFunction_ == JY8902_2_Wire_Resistance) {
-        apiResult = JY8902_DMM_Set2WireResistance(deviceHandle_, JY8902_2_Wire_Resistance_Auto);
-        if (apiResult != 0) {
-            qDebug() << "Warning: Failed to set auto resistance range, error:" << apiResult;
-        }
-    } else if (currentFunction_ == JY8902_DC_Volts) {
-        apiResult = JY8902_DMM_SetDCVolt(deviceHandle_, JY8902_DC_Volt_Auto);
-        if (apiResult != 0) {
-            qDebug() << "Warning: Failed to set auto voltage range, error:" << apiResult;
-        }
-    } else if (currentFunction_ == JY8902_DC_Current) {
-        apiResult = JY8902_DMM_SetDCCurrent(deviceHandle_, JY8902_DC_Current_Auto);
-        if (apiResult != 0) {
-            qDebug() << "Warning: Failed to set auto current range, error:" << apiResult;
-        }
-    }
-    
-    // 4. 设置触发为立即触发
-    apiResult = JY8902_DMM_SetTriggerType(deviceHandle_, JY8902_Immediately);
+    // 2. 设置电源线频率
+    apiResult = JY8902_DMM_PowerLineFrequency(deviceHandle_, JY8902_50_Hz);
     if (apiResult != 0) {
-        qDebug() << "Warning: Failed to set immediate trigger, error:" << apiResult;
+        result.success = false;
+        result.error = QString("Failed to set power line frequency, error: %1").arg(apiResult);
+        return result;
     }
     
-    // 5. 等待设备稳定
-    QThread::msleep(200);
-      // 6. 使用正确的测量序列：Start -> Read -> Stop
-    qDebug() << "Starting proper measurement sequence...";
-    double value = 0.0;
-    int maxRetries = 3;
+    // 3. 设置测量功能为2线电阻测量
+    apiResult = JY8902_DMM_SetMeasurementFunction(deviceHandle_, JY8902_2_Wire_Resistance);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set 2-wire resistance measurement function, error: %1").arg(apiResult);
+        return result;
+    }
     
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-        qDebug() << "DMM measurement attempt" << attempt;
-        
-        // Step 1: Start measurement
-        qDebug() << "Starting DMM measurement...";
-        apiResult = JY8902_DMM_Start(deviceHandle_);
+    // 4. 设置电阻量程
+    apiResult = JY8902_DMM_Set2WireResistance(deviceHandle_, range);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set 2-wire resistance range, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 5. 设置孔径单位和值（按照官方示例）
+    if (useNPLC) {
+        apiResult = JY8902_DMM_SetApertureUnit(deviceHandle_, JY8902_NPLC);
         if (apiResult != 0) {
-            qDebug() << "Failed to start DMM measurement, error:" << apiResult;
-            if (attempt < maxRetries) {
-                QThread::msleep(1000);
-                continue;
-            } else {
-                break;
-            }
-        }
-        
-        // Step 2: Wait for measurement to stabilize
-        QThread::msleep(500);
-        
-        // Step 3: Read measurement with timeout
-        int timeout = 10000;  // 10秒超时
-        qDebug() << "Reading DMM value with timeout:" << timeout << "ms";
-        apiResult = JY8902_DMM_Read(deviceHandle_, &value, timeout);        
-        // Step 4: Stop measurement (always stop, regardless of read result)
-        int stopResult = JY8902_DMM_Stop(deviceHandle_);
-        if (stopResult != 0) {
-            qDebug() << "Warning: Failed to stop DMM measurement, error:" << stopResult;
-        }
-        
-        if (apiResult == 0) {
-            result.success = true;
-            result.value = value;
-            qDebug() << "DMM measurement successful, value:" << value;
+            result.success = false;
+            result.error = QString("Failed to set aperture unit to NPLC, error: %1").arg(apiResult);
             return result;
-        } else {
-            qDebug() << "DMM read attempt" << attempt << "failed with error:" << apiResult;
-              // 分析错误类型并采取不同的恢复策略
-            if (apiResult == -10133) {
-                qDebug() << "Error -10133 detected (DMM Not Started), attempting recovery...";
-                // 确保停止任何残留的测量
-                JY8902_DMM_Stop(deviceHandle_);
-                QThread::msleep(300);
-                
-                // 重新配置设备
-                if (!configureBasicSettings()) {
-                    qDebug() << "Failed to reconfigure basic settings during -10133 recovery";
-                }
-                configureMeasurement(currentFunction_);
-                QThread::msleep(500);
-                
-            } else if (apiResult == -9002) {
-                qDebug() << "Error -9002 detected, attempting device reset...";
-                
-                // 尝试重置设备状态
-                JY8902_DMM_Stop(deviceHandle_);
-                QThread::msleep(500);
-                
-                // 重新配置基本设置
-                if (!configureBasicSettings()) {
-                    qDebug() << "Failed to reconfigure basic settings during recovery";
-                }
-                
-                // 重新配置测量功能
-                configureMeasurement(currentFunction_);
-                QThread::msleep(300);
-                
-            } else if (attempt < maxRetries) {
-                qDebug() << "Retrying DMM read after delay...";
-                QThread::msleep(1000);  // 等待1秒后重试
-            }
+        }
+        
+        apiResult = JY8902_DMM_SetNPLC(deviceHandle_, nplcValue);
+        if (apiResult != 0) {
+            result.success = false;
+            result.error = QString("Failed to set NPLC to %1, error: %2").arg(nplcValue).arg(apiResult);
+            return result;
+        }
+    } else {
+        apiResult = JY8902_DMM_SetApertureUnit(deviceHandle_, JY8902_Second);
+        if (apiResult != 0) {
+            result.success = false;
+            result.error = QString("Failed to set aperture unit to Second, error: %1").arg(apiResult);
+            return result;
+        }
+        
+        apiResult = JY8902_DMM_SetApertureTime(deviceHandle_, apertureTime);
+        if (apiResult != 0) {
+            result.success = false;
+            result.error = QString("Failed to set aperture time to %1, error: %2").arg(apertureTime).arg(apiResult);
+            return result;
         }
     }
     
-    // 所有尝试都失败了
-    QString errorMsg = QString("Failed to read DMM value after %1 attempts, final error: %2").arg(maxRetries).arg(apiResult);
-    
-    // 提供详细的错误诊断信息
-    switch (apiResult) {
-        case -10134:  // Error_DMM_ReadDataTimeOut
-            errorMsg += "\n诊断建议: 测量超时，检查信号连接和信号幅度";
-            break;
-        case -10138:  // Error_DMM_TimeOut
-            errorMsg += "\n诊断建议: 设备超时，检查设备状态和通信连接";
-            break;
-        case -9002:
-            errorMsg += "\n诊断建议: 尝试重启设备，检查驱动程序和设备连接";
-            break;
-        case -10133:
-            errorMsg += "\n诊断建议: 检查设备是否被其他程序占用，尝试重新插拔设备";
-            break;
-        default:
-            errorMsg += "\n诊断建议: 请参考用户手册中的错误代码表进行故障排除";
-            break;
+    // 6. 设置多点采样参数（按照官方示例）
+    apiResult = JY8902_DMM_SetMultiSample(deviceHandle_, samplesPerTrigger, 
+                                         JY8902_Sample_Immediately, sampleInterval);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set multi-sample parameters, error: %1").arg(apiResult);
+        return result;
     }
     
-    result.success = false;
-    result.error = errorMsg;
-    qDebug() << errorMsg;
+    // 7. 禁用校准（按照官方示例）
+    apiResult = JY8902_DMM_DisableCalibration(deviceHandle_, true);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to disable calibration, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 8. 设置触发延迟
+    apiResult = JY8902_DMM_SetTriggerDelay(deviceHandle_, triggerDelay);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set trigger delay, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 9. 设置软件触发类型（连续测量使用软件触发）
+    apiResult = JY8902_DMM_SetTriggerType(deviceHandle_, JY8902_Soft);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to set software trigger type, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 保存配置参数
+    currentParams_.range = range;
+    currentParams_.samplesPerTrigger = samplesPerTrigger;
+    currentParams_.sampleInterval = sampleInterval;
+    currentParams_.useNPLC = useNPLC;
+    currentParams_.nplcValue = nplcValue;
+    currentParams_.apertureTime = apertureTime;
+    currentParams_.triggerDelay = triggerDelay;
+    currentParams_.bufferSize = bufferSize;
+    currentMode_ = ResistanceMeasurementMode::CONTINUOUS;
+    samplesPerTrigger_ = samplesPerTrigger;
+    
+    // 初始化数据缓冲区（参考DAQDeviceThread）
+    {
+        QMutexLocker locker(&bufferMutex_);
+        continuousDataBuffer_.clear();
+        continuousDataBuffer_.reserve(bufferSize);
+        bufferOverrun_ = false;
+        accumulatedSamples_ = 0;
+        bufferWriteIndex_ = 0;
+    }
+    
+    qDebug() << deviceName_ << "Continuous resistance measurement configured successfully (official example style)."
+             << "Range:" << static_cast<int>(range) << "SamplesPerTrigger:" << samplesPerTrigger;
+    
+    result.success = true;
+    result.data["range"] = static_cast<int>(range);
+    result.data["samplesPerTrigger"] = samplesPerTrigger;
+    result.data["sampleInterval"] = sampleInterval;
     
     return result;
+}
+
+DeviceResult DMMDeviceThread::startContinuousResistanceMeasurement(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    if (measurementActive_) {
+        result.success = false;
+        result.error = "Measurement already active";
+        return result;
+    }
+    
+    qDebug() << deviceName_ << "Starting continuous resistance measurement (official example style)...";
+    
+    // 按照官方示例，先分配数据缓冲区
+    int totalSamples = currentParams_.samplesPerTrigger;
+    dataBuffer_.resize(totalSamples);
+    
+    // 1. 启动DMM测量 - 按照官方示例，连续模式下Start后等待软件触发
+    int32_t apiResult = JY8902_DMM_Start(deviceHandle_);
+    if (apiResult != 0) {
+        result.success = false;
+        result.error = QString("Failed to start DMM, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    // 重置测量状态和数据缓存
+    {
+        QMutexLocker locker(&dataMutex_);
+        dataReadyFlag_ = false;
+        lastTriggerData_.clear();
+        tempTriggerData_.clear();
+    }
+    
+    measurementActive_ = true;
+    currentMode_ = ResistanceMeasurementMode::CONTINUOUS;
+    
+    qDebug() << deviceName_ << "Continuous resistance measurement started (waiting for software trigger)";
+    
+    // 启动数据读取定时器 - 确保在正确的线程中启动
+    QMetaObject::invokeMethod(dataFetchTimer_, [this]() {
+        dataFetchTimer_->start(50); // 50ms间隔，与官方示例一致
+    }, Qt::QueuedConnection);
+    
+    result.success = true;
+    result.data["mode"] = "continuous";
+    result.data["samplesPerTrigger"] = currentParams_.samplesPerTrigger;
+    
+    return result;
+}
+
+DeviceResult DMMDeviceThread::readContinuousResistanceData(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    if (currentMode_ != ResistanceMeasurementMode::CONTINUOUS) {
+        result.success = false;
+        result.error = "Not in continuous resistance measurement mode";
+        return result;
+    }
+    
+    // 检查定时器是否已经读取了数据（参考DAQDeviceThread的readMultiPointData）
+    {
+        QMutexLocker locker(&dataMutex_);
+        if (dataReadyFlag_ && !lastTriggerData_.isEmpty()) {
+            // 验证数据有效性
+            bool hasValidData = !lastTriggerData_.isEmpty();
+            
+            if (hasValidData) {
+                // 数据已准备好且有效，返回数据
+                result.success = true;
+                result.data["resistanceData"] = QVariant::fromValue(lastTriggerData_);
+                result.data["samplesPerTrigger"] = lastTriggerData_.size();
+                result.data["unit"] = "Ω";
+                result.data["range"] = static_cast<int>(currentParams_.range);
+                
+                // 计算统计信息
+                if (!lastTriggerData_.isEmpty()) {
+                    double sum = 0.0;
+                    double minVal = lastTriggerData_[0];
+                    double maxVal = lastTriggerData_[0];
+                    
+                    for (double val : lastTriggerData_) {
+                        sum += val;
+                        minVal = qMin(minVal, val);
+                        maxVal = qMax(maxVal, val);
+                    }
+                    
+                    double avgVal = sum / lastTriggerData_.size();
+                    result.value = avgVal;  // 返回平均值作为主要结果
+                    result.data["average"] = avgVal;
+                    result.data["minimum"] = minVal;
+                    result.data["maximum"] = maxVal;
+                }
+                
+                qDebug() << deviceName_ << "Returning cached continuous resistance data -" 
+                         << "Samples:" << lastTriggerData_.size();
+                
+                return result;
+            } else {
+                qDebug() << deviceName_ << "数据标记为准备好但实际为空，重置标志继续等待";
+                dataReadyFlag_ = false;  // 重置标志
+            }
+        }
+    }
+    
+    // 数据还没准备好，检查测量状态
+    if (!measurementActive_) {
+        result.success = false;
+        result.error = "Device not active or measurement not started";
+        return result;
+    }
+    
+    // 测量还在进行中，返回当前状态信息
+    result.success = false;
+    result.error = QString("Data not ready, measurement in progress");
+    
+    return result;
+}
+
+DeviceResult DMMDeviceThread::stopContinuousResistanceMeasurement(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    
+    qDebug() << deviceName_ << "Stopping continuous resistance measurement...";
+    
+    // 停止数据读取定时器
+    if (dataFetchTimer_->isActive()) {
+        dataFetchTimer_->stop();
+    }
+    
+    // 停止DMM测量
+    if (measurementActive_) {
+        int32_t apiResult = JY8902_DMM_Stop(deviceHandle_);
+        if (apiResult != 0) {
+            qDebug() << deviceName_ << "Warning: Failed to stop DMM, error:" << apiResult;
+            // 继续执行，不要因为停止失败而报错
+        }
+        measurementActive_ = false;
+    }
+    
+    qDebug() << deviceName_ << "Continuous resistance measurement stopped";
+    
+    result.success = true;
+    result.data["stopped"] = true;
+    
+    emit measurementCompleted(deviceName_, currentMode_);
+    
+    return result;
+}
+
+void DMMDeviceThread::onDataFetchTimer()
+{
+    if (!measurementActive_ || !deviceHandle_) {
+        return;
+    }
+    
+    if (currentMode_ == ResistanceMeasurementMode::CONTINUOUS) {
+        processContinuousResistanceData();
+    }
+}
+
+void DMMDeviceThread::processContinuousResistanceData()
+{
+    if (!deviceHandle_ || !measurementActive_ || currentMode_ != ResistanceMeasurementMode::CONTINUOUS) {
+        return;
+    }
+    
+    // 先检查缓冲区状态，确保数据确实可用（参考DAQDeviceThread的processMultiPointData）
+    unsigned long long currentAvailable = 0;
+    unsigned long long currentTransferred = 0;
+    bool currentOverrun = false;
+    
+    unsigned long long totalSamplesToRead = currentParams_.samplesPerTrigger;
+    int32_t statusResult = JY8902_DMM_CheckBufferStatus(deviceHandle_, &currentAvailable,
+                                                      &currentTransferred, &currentOverrun);
+    if (statusResult != 0) {
+        return;
+    }
+    
+    // 检查是否有足够的数据可读取
+    if(currentAvailable < totalSamplesToRead) {
+        return;
+    }
+
+    qDebug() << deviceName_ << "读取前缓冲区状态 - Available:" << currentAvailable 
+             << "Transferred:" << currentTransferred << "Overrun:" << currentOverrun;
+    
+    // 读取数据
+    std::unique_ptr<double[]> pDataBuf = std::make_unique<double[]>(currentParams_.samplesPerTrigger);
+    int actualSample = 0;
+    
+    statusResult = JY8902_DMM_ReadMultiPoint(deviceHandle_, pDataBuf.get(), 
+                                           currentParams_.samplesPerTrigger, -1, &actualSample);                           
+    if (statusResult != 0) {
+        qDebug() << deviceName_ << "数据读取错误:" << statusResult;
+        return;
+    }
+
+    if (actualSample <= 0) {
+        return;
+    }
+
+    // 保存读取的数据（参考DAQDeviceThread）
+    {
+        QMutexLocker locker(&dataMutex_);
+        QVector<double> resistanceData;
+        for (int i = 0; i < actualSample; ++i) {
+            resistanceData.append(pDataBuf[i]);
+        }
+        lastTriggerData_ = resistanceData;
+        dataReadyFlag_ = true;
+        qDebug() << deviceName_ << "数据已保存到lastTriggerData_，样本数：" << lastTriggerData_.size();
+    }
+    
+    qDebug() << deviceName_ << "Resistance data parsed and saved successfully";
+
+    // 发送数据就绪信号
+    QVector<double> dataToEmit = lastTriggerData_;
+    emit continuousResistanceDataReady(deviceName_, dataToEmit);
+    
+    // 暂时停止定时器，等待下次触发
+    if (dataFetchTimer_->isActive()) {
+        dataFetchTimer_->stop();
+    }
+}
+
+bool DMMDeviceThread::checkBufferStatus(unsigned long long& availableSamples, bool& overRun)
+{
+    unsigned long long transferredSamples = 0;
+    int32_t apiResult = JY8902_DMM_CheckBufferStatus(deviceHandle_, &availableSamples, 
+                                                    &transferredSamples, &overRun);
+    return (apiResult == 0);
+}
+
+void DMMDeviceThread::setupTrigger()
+{
+    if (deviceHandle_) {
+        // 设置软件触发模式
+        JY8902_DMM_SetTriggerType(deviceHandle_, JY8902_Soft);
+    }
+}
+
+void DMMDeviceThread::startMeasurement()
+{
+    // 这个方法被具体的测量模式方法替代
+}
+
+void DMMDeviceThread::stopMeasurement()
+{
+    if (deviceHandle_ && measurementActive_) {
+        dataFetchTimer_->stop();
+        JY8902_DMM_Stop(deviceHandle_);
+        measurementActive_ = false;
+    }
+}
+
+DeviceResult DMMDeviceThread::configureResistanceMeasurement(const ResistanceMeasurementParams& params)
+{
+    DeviceResult result;
+    
+    // 这个方法可以用于未来扩展其他配置
+    currentParams_ = params;
+    result.success = true;
+    
+    return result;
+}
+
+DeviceResult DMMDeviceThread::setResistanceRange(JY8902_DMM_2_Wire_ResistanceRange range)
+{
+    DeviceResult result;
+    
+    if (deviceHandle_) {
+        int32_t apiResult = JY8902_DMM_Set2WireResistance(deviceHandle_, range);
+        if (apiResult == 0) {
+            currentParams_.range = range;
+            result.success = true;
+        } else {
+            result.error = QString("Failed to set resistance range, error: %1").arg(apiResult);
+        }
+    } else {
+        result.error = "Device not initialized";
+    }
+    
+    return result;
+}
+
+DeviceResult DMMDeviceThread::setMeasurementMode(ResistanceMeasurementMode mode)
+{
+    DeviceResult result;
+    
+    // 目前只支持连续模式
+    if (mode == ResistanceMeasurementMode::CONTINUOUS) {
+        currentMode_ = mode;
+        result.success = true;
+    } else {
+        result.error = "Unsupported measurement mode";
+    }
+    
+    return result;
+}
+
+QString DMMDeviceThread::resistanceModeToString(ResistanceMeasurementMode mode) const
+{
+    switch (mode) {
+        case ResistanceMeasurementMode::CONTINUOUS: return "Continuous";
+        default: return "Unknown";
+    }
+}
+
+JY8902_DMM_2_Wire_ResistanceRange DMMDeviceThread::parseResistanceRange(const QString& rangeStr) const
+{
+    QString range = rangeStr.toLower();
+    
+    if (range == "auto") return JY8902_2_Wire_Resistance_Auto;
+    if (range == "100" || range == "100r") return JY8902_2_Wire_Resistance_100;
+    if (range == "1k" || range == "1000") return JY8902_2_Wire_Resistance_1K;
+    if (range == "10k" || range == "10000") return JY8902_2_Wire_Resistance_10K;
+    if (range == "100k" || range == "100000") return JY8902_2_Wire_Resistance_100K;
+    if (range == "1m" || range == "1000000") return JY8902_2_Wire_Resistance_1M;
+    if (range == "10m" || range == "10000000") return JY8902_2_Wire_Resistance_10M;
+    if (range == "100m" || range == "100000000") return JY8902_2_Wire_Resistance_100M;
+    
+    return JY8902_2_Wire_Resistance_Auto;  // 默认自动量程
 }

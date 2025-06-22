@@ -302,7 +302,7 @@ signals:
     void acquisitionCompleted(const QString& deviceName, AcquisitionMode mode);
 };
 
-// DMM设备线程 (JY8902)
+// DMM设备线程 (JY8902) - 仅支持连续电阻测量
 class DMMDeviceThread : public BaseDeviceThread
 {
     Q_OBJECT
@@ -310,6 +310,26 @@ class DMMDeviceThread : public BaseDeviceThread
 public:
     explicit DMMDeviceThread(QObject* parent = nullptr);
     ~DMMDeviceThread();
+    
+    // 电阻测量模式枚举（只保留连续模式）
+    enum class ResistanceMeasurementMode {
+        CONTINUOUS       // 连续电阻测量（软件触发）
+    };
+    
+    // 电阻测量参数结构体（参考DAQDeviceThread的AcquisitionParams）
+    struct ResistanceMeasurementParams {
+        ResistanceMeasurementMode mode = ResistanceMeasurementMode::CONTINUOUS;
+        JY8902_DMM_2_Wire_ResistanceRange range = JY8902_2_Wire_Resistance_Auto;
+        int samplesPerTrigger = 20;          // 每次触发采集的样本数
+        double sampleInterval = 0.02;        // 采样间隔（秒）
+        bool useNPLC = false;                // 是否使用NPLC单位
+        int nplcValue = 3;                   // NPLC值
+        double apertureTime = 0.02;          // 孔径时间（秒）
+        int triggerDelay = 10;               // 触发延迟（毫秒）
+        bool useBuffer = true;               // 是否使用缓冲区
+        int bufferSize = 1000;               // 数据缓冲区大小
+        int timeout = 10000;                 // 读取超时时间(ms)
+    };
     
 protected:
     bool initializeDevice() override;
@@ -319,11 +339,64 @@ protected:
     
 private:
     JY8902_DeviceHandle deviceHandle_;
-    JY8902_DMM_MeasurementFunction currentFunction_;
-    bool measurementActive_;    
-    void configureMeasurement(JY8902_DMM_MeasurementFunction function);
-    bool configureBasicSettings();
-    DeviceResult performMeasurement();
+    bool measurementActive_;
+    
+    // 数据测量相关（参考DAQDeviceThread）
+    ResistanceMeasurementMode currentMode_;
+    int samplesPerTrigger_;
+    QVector<double> dataBuffer_;
+    QTimer* dataFetchTimer_;
+    ResistanceMeasurementParams currentParams_;
+    
+    // 连续测量缓冲区管理（参考DAQDeviceThread）
+    QVector<double> continuousDataBuffer_;  // 连续数据缓冲区
+    QMutex bufferMutex_;
+    int bufferWriteIndex_;
+    bool bufferOverrun_;
+    
+    // 数据累积（参考DAQDeviceThread）
+    int accumulatedSamples_;                    // 当前累积的样本数
+    const int BATCH_READ_SIZE = 20;             // 每次批量读取的样本数
+    const int BATCH_FETCH_INTERVAL = 50;        // 批次读取时间间隔(ms)
+    
+    // 数据缓存（参考DAQDeviceThread）
+    QVector<double> lastTriggerData_;       // 最后一次触发读取的数据
+    QVector<double> tempTriggerData_;       // 临时缓存的触发数据
+    bool dataReadyFlag_ = false;            // 数据准备标志
+    QMutex dataMutex_;                      // 数据访问互斥锁
+    
+    // 回调和数据处理（参考DAQDeviceThread）
+    void processContinuousResistanceData();
+    bool checkBufferStatus(unsigned long long& availableSamples, bool& overRun);
+    
+    // 触发相关（参考DAQDeviceThread）
+    void setupTrigger();
+    void startMeasurement();
+    void stopMeasurement();
+    
+    // 电阻测量方法（参考DAQDeviceThread的数据采集方法）
+    DeviceResult performContinuousResistanceMeasurement(const DeviceOperation& operation);
+    DeviceResult configureContinuousResistanceMeasurement(const DeviceOperation& operation);
+    DeviceResult startContinuousResistanceMeasurement(const DeviceOperation& operation);
+    DeviceResult stopContinuousResistanceMeasurement(const DeviceOperation& operation = DeviceOperation());
+    DeviceResult readContinuousResistanceData(const DeviceOperation& operation);
+    
+    // 配置方法（参考DAQDeviceThread）
+    DeviceResult configureResistanceMeasurement(const ResistanceMeasurementParams& params);
+    DeviceResult setResistanceRange(JY8902_DMM_2_Wire_ResistanceRange range);
+    DeviceResult setMeasurementMode(ResistanceMeasurementMode mode);
+    
+    // 辅助方法（参考DAQDeviceThread）
+    QString resistanceModeToString(ResistanceMeasurementMode mode) const;
+    JY8902_DMM_2_Wire_ResistanceRange parseResistanceRange(const QString& rangeStr) const;
+    
+private slots:
+    void onDataFetchTimer();
+    
+signals:
+    void continuousResistanceDataReady(const QString& deviceName, const QVector<double>& resistanceData);
+    void dataBufferUpdated(const QString& deviceName, const QVariantMap& bufferInfo);
+    void measurementCompleted(const QString& deviceName, ResistanceMeasurementMode mode);
 };
 
 #endif // DEVICETHREAD_H

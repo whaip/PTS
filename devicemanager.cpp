@@ -255,242 +255,6 @@ DeviceResult DeviceManager::waitForResult(const QString& deviceName, int timeout
     return deviceThreads_[deviceName]->waitForResult(timeout);
 }
 
-bool DeviceManager::measureVoltageAsync(const QString& deviceName, int channel, double& result, int timeout_ms)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::READ_DATA;
-    operation.channel = channel;
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation(deviceName, operation)) {
-        return false;
-    }
-    
-    DeviceResult deviceResult = waitForResult(deviceName, timeout_ms);
-    if (deviceResult.success) {
-        result = deviceResult.value;
-        return true;
-    } else {
-        setError(deviceResult.error);
-        return false;
-    }
-}
-
-bool DeviceManager::measureCurrentAsync(double& result, int timeout_ms)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::READ_DATA;
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", operation)) {
-        return false;
-    }
-    
-    DeviceResult deviceResult = waitForResult("JY8902", timeout_ms);
-    if (deviceResult.success) {
-        result = deviceResult.value;
-        return true;
-    } else {
-        setError(deviceResult.error);
-        return false;
-    }
-}
-
-bool DeviceManager::measureResistanceAsync(double& result, int timeout_ms)
-{    // 首先配置DMM为电阻测量模式
-    DeviceOperation configOp;
-    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    configOp.parameters["function"] = static_cast<int>(JY8902_2_Wire_Resistance);
-    
-    if (!submitOperation("JY8902", configOp)) {
-        return false;
-    }
-    
-    // 等待配置完成
-    DeviceResult configResult = waitForResult("JY8902", timeout_ms);
-    if (!configResult.success) {
-        setError(configResult.error);
-        return false;
-    }
-    
-    // 执行测量
-    DeviceOperation measureOp;
-    measureOp.command = DeviceCommand::READ_DATA;
-    measureOp.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", measureOp)) {
-        return false;
-    }
-    
-    DeviceResult measureResult = waitForResult("JY8902", timeout_ms);
-    if (measureResult.success) {
-        result = measureResult.value;
-        return true;
-    } else {
-        setError(measureResult.error);
-        return false;
-    }
-}
-
-bool DeviceManager::outputVoltageAsync(int channel, double voltage, int timeout_ms)
-{
-    // 验证输入参数
-    if (channel < 0 || channel > 31) {
-        setError(QString("Invalid channel number: %1. Valid range: 0-31").arg(channel));
-        return false;
-    }
-    
-    if (voltage < -10.0 || voltage > 10.0) {
-        setError(QString("Invalid voltage: %1V. Valid range: ±10V").arg(voltage));
-        return false;
-    }
-    
-    DeviceOperation operation;
-    operation.command = DeviceCommand::WRITE_DATA;
-    operation.channel = channel;
-    operation.value = voltage;
-    operation.timeout = timeout_ms;
-
-    if (!submitOperation("JY5711", operation)) {
-        setError("Failed to submit voltage output operation to JY5711 device");
-        return false;
-    }
-    
-    DeviceResult deviceResult = waitForResult("JY5711", timeout_ms);
-    if (deviceResult.success) {
-        return true;
-    } else {
-        setError(QString("JY5711 voltage output failed: %1").arg(deviceResult.error));
-        return false;
-    }
-}
-
-// 同步接口（兼容现有代码）
-bool DeviceManager::measureVoltage(const QString& deviceName, int channel, double& result, int timeout_ms)
-{
-    return measureVoltageAsync(deviceName, channel, result, timeout_ms);
-}
-
-bool DeviceManager::measureVoltage(int channel, double& result, int timeout_ms)
-{
-    return measureVoltageAsync("JY5322", channel, result, timeout_ms);
-}
-
-bool DeviceManager::measureCurrent(int channel, double& result, int timeout_ms)
-{
-    Q_UNUSED(channel)  // Channel parameter not used in current implementation
-    return measureCurrentAsync(result, timeout_ms);
-}
-
-bool DeviceManager::measureResistance(double& result, int timeout_ms)
-{
-    return measureResistanceAsync(result, timeout_ms);
-}
-
-bool DeviceManager::outputVoltage(int channel, double voltage)
-{
-    return outputVoltageAsync(channel, voltage, 5000);
-}
-
-// DMM配置接口实现
-bool DeviceManager::configureDMMForVoltage(int timeout_ms)
-{
-    qDebug() << "Configuring DMM for voltage measurement";
-    
-    DeviceOperation operation;
-    operation.command = DeviceCommand::CONFIGURE_CHANNEL;
-    operation.parameters["function"] = static_cast<int>(JY8902_DC_Volts);
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", operation)) {
-        setError("Failed to submit DMM voltage configuration");
-        return false;
-    }
-    
-    DeviceResult result = waitForResult("JY8902", timeout_ms);
-    if (result.success) {
-        qDebug() << "DMM voltage configuration successful";
-        return true;
-    } else {
-        setError(QString("DMM voltage configuration failed: %1").arg(result.error));
-        return false;
-    }
-}
-
-bool DeviceManager::configureDMMForCurrent(int timeout_ms)
-{
-    qDebug() << "Configuring DMM for current measurement";
-    
-    DeviceOperation operation;
-    operation.command = DeviceCommand::CONFIGURE_CHANNEL;
-    operation.parameters["function"] = static_cast<int>(JY8902_DC_Current);
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", operation)) {
-        setError("Failed to submit DMM current configuration");
-        return false;
-    }
-    
-    DeviceResult result = waitForResult("JY8902", timeout_ms);
-    if (result.success) {
-        qDebug() << "DMM current configuration successful";
-        return true;
-    } else {
-        setError(QString("DMM current configuration failed: %1").arg(result.error));
-        return false;
-    }
-}
-
-bool DeviceManager::configureDMMForResistance(int timeout_ms)
-{
-    qDebug() << "Configuring DMM for resistance measurement";
-    
-    DeviceOperation operation;
-    operation.command = DeviceCommand::CONFIGURE_CHANNEL;
-    operation.parameters["function"] = static_cast<int>(JY8902_2_Wire_Resistance);
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", operation)) {
-        setError("Failed to submit DMM resistance configuration");
-        return false;
-    }
-    
-    DeviceResult result = waitForResult("JY8902", timeout_ms);
-    if (result.success) {
-        qDebug() << "DMM resistance configuration successful";
-        return true;
-    } else {
-        setError(QString("DMM resistance configuration failed: %1").arg(result.error));
-        return false;
-    }
-}
-
-bool DeviceManager::configureDMMForDiodeTest(int timeout_ms)
-{
-    qDebug() << "Configuring DMM for diode test mode";
-    
-    // 二极管测试通常使用DC电压测量模式，配合特定的测试条件
-    DeviceOperation operation;
-    operation.command = DeviceCommand::CONFIGURE_CHANNEL;
-    operation.parameters["function"] = static_cast<int>(JY8902_DC_Volts);
-    operation.parameters["diode_test_mode"] = true;  // 标记为二极管测试模式
-    operation.timeout = timeout_ms;
-    
-    if (!submitOperation("JY8902", operation)) {
-        setError("Failed to submit DMM diode test configuration");
-        return false;
-    }
-    
-    DeviceResult result = waitForResult("JY8902", timeout_ms);
-    if (result.success) {
-        qDebug() << "DMM diode test configuration successful";
-        return true;
-    } else {
-        setError(QString("DMM diode test configuration failed: %1").arg(result.error));
-        return false;
-    }
-}
-
 void DeviceManager::onDeviceStatusChanged(const QString& deviceName, bool ready)
 {
     QMutexLocker locker(&errorMutex_);
@@ -978,38 +742,6 @@ bool DeviceManager::stopContinuousAcquisition(const QString& deviceName)
     return true;
 }
 
-bool DeviceManager::configureAcquisition(const QString& deviceName, const QString& mode,
-                                        const QVector<int>& channels, double sampleRate,
-                                        int samplesPerChannel, double rangeMin, double rangeMax,
-                                        int bufferSize)
-{
-    if (!deviceThreads_.contains(deviceName)) {
-        setError(QString("Device %1 not found").arg(deviceName));
-        return false;
-    }
-    
-    BaseDeviceThread* device = deviceThreads_[deviceName];
-    
-    DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
-    configOp.channels = channels;
-    configOp.sampleRate = sampleRate;
-    configOp.samplesPerChannel = samplesPerChannel;
-    configOp.inputRangeMin = rangeMin;
-    configOp.inputRangeMax = rangeMax;
-    configOp.parameters["mode"] = mode;
-    configOp.parameters["bufferSize"] = bufferSize;
-    
-    device->submitOperation(configOp);
-    DeviceResult result = device->waitForResult(5000);
-    
-    if (!result.success) {
-        setError(QString("Failed to configure acquisition: %1").arg(result.error));
-        return false;
-    }
-    
-    return true;
-}
-
 bool DeviceManager::isAcquisitionActive(const QString& deviceName)
 {
     if (!deviceThreads_.contains(deviceName)) {
@@ -1205,18 +937,6 @@ bool DeviceManager::testSynchronizedOutputAndAcquisition(double sineFreq, double
                 }
             }
             
-            // 现在测试AO输出
-            qDebug() << "步骤2: 测试JY5711输出...";
-            
-            // 简单输出测试
-            if (outputVoltageAsync(1, 4.0, timeout_ms)) {
-                qDebug() << "✓ JY5711 端口1输出4V成功";
-            } else {
-                qDebug() << "❌ JY5711输出失败:" << getLastError();
-            }
-            
-            // 恢复0V输出
-            outputVoltageAsync(1, 0.0, timeout_ms);
             
             qDebug() << "=== 简化同步测试完成 ===";
             return true;
@@ -1268,13 +988,44 @@ DeviceManager::WaitResult DeviceManager::waitForDataWithEventLoop(
     connect(&checkTimer, &QTimer::timeout, [&]() {
         result.attempts++;
         
-        // 尝试读取数据
-        if (readMultiPointData(deviceName, channelData, 1000)) {
-            if (!channelData.isEmpty() && !channelData[0].isEmpty()) {
-                result.success = true;
-                eventLoop.quit();
-                return;
+        // 根据设备类型尝试读取数据
+        bool dataReady = false;
+        
+        if (deviceName == "JY8902") {
+            // DMM设备：尝试读取连续电阻数据
+            DeviceOperation readOp;
+            readOp.command = DeviceCommand::READ_DATA;
+            readOp.timeout = 1000;
+            
+            if (submitOperation(deviceName, readOp)) {
+                DeviceResult dmmResult = waitForResult(deviceName, 1000);
+                if (dmmResult.success && dmmResult.data.contains("resistanceData")) {
+                    // 将DMM的电阻数据转换为兼容的格式
+                    QVector<double> resistanceData = dmmResult.data["resistanceData"].value<QVector<double>>();
+                    if (!resistanceData.isEmpty()) {
+                        channelData.clear();
+                        channelData.append(resistanceData);  // 将电阻数据作为单通道数据
+                        dataReady = true;
+                        qDebug() << "DMM resistance data ready - samples:" << resistanceData.size()
+                                 << "average:" << dmmResult.value << "Ω";
+                    }
+                }
             }
+        } else {
+            // DAQ设备：尝试读取多点数据
+            if (readMultiPointData(deviceName, channelData, 1000)) {
+                if (!channelData.isEmpty() && !channelData[0].isEmpty()) {
+                    dataReady = true;
+                    qDebug() << "DAQ multi-point data ready - channels:" << channelData.size()
+                             << "samples per channel:" << channelData[0].size();
+                }
+            }
+        }
+        
+        if (dataReady) {
+            result.success = true;
+            eventLoop.quit();
+            return;
         }
         
         // 检查是否达到最大尝试次数

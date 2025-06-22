@@ -738,25 +738,13 @@ void DeviceManagerTestWindow::testMeasureCurrent()
     // 8. 使用事件循环等待数据采集完成并读取数据
     qDebug() << "等待数据采集完成...";
     
-    // 先等待一段时间让采集稳定
-    QEventLoop initialWaitLoop;
-    QTimer initialWaitTimer;
-    initialWaitTimer.setSingleShot(true);
-    initialWaitTimer.setInterval(2000); // 等待2秒
-    
-    connect(&initialWaitTimer, &QTimer::timeout, [&]() {
-        initialWaitLoop.quit();
-    });
-    
-    initialWaitTimer.start();
-    initialWaitLoop.exec();
     
     appendResult("开始读取采集数据...");
     
     // 使用通用的事件循环等待方法读取数据
     QVector<QVector<double>> finalChannelData;
     DeviceManager::WaitResult waitResult = deviceManager_->waitForDataWithEventLoop("JY5322", finalChannelData, 30, 200, 8000);
-    
+            
     // 9. 停止采集
     if (!deviceManager_->stopMultiPointAcquisition("JY5322")) {
         qDebug() << "警告：停止JY5322采集失败";
@@ -764,26 +752,26 @@ void DeviceManagerTestWindow::testMeasureCurrent()
     
     // 10. 分析结果
     if (waitResult.success && !finalChannelData.isEmpty()) {
-        qDebug() << "同步测试完成！采集到" << finalChannelData.size() << "个通道的数据";
+    qDebug() << "同步测试完成！采集到" << finalChannelData.size() << "个通道的数据";
         appendResult(QString("✓ 同步采集成功！采集到 %1 个通道的数据").arg(finalChannelData.size()));
         
-        for (int ch = 0; ch < finalChannelData.size(); ++ch) {
-            if (!finalChannelData[ch].isEmpty()) {
-                double avgValue = 0.0;
-                double maxValue = *std::max_element(finalChannelData[ch].begin(), finalChannelData[ch].end());
-                double minValue = *std::min_element(finalChannelData[ch].begin(), finalChannelData[ch].end());
+    for (int ch = 0; ch < finalChannelData.size(); ++ch) {
+        if (!finalChannelData[ch].isEmpty()) {
+            double avgValue = 0.0;
+            double maxValue = *std::max_element(finalChannelData[ch].begin(), finalChannelData[ch].end());
+            double minValue = *std::min_element(finalChannelData[ch].begin(), finalChannelData[ch].end());
 
-                for (double val : finalChannelData[ch]) {
-                    avgValue += val;
-                }
-                avgValue /= finalChannelData[ch].size();
+            for (double val : finalChannelData[ch]) {
+                avgValue += val;
+            }
+            avgValue /= finalChannelData[ch].size();
 
                 QString channelResult = QString("通道%1: 样本数=%2, 平均值=%3V, 最大值=%4V, 最小值=%5V")
-                            .arg(daqChannels[ch])
-                            .arg(finalChannelData[ch].size())
-                            .arg(avgValue, 0, 'f', 6)
-                            .arg(maxValue, 0, 'f', 6)
-                            .arg(minValue, 0, 'f', 6);
+                        .arg(daqChannels[ch])
+                        .arg(finalChannelData[ch].size())
+                        .arg(avgValue, 0, 'f', 6)
+                        .arg(maxValue, 0, 'f', 6)
+                        .arg(minValue, 0, 'f', 6);
                             
                 qDebug() << channelResult;
                 appendResult(channelResult);
@@ -818,38 +806,125 @@ void DeviceManagerTestWindow::testMeasureResistance()
         return;
     }
     
-    if (!taskThread_) {
-        appendResult("错误: 任务线程未初始化");
+    appendResult("=== 开始DMM设备 (JY8902) 底层操作测试 ===");
+    
+    // 1. 检查DMM设备状态
+    DeviceStatus dmmStatus = deviceManager_->getDeviceStatus("JY8902");
+    if (dmmStatus != DeviceStatus::CONNECTED) {
+        appendResult("❌ JY8902设备未连接，无法进行测试");
+        return;
+    }
+    appendResult("✓ JY8902设备已连接");
+    
+    // 2. 使用DeviceOperation配置DMM连续电阻测量
+    appendResult("步骤1: 使用DeviceOperation配置DMM连续电阻测量...");
+    
+    DeviceOperation configOp;
+    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
+    configOp.parameters["range"] = "auto";
+    configOp.parameters["samplesPerTrigger"] = 20;
+    configOp.parameters["sampleInterval"] = 0.02;
+    configOp.parameters["useNPLC"] = false;
+    configOp.parameters["apertureTime"] = 0.02;
+    configOp.parameters["nplcValue"] = 3;
+    configOp.parameters["triggerDelay"] = 10;
+    configOp.parameters["bufferSize"] = 1000;
+    configOp.parameters["timeout"] = 10000;
+    configOp.timeout = 10000;
+    
+    if (!deviceManager_->submitOperation("JY8902", configOp)) {
+        appendResult("❌ DMM配置操作提交失败");
         return;
     }
     
-    if (taskThread_->isTaskRunning()) {
-        appendResult("任务正在运行中，请等待当前任务完成或点击停止任务");
+    DeviceResult configResult = deviceManager_->waitForResult("JY8902", 10000);
+    if (configResult.success) {
+        appendResult("✓ DMM连续电阻测量配置成功");
+        appendResult(QString("配置参数: %1").arg(configResult.data.keys().join(", ")));
+    } else {
+        appendResult("❌ DMM配置失败: " + configResult.error);
         return;
     }
     
-    // 获取可用的DAQ设备
-    QVector<QString> daqDevices = deviceManager_->getDAQDevices();
-    if (daqDevices.isEmpty()) {
-        appendResult("未找到可用的DAQ设备");
+    // 3. 使用DeviceOperation启动连续测量
+    appendResult("步骤2: 启动DMM连续测量...");
+    
+    DeviceOperation startOp;
+    startOp.command = DeviceCommand::START_MEASUREMENT;
+    startOp.timeout = 10000;
+    
+    if (!deviceManager_->submitOperation("JY8902", startOp)) {
+        appendResult("❌ DMM启动操作提交失败");
         return;
     }
     
-    QString deviceName = "JY5323";
-    appendResult("找到DAQ设备: " + deviceName);
+    DeviceResult startResult = deviceManager_->waitForResult("JY8902", 10000);
+    if (startResult.success) {
+        appendResult("✓ DMM连续测量启动成功");
+    } else {
+        appendResult("❌ DMM启动失败: " + startResult.error);
+        return;
+    }
     
-    // 配置多点采集参数 - 使用更合理的测试参数
-    QVector<int> channels = {0, 1};               // 2个通道
-    double sampleRate = 10000.0;                  // 10kHz采样率
-    int samplesPerChannel = 1000;                 // 每通道1000个样本
-    double rangeMin = -10.0;
-    double rangeMax = 10.0;
+    // 4. 使用DeviceOperation发送软件触发
+    appendResult("步骤3: 发送软件触发...");
     
-    appendResult(QString("启动多点采集线程任务 - 设备: %1, 通道: %2, 采样率: %3Hz, 样本数: %4")
-                .arg(deviceName).arg(channels.size()).arg(sampleRate).arg(samplesPerChannel));
+    DeviceOperation triggerOp;
+    triggerOp.command = DeviceCommand::SYNC_TRIGGER;
+    triggerOp.timeout = 10000;
     
-    // 使用任务线程执行多点采集
-    taskThread_->startMultiPointAcquisitionTask(deviceName, channels, sampleRate, samplesPerChannel, rangeMin, rangeMax);
+    if (!deviceManager_->submitOperation("JY8902", triggerOp)) {
+        appendResult("❌ DMM软件触发操作提交失败");
+        return;
+    }
+    
+    DeviceResult triggerResult = deviceManager_->waitForResult("JY8902", 10000);
+    if (triggerResult.success) {
+        appendResult("✓ DMM软件触发发送成功");
+    } else {
+        appendResult("❌ DMM软件触发失败: " + triggerResult.error);
+        return;
+    }
+    
+    // 5. 使用DeviceOperation读取数据（事件循环方式）
+    appendResult("步骤4: 使用事件循环读取DMM数据...");
+    
+    // 使用兼容的事件循环等待数据
+    QVector<QVector<double>> channelData;
+    DeviceManager::WaitResult waitResult = deviceManager_->waitForDataWithEventLoop(
+        "JY8902", channelData, 50, 100, 15000);
+    
+    if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty()) {
+        appendResult("✓ 事件循环数据读取成功！");
+        
+        // 分析电阻数据
+        QVector<double> resistanceData = channelData[0];
+        double avgResistance = 0.0;
+        double maxResistance = *std::max_element(resistanceData.begin(), resistanceData.end());
+        double minResistance = *std::min_element(resistanceData.begin(), resistanceData.end());
+        
+        for (double val : resistanceData) {
+            avgResistance += val;
+        }
+        avgResistance /= resistanceData.size();
+        
+        appendResult(QString("数据分析结果:"));
+        appendResult(QString("  样本数: %1").arg(resistanceData.size()));
+        appendResult(QString("  平均值: %1 Ω").arg(avgResistance, 0, 'e', 3));
+        appendResult(QString("  最大值: %1 Ω").arg(maxResistance, 0, 'e', 3));
+        appendResult(QString("  最小值: %1 Ω").arg(minResistance, 0, 'e', 3));
+        
+    } else {
+        appendResult("❌ 事件循环数据读取失败");
+        appendResult(QString("尝试次数: %1, 超时: %2")
+                   .arg(waitResult.attempts)
+                   .arg(waitResult.timeout ? "是" : "否"));
+        if (!waitResult.errorMessage.isEmpty()) {
+            appendResult("错误详情: " + waitResult.errorMessage);
+        }
+    }
+    
+    appendResult("=== DMM设备底层操作测试完成 ===");
 }
 
 void DeviceManagerTestWindow::testOutputVoltage()
