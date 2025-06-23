@@ -37,6 +37,7 @@ PCBBoardManagementWidget::PCBBoardManagementWidget(QWidget *parent)
     , selected_component_(nullptr)
     , drawing_component_(false)
     , label_editing_(nullptr)
+    , identification_worker_thread_(nullptr)
 {
     setupUI();
     connectSignals();
@@ -50,6 +51,13 @@ PCBBoardManagementWidget::~PCBBoardManagementWidget()
     if (label_editing_) {
         delete label_editing_;
         label_editing_ = nullptr;
+    }
+    
+    // 清理识别线程 - 使用deleteLater避免阻塞
+    if (identification_worker_thread_) {
+        identification_worker_thread_->quit();
+        identification_worker_thread_->deleteLater();
+        identification_worker_thread_ = nullptr;
     }
 }
 
@@ -1222,76 +1230,57 @@ void PCBBoardManagementWidget::onCreateBoard()
             QMessageBox::warning(createDialog, "错误", "请填写完整的板卡信息并选择图像！");
             return;
         }
-          // 创建进度对话框
-        QProgressDialog* progressDialog = new QProgressDialog("正在创建板卡...", "取消", 0, 100, createDialog);
+        
+        // 创建进度对话框
+        QProgressDialog* progressDialog = new QProgressDialog("正在创建板卡...", nullptr, 0, 100, createDialog);
         progressDialog->setWindowModality(Qt::WindowModal);
         progressDialog->setMinimumDuration(0);
         progressDialog->setValue(20);
         progressDialog->show();
         
-        // 连接进度信号
-        connect(board_manager_, &PCBBoardManager::boardCreationProgress,
-                progressDialog, [progressDialog](int percentage, const QString& message) {
-                    progressDialog->setValue(percentage);
-                    progressDialog->setLabelText(message);
-                });
-        
-        // 连接完成信号
-        connect(board_manager_, &PCBBoardManager::boardCreationFinished,
-                this, [this, createDialog, progressDialog, boardName, boardModel](const QString& boardId) {
-                    progressDialog->close();
-                    progressDialog->deleteLater();
-                    
-                    if (!boardId.isEmpty()) {
-                        QMessageBox::information(createDialog, "成功", 
-                            QString("板卡 \"%1\" 创建成功！\n板卡ID: %2").arg(boardName).arg(boardId));
-                        
-                        qDebug() << "板卡创建成功 - 名称:" << boardName << "型号:" << boardModel << "ID:" << boardId;
-                        
-                        // 更新板卡列表
-                        updateBoardList();
-                        
-                        // 关闭对话框
-                        createDialog->accept();
-                    } else {
-                        QMessageBox::warning(createDialog, "错误", "板卡创建失败！\n请检查输入信息或联系管理员。");
-                    }
-                    
-                    // 断开信号连接
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationProgress, nullptr, nullptr);
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationFinished, nullptr, nullptr);
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationError, nullptr, nullptr);
-                });
-        
-        // 连接错误信号
-        connect(board_manager_, &PCBBoardManager::boardCreationError,
-                this, [this, createDialog, progressDialog](const QString& errorMsg) {
-                    progressDialog->close();
-                    progressDialog->deleteLater();
-                    
-                    QMessageBox::critical(createDialog, "错误", 
-                        QString("创建板卡时发生错误：\n%1").arg(errorMsg));
-                    
-                    // 断开信号连接
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationProgress, nullptr, nullptr);
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationFinished, nullptr, nullptr);
-                    disconnect(board_manager_, &PCBBoardManager::boardCreationError, nullptr, nullptr);
-                });
-        
-        // 连接取消信号
-        connect(progressDialog, &QProgressDialog::canceled, this, [this, progressDialog]() {
-            board_manager_->cancelBoardCreation();
-            progressDialog->close();
-            qDebug() << "用户取消了板卡创建";
+        // 使用定时器模拟进度
+        QTimer* progressTimer = new QTimer();
+        connect(progressTimer, &QTimer::timeout, [progressDialog, progressTimer]() {
+            int currentValue = progressDialog->value();
+            if (currentValue < 90) {
+                progressDialog->setValue(currentValue + 10);
+            } else {
+                progressTimer->stop();
+                progressTimer->deleteLater();
+            }
         });
+        progressTimer->start(100);
         
         try {
-            // 启动异步创建
-            board_manager_->createBoardAsync(boardName, boardModel, selectedImage, description);
+            // 创建板卡
+            QString boardId = board_manager_->createBoard(boardName, boardModel, selectedImage, description);
+            
+            progressDialog->setValue(100);
+            progressDialog->close();
+            progressDialog->deleteLater();
+            progressTimer->stop();
+            progressTimer->deleteLater();
+            
+            if (!boardId.isEmpty()) {
+                QMessageBox::information(createDialog, "成功", 
+                    QString("板卡 \"%1\" 创建成功！\n板卡ID: %2").arg(boardName).arg(boardId));
+                
+                qDebug() << "板卡创建成功 - 名称:" << boardName << "型号:" << boardModel << "ID:" << boardId;
+                
+                // 更新板卡列表
+                updateBoardList();
+                
+                // 关闭对话框
+                createDialog->accept();
+            } else {
+                QMessageBox::warning(createDialog, "错误", "板卡创建失败！\n请检查输入信息或联系管理员。");
+            }
             
         } catch (const std::exception& e) {
             progressDialog->close();
             progressDialog->deleteLater();
+            progressTimer->stop();
+            progressTimer->deleteLater();
             
             QMessageBox::critical(createDialog, "错误", 
                 QString("创建板卡时发生错误：\n%1").arg(e.what()));
@@ -1420,7 +1409,8 @@ void PCBBoardManagementWidget::onIdentifyFromFile()
         }
         identification_image_label_->setPixmap(pixmap);
     }
-      // 切换到识别标签页
+    
+    // 切换到识别标签页
     main_tabs_->setCurrentWidget(identification_tab_);
     
     // 创建进度对话框
@@ -1429,67 +1419,105 @@ void PCBBoardManagementWidget::onIdentifyFromFile()
     progressDialog->setMinimumDuration(0);
     progressDialog->setValue(20);
     progressDialog->show();
+      // 清理旧的识别线程
+    if (identification_worker_thread_) {
+        identification_worker_thread_->quit();
+        identification_worker_thread_->deleteLater();
+        identification_worker_thread_ = nullptr;
+    }
     
-    // 连接进度信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationProgress,
-            progressDialog, [progressDialog](int percentage, const QString& message) {
-                progressDialog->setValue(percentage);
-                progressDialog->setLabelText(message);
-            });
+    // 创建新的工作线程
+    identification_worker_thread_ = new QThread(this);
+    IdentificationWorker* worker = new IdentificationWorker(board_manager_, inputImage, 0.7);
+    worker->moveToThread(identification_worker_thread_);
+      // 连接信号槽
+    connect(identification_worker_thread_, &QThread::started, worker, &IdentificationWorker::doWork);
+    connect(worker, &IdentificationWorker::finished, this, [this, progressDialog](const QList<PCBBoardInfo>& candidates) {
+        progressDialog->setValue(100);
+        progressDialog->close();
+        progressDialog->deleteLater();
+        
+        // 显示识别结果
+        displayIdentificationResults(candidates);
+        
+        qDebug() << "板卡识别完成，找到" << candidates.size() << "个候选板卡";
+        
+        if (candidates.isEmpty()) {
+            QMessageBox::information(this, "识别结果", 
+                "未找到匹配的板卡。\n\n建议：\n"
+                "1. 检查图片质量是否清晰\n"
+                "2. 确认板卡是否已在数据库中\n"
+                "3. 尝试调整图片角度或光照条件");
+        } else {
+            QMessageBox::information(this, "识别成功", 
+                QString("识别完成！找到 %1 个候选板卡。\n请在候选列表中选择最合适的板卡。")
+                .arg(candidates.size()));
+        }
+        
+        // 异步清理线程 - 不要在信号槽中调用wait()
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
+    });
     
-    // 连接完成信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationFinished,
-            this, [this, progressDialog](const QList<PCBBoardInfo>& candidates) {
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                // 显示识别结果
-                displayIdentificationResults(candidates);
-                
-                qDebug() << "板卡识别完成，找到" << candidates.size() << "个候选板卡";
-                
-                if (candidates.isEmpty()) {
-                    QMessageBox::information(this, "识别结果", 
-                        "未找到匹配的板卡。\n\n建议：\n"
-                        "1. 检查图片质量是否清晰\n"
-                        "2. 确认板卡是否已在数据库中\n"
-                        "3. 尝试调整图片角度或光照条件");
-                } else {
-                    QMessageBox::information(this, "识别成功", 
-                        QString("识别完成！找到 %1 个候选板卡。\n请在候选列表中选择最合适的板卡。")
-                        .arg(candidates.size()));
-                }
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationError, nullptr, nullptr);
-            });
-    
-    // 连接错误信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationError,
-            this, [this, progressDialog](const QString& errorMsg) {
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                QMessageBox::critical(this, "识别错误", 
-                    QString("识别过程中发生错误：\n%1").arg(errorMsg));
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationError, nullptr, nullptr);
-            });
-    
-    // 连接取消信号
-    connect(progressDialog, &QProgressDialog::canceled, this, [this, progressDialog]() {
-        board_manager_->cancelBoardIdentification();
+    connect(worker, &IdentificationWorker::error, this, [this, progressDialog](const QString& errorMsg) {
+        progressDialog->close();
+        progressDialog->deleteLater();
+        
+        QMessageBox::critical(this, "识别错误", 
+            QString("识别过程中发生错误：\n%1").arg(errorMsg));
+        
+        // 异步清理线程 - 不要在信号槽中调用wait()
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
+    });
+      connect(progressDialog, &QProgressDialog::canceled, this, [this, progressDialog]() {
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
         progressDialog->close();
         qDebug() << "用户取消了板卡识别";
     });
     
-    // 启动异步识别
-    board_manager_->identifyBoardAsync(inputImage, 0.7);
+    // 设置进度更新定时器
+    QTimer* progressTimer = new QTimer(this);
+    connect(progressTimer, &QTimer::timeout, [progressDialog, progressTimer]() {
+        int currentValue = progressDialog->value();
+        if (currentValue < 90) {
+            progressDialog->setValue(currentValue + 5);
+        }
+        if (progressDialog->wasCanceled()) {
+            progressTimer->stop();
+            progressTimer->deleteLater();
+        }
+    });
+    
+    connect(worker, &IdentificationWorker::finished, progressTimer, [progressTimer]() {
+        progressTimer->stop();
+        progressTimer->deleteLater();
+    });
+    
+    connect(worker, &IdentificationWorker::error, progressTimer, [progressTimer]() {
+        progressTimer->stop();
+        progressTimer->deleteLater();
+    });
+      connect(worker, &IdentificationWorker::finished, worker, &IdentificationWorker::deleteLater);
+    connect(worker, &IdentificationWorker::error, worker, &IdentificationWorker::deleteLater);
+    
+    // 确保线程在工作完成后自动清理
+    connect(identification_worker_thread_, &QThread::finished, identification_worker_thread_, &QThread::deleteLater);
+    
+    progressTimer->start(200); // 每200ms更新一次进度
+    
+    // 启动线程
+    identification_worker_thread_->start();
 }
 
 void PCBBoardManagementWidget::onIdentifyFromCamera()
@@ -1626,7 +1654,8 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
         }
         identification_image_label_->setPixmap(pixmap);
     }
-      // 切换到识别标签页
+    
+    // 切换到识别标签页
     main_tabs_->setCurrentWidget(identification_tab_);
     
     // 创建进度对话框
@@ -1636,66 +1665,109 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
     progressDialog->setValue(20);
     progressDialog->show();
     
-    // 连接进度信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationProgress,
-            progressDialog, [progressDialog](int percentage, const QString& message) {
-                progressDialog->setValue(percentage);
-                progressDialog->setLabelText(message);
-            });
+    // 清理旧的识别线程
+    if (identification_worker_thread_) {
+        identification_worker_thread_->quit();
+        identification_worker_thread_->deleteLater();
+        identification_worker_thread_ = nullptr;
+    }
     
-    // 连接完成信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationFinished,
-            this, [this, progressDialog](const QList<PCBBoardInfo>& candidates) {
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                // 显示识别结果
-                displayIdentificationResults(candidates);
-                
-                qDebug() << "摄像头板卡识别完成，找到" << candidates.size() << "个候选板卡";
-                
-                if (candidates.isEmpty()) {
-                    QMessageBox::information(this, "识别结果", 
-                        "未找到匹配的板卡。\n\n建议：\n"
-                        "1. 调整摄像头角度和距离\n"
-                        "2. 改善光照条件\n"
-                        "3. 确认板卡是否已在数据库中\n"
-                        "4. 尝试重新捕获图像");
-                } else {
-                    QMessageBox::information(this, "识别成功", 
-                        QString("识别完成！找到 %1 个候选板卡。\n请在候选列表中选择最合适的板卡。")
-                        .arg(candidates.size()));
-                }
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationError, nullptr, nullptr);
-            });
+    // 创建新的工作线程
+    identification_worker_thread_ = new QThread(this);
+    IdentificationWorker* worker = new IdentificationWorker(board_manager_, capturedImage, 0.7);
+    worker->moveToThread(identification_worker_thread_);
     
-    // 连接错误信号
-    connect(board_manager_, &PCBBoardManager::boardIdentificationError,
-            this, [this, progressDialog](const QString& errorMsg) {
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                QMessageBox::critical(this, "识别错误", 
-                    QString("识别过程中发生错误：\n%1").arg(errorMsg));
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::boardIdentificationError, nullptr, nullptr);
-            });
+    // 连接信号槽
+    connect(identification_worker_thread_, &QThread::started, worker, &IdentificationWorker::doWork);
+    connect(worker, &IdentificationWorker::finished, this, [this, progressDialog](const QList<PCBBoardInfo>& candidates) {
+        progressDialog->setValue(100);
+        progressDialog->close();
+        progressDialog->deleteLater();
+        
+        // 显示识别结果
+        displayIdentificationResults(candidates);
+        
+        qDebug() << "摄像头板卡识别完成，找到" << candidates.size() << "个候选板卡";
+        
+        if (candidates.isEmpty()) {
+            QMessageBox::information(this, "识别结果", 
+                "未找到匹配的板卡。\n\n建议：\n"
+                "1. 调整摄像头角度和距离\n"
+                "2. 改善光照条件\n"
+                "3. 确认板卡是否已在数据库中\n"
+                "4. 尝试重新捕获图像");
+        } else {
+            QMessageBox::information(this, "识别成功", 
+                QString("识别完成！找到 %1 个候选板卡。\n请在候选列表中选择最合适的板卡。")
+                .arg(candidates.size()));
+        }
+        
+        // 异步清理线程
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
+    });
     
-    // 连接取消信号
+    connect(worker, &IdentificationWorker::error, this, [this, progressDialog](const QString& errorMsg) {
+        progressDialog->close();
+        progressDialog->deleteLater();
+        
+        QMessageBox::critical(this, "识别错误", 
+            QString("识别过程中发生错误：\n%1").arg(errorMsg));
+        
+        // 异步清理线程
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
+    });
+    
     connect(progressDialog, &QProgressDialog::canceled, this, [this, progressDialog]() {
-        board_manager_->cancelBoardIdentification();
+        if (identification_worker_thread_) {
+            identification_worker_thread_->quit();
+            identification_worker_thread_->deleteLater();
+            identification_worker_thread_ = nullptr;
+        }
         progressDialog->close();
         qDebug() << "用户取消了摄像头板卡识别";
     });
-      // 启动异步识别
-    board_manager_->identifyBoardAsync(capturedImage, 0.7);
+    
+    // 设置进度更新定时器
+    QTimer* progressTimer = new QTimer(this);
+    connect(progressTimer, &QTimer::timeout, [progressDialog, progressTimer]() {
+        int currentValue = progressDialog->value();
+        if (currentValue < 90) {
+            progressDialog->setValue(currentValue + 5);
+        }
+        if (progressDialog->wasCanceled()) {
+            progressTimer->stop();
+            progressTimer->deleteLater();
+        }
+    });
+    
+    connect(worker, &IdentificationWorker::finished, progressTimer, [progressTimer]() {
+        progressTimer->stop();
+        progressTimer->deleteLater();
+    });
+    
+    connect(worker, &IdentificationWorker::error, progressTimer, [progressTimer]() {
+        progressTimer->stop();
+        progressTimer->deleteLater();
+    });
+    
+    connect(worker, &IdentificationWorker::finished, worker, &IdentificationWorker::deleteLater);
+    connect(worker, &IdentificationWorker::error, worker, &IdentificationWorker::deleteLater);
+    
+    // 确保线程在工作完成后自动清理
+    connect(identification_worker_thread_, &QThread::finished, identification_worker_thread_, &QThread::deleteLater);
+    
+    progressTimer->start(200); // 每200ms更新一次进度
+    
+    // 启动线程
+    identification_worker_thread_->start();
 }
 
 void PCBBoardManagementWidget::onConfirmIdentification()
@@ -1750,92 +1822,7 @@ void PCBBoardManagementWidget::onAutoDetectComponents()
         return;
     }
     
-    if (!board_manager_) {
-        QMessageBox::warning(this, "错误", "板卡管理器未初始化！");
-        return;
-    }
-    
-    qDebug() << "PCBBoardManagementWidget::onAutoDetectComponents - 开始异步元器件检测";
-    
-    // 创建进度对话框
-    QProgressDialog* progressDialog = new QProgressDialog("正在检测元器件...", "取消", 0, 100, this);
-    progressDialog->setWindowModality(Qt::WindowModal);
-    progressDialog->setMinimumDuration(0);
-    progressDialog->setValue(15);
-    progressDialog->show();
-    
-    // 连接进度信号
-    connect(board_manager_, &PCBBoardManager::componentDetectionProgress,
-            progressDialog, [progressDialog](int percentage, const QString& message) {
-                progressDialog->setValue(percentage);
-                progressDialog->setLabelText(message);
-            });
-    
-    // 连接完成信号
-    connect(board_manager_, &PCBBoardManager::componentDetectionFinished,
-            this, [this, progressDialog](const std::vector<Label>& components, const QString& boardId) {
-                Q_UNUSED(boardId)
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                qDebug() << "元器件检测完成，检测到" << components.size() << "个元器件";
-                
-                if (components.empty()) {
-                    QMessageBox::information(this, "检测结果", 
-                        "未检测到元器件。\n\n建议：\n"
-                        "1. 检查图片质量是否清晰\n"
-                        "2. 确认图片中包含PCB元器件\n"
-                        "3. 尝试调整图片亮度或对比度");
-                } else {
-                    // 更新当前板卡的元器件信息
-                    if (!current_board_id_.isEmpty()) {
-                        PCBBoardInfo board = board_manager_->getBoardById(current_board_id_);
-                        if (!board.boardId.isEmpty()) {
-                            // 这里可以添加更新板卡元器件的逻辑
-                            // board.components = components;
-                            // board_manager_->updateBoard(board);
-                        }
-                    }
-                    
-                    // 刷新标签显示
-                    if (label_editing_) {
-                        // 这里可以添加更新LabelEditing的逻辑
-                    }
-                    
-                    QMessageBox::information(this, "检测成功", 
-                        QString("检测完成！检测到 %1 个元器件。").arg(components.size()));
-                }
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionError, nullptr, nullptr);
-            });
-    
-    // 连接错误信号
-    connect(board_manager_, &PCBBoardManager::componentDetectionError,
-            this, [this, progressDialog](const QString& errorMsg) {
-                progressDialog->close();
-                progressDialog->deleteLater();
-                
-                QMessageBox::critical(this, "检测错误", 
-                    QString("检测过程中发生错误：\n%1").arg(errorMsg));
-                
-                // 断开信号连接
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionProgress, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionFinished, nullptr, nullptr);
-                disconnect(board_manager_, &PCBBoardManager::componentDetectionError, nullptr, nullptr);
-            });
-    
-    // 连接取消信号
-    connect(progressDialog, &QProgressDialog::canceled, this, [this, progressDialog]() {
-        board_manager_->cancelComponentDetection();
-        progressDialog->close();
-        qDebug() << "用户取消了元器件检测";
-    });
-    
-    // 启动异步检测
-    board_manager_->detectComponentsAsync(current_board_image_, current_board_id_);
+    QMessageBox::information(this, "提示", "自动检测功能开发中...");
 }
 
 void PCBBoardManagementWidget::onDetectLabels()

@@ -26,7 +26,7 @@
 #include <QFrame>
 #include <QMessageBox>
 #include <QTimer>
-#include <QFormLayout>  // 添加缺少的QFormLayout头文件
+#include <QFormLayout>
 #include "wiringresource.h"
 #include "wiringschematic.h"
 #include "../faultdiagnostic.h"

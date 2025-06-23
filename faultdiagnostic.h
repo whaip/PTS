@@ -2,6 +2,7 @@
 #define FAULTDIAGNOSTIC_H
 
 #include "devicemanager.h"
+#include "commontypes.h"
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -10,48 +11,30 @@
 #include <QStringList>
 #include <memory>
 
-// 元件类型枚举
-enum class ComponentType {
-    RESISTOR,
-    CAPACITOR,
-    INDUCTOR,
-    DIODE,
-    TRANSISTOR,
-    IC,
-    UNKNOWN
-};
+// 前向声明，避免循环依赖
+class SignalConfiguration;
+class PortConfiguration;
+class FaultAnalysis;
+struct AnalysisResult;
+struct TestSchemeSignals;
+struct ComponentSpecs;
+struct TestSequence;
 
-// 故障类型枚举
-enum class FaultType {
-    COMPONENT_OK,
-    SHORT_CIRCUIT,
-    OPEN_CIRCUIT,
-    OUT_OF_TOLERANCE,
-    HIGH_ESR,
-    HIGH_LEAKAGE,
-    DIODE_SHORT,
-    DIODE_OPEN,
-    DIODE_LEAKAGE,
-    IC_OVERCURRENT,
-    IC_LOGIC_ERROR,
-    NO_CONNECTION,
-    UNKNOWN_FAULT
-};
-
-// 元件规格结构体
+// 元件规格结构体（扁平化设计，用于故障诊断）
 struct ComponentSpec {
-    ComponentType type;
+    ComponentType type = ComponentType::UNKNOWN;
     QString reference;          // 器件标识 (如R1, C2, IC3)
-    double nominal_value;       // 标称值
-    double tolerance;           // 容差 (如0.05表示5%)
-    double max_voltage;         // 最大工作电压
-    double max_current;         // 最大工作电流
-    int channel;               // 测试通道
+    double nominal_value = 0.0; // 标称值
+    double tolerance = 0.05;    // 容差 (如0.05表示5%)
+    double max_voltage = 0.0;   // 最大工作电压
+    double max_current = 0.0;   // 最大工作电流
+    int channel = 0;           // 测试通道
     QString description;        // 描述信息
-    // 新增：测试参数
-    double test_voltage;        // 测试电压
-    double test_current;        // 测试电流
-    bool requires_dmm;          // 是否需要万用表
+    
+    // 测试参数
+    double test_voltage = 1.0;  // 测试电压
+    double test_current = 0.001; // 测试电流
+    bool requires_dmm = false;  // 是否需要万用表
     QString connection_notes;   // 连接注意事项
     
     // 高级参数
@@ -59,8 +42,7 @@ struct ComponentSpec {
     double max_esr = 0.0;           // 最大ESR (电容)
     double max_leakage = 0.0;       // 最大漏电流
     
-    ComponentSpec() : type(ComponentType::UNKNOWN), nominal_value(0), 
-                     tolerance(0.05), max_voltage(0), max_current(0), channel(0) {}
+    ComponentSpec() = default;
 };
 
 // 测量结果结构体
@@ -107,7 +89,24 @@ struct DiagnosticResult {
 
 // Forward declaration
 struct TestSequence;
-struct ComponentSpecs;
+
+// === 状态管理枚举 ===
+enum class WorkflowState {
+    IDLE,
+    CONFIGURING_SIGNALS,
+    CONFIGURING_PORTS,
+    SHOWING_WIRING_GUIDE,
+    EXECUTING_TESTS,
+    ANALYZING_RESULTS,
+    COMPLETED,
+    ERROR,
+    TEST_COMPLETED,
+    ANALYSIS_COMPLETED,
+    WIRING_COMPLETED,
+    WIRING_VERIFIED
+};
+
+// 使用commontypes.h中的TestData, TestConfiguration, PortMapping
 
 class FaultDiagnostic : public QObject
 {
@@ -115,9 +114,24 @@ class FaultDiagnostic : public QObject
 
 public:
     explicit FaultDiagnostic(DeviceManager* deviceManager, QObject *parent = nullptr);
-    ~FaultDiagnostic();// 主要诊断接口
+    ~FaultDiagnostic();
+
+    // === 新的模块化接口 ===
+      // 1. 信号配置接口
+    SignalConfiguration* getSignalConfiguration() { return signalConfig_.get(); }
+    QStringList getAvailableTestSchemes();
+    QString getActiveTestScheme() const;
+      // 2. 端口配置接口
+    PortConfiguration* getPortConfiguration() { return portConfig_.get(); }
+    bool isPortConfigured() const;
+    TestConfiguration getCurrentTestConfiguration() const;
+    
+    // 3. 故障分析接口
+    FaultAnalysis* getFaultAnalysis() { return faultAnalysis_.get(); }
+    AnalysisResult getLastAnalysisResult() const;// === 向后兼容的传统接口 ===
+    
+    // 主要诊断接口
     DiagnosticResult diagnoseComponent(const ComponentSpec& component);
-    void diagnoseComponentAsync(const QString& componentType, const QString& testId, const ComponentSpecs& specs);
     QVector<DiagnosticResult> diagnoseSequence(const TestSequence& sequence);
     
     // 具体元件诊断方法
@@ -140,12 +154,51 @@ public:
     // 结果分析
     double calculateHealthScore(const DiagnosticResult& result);
     QString generateRecommendation(const DiagnosticResult& result);
-    
-    // 获取支持的元件类型
+      // 获取支持的元件类型
     QStringList getSupportedComponentTypes() const;
     QString faultTypeToString(FaultType type) const;
+    
+    // === 数据转换方法（公有接口） ===
+    ComponentSpec convertFromComponentSpecs(const ComponentSpecs& specs, const QString& componentType, const QString& reference = "AUTO");
+    
+    // === 新增模块化工作流程方法 ===
+    bool executeFullDiagnosticWorkflow(const QString& componentType);
+    bool executeCustomWorkflow(const TestSchemeSignals& scheme, const QStringList& portList);
+    
+    // 工作流程步骤方法
+    bool step1_ConfigureSignals(const QString& componentType);
+    bool step2_ConfigurePorts();
+    bool step3_ExecuteTests();
+    bool step4_AnalyzeResults();
+    
+    // 模块化诊断方法
+    DiagnosticResult diagnoseComponentWithModules(const ComponentSpec& component);
+      // 异步操作支持
+    void diagnoseComponentAsync(const QString& componentId, const QString& testScheme, const ComponentSpec& component);
+    void startFaultAnalysisAsync(const QString& testId, const TestData& testData);
+    
+    // 同步操作包装器
+    TestData executeSynchronousTest(const ComponentSpec& component);
+    AnalysisResult executeSynchronousAnalysis(const QString& testId, const TestData& testData);
+    
+    // 配置和状态管理
+    bool setActiveTestScheme(const QString& schemeName);
+    bool showPortConfigurationDialog();
+    bool autoConfigurePortsFromComponentSpec(const ComponentSpec& component);
+    
+    // WiringGuide 集成
+    bool startWiringGuide(const TestConfiguration& config);
+    bool shouldShowWiringGuide(const TestConfiguration& config);
+      // 模块初始化和连接
+    bool initializeModules();
+    void connectModuleSignals();
+    
+private:
+    // 内部状态管理方法
+    void setState(WorkflowState newState);
 
 signals:
+    // === 向后兼容信号 ===
     void diagnosticProgress(int percentage);
     void diagnosticCompleted(const DiagnosticResult& result);
     void sequenceCompleted(const QVector<DiagnosticResult>& results);
@@ -153,16 +206,86 @@ signals:
     void diagnosisStarted(const ComponentSpec& component);
     void diagnosisCompleted(const DiagnosticResult& result);
     void progressUpdated(int percentage);
+    
     // 新增：接线引导相关信号
     void wiringRequired(const ComponentSpec& component);  // 需要接线
     void wiringCompleted(const ComponentSpec& component, const QString& configId);  // 接线完成
+      // === 新增模块化工作流程信号 ===
+    void workflowStarted(const QString& workflowType);
+    void workflowCompleted(const QString& workflowType);
+    void workflowError(const QString& workflowType, const QString& error);
+    void workflowStepCompleted(int stepNumber, const QString& stepName);
+    void workflowStateChanged(WorkflowState newState);
+    
+    // 测试执行信号
+    void testExecutionStarted(const QString& testId);
+    void testExecutionCompleted(const QString& testId, const TestData& testData);
+    void testExecutionFailed(const QString& testId, const QString& error);
+    void testExecutionProgress(const QString& testId, int percentage);
+    
+    // 分析相关信号
+    void analysisStarted(const QString& testId);
+    void analysisCompleted(const QString& testId, const AnalysisResult& result);
+    void analysisProgress(const QString& testId, int percentage);
+    void analysisFailed(const QString& testId, const QString& error);
+      // 配置相关信号
+    void signalConfigurationChanged();
+    void portConfigurationCompleted(const TestConfiguration& config);
+    void portConfigurationChanged(const QString& message);
+    void portValidationFailed(const QString& error);
+    void testSchemeChanged(const QString& scheme);
+    
+    // WiringGuide 信号
+    void wiringGuideCompleted(const QString& testId);
+    void wiringVerificationCompleted(bool success, const QString& message);
 
 private:
+    // === 核心组件 ===
     DeviceManager* device_manager_;
     
+    // === 三大模块 ===
+    std::unique_ptr<SignalConfiguration> signalConfig_;
+    std::unique_ptr<PortConfiguration> portConfig_;
+    std::unique_ptr<FaultAnalysis> faultAnalysis_;
+      // === 状态管理 ===
+    WorkflowState currentState_;
+    QString currentWorkflowType_;
+    QString activeTestScheme_;
+    TestConfiguration currentTestConfig_;
+    QString currentTestId_;
+    TestData currentTestData_;
+    AnalysisResult lastAnalysisResult_;
+    
+    // === 新增缺失的成员变量 ===
+    ComponentSpec currentComponentSpecs_;  // 当前元件规格
+    AnalysisResult currentAnalysisResult_;  // 当前分析结果
+    QString currentTestScheme_;            // 当前测试方案名称
+    
+    // === WiringGuide 集成 ===
+    bool wiringGuideEnabled_;
+    QString wiringGuideConfigId_;
+    
+    // === 向后兼容支持 ===
     // Threading support
     bool use_threaded_manager_;
     DeviceManager* threaded_device_manager_;
+    QString last_error_;
+      // === 私有方法 ===
+      // 向后兼容的私有方法
+    void setError(const QString& error);
+    
+    // === 新增私有辅助方法 ===
+    // 错误结果创建
+    DiagnosticResult createErrorResult(const QString& testId, const QString& error);
+    AnalysisResult createErrorAnalysisResult(const QString& testId, const QString& error);
+    
+    // 工作流程内部方法
+    bool step3_ExecuteTest();    // 模块间数据转换
+    ComponentSpec convertToLegacyComponentSpec(const TestSchemeSignals& scheme, const TestConfiguration& config);
+    DiagnosticResult convertFromAnalysisResult(const AnalysisResult& analysisResult);
+    TestData convertFromMeasurementResult(const MeasurementResult& measurement);
+    
+    // === 向后兼容的私有方法 ===
     
     // 基础测量方法
     MeasurementResult measureResistance(int channel, double test_voltage = 1.0);
@@ -170,7 +293,8 @@ private:
     MeasurementResult measureInductance(int channel, double test_frequency = 10000.0);
     MeasurementResult measureDiodeCharacteristics(int channel);
     MeasurementResult measureICParameters(int channel, const ComponentSpec& spec);
-      // 故障判断算法
+    
+    // 故障判断算法
     FaultType analyzeResistorFault(const ComponentSpec& spec, const MeasurementResult& measurement);
     FaultType analyzeCapacitorFault(const ComponentSpec& spec, const MeasurementResult& measurement);
     FaultType analyzeDiodeFault(const ComponentSpec& spec, const MeasurementResult& measurement);
@@ -188,11 +312,33 @@ private:
     // 统计分析
     double calculateConfidence(const DiagnosticResult& result);
     
-    QString last_error_;
-    void setError(const QString& error);
-
     // Internal diagnosis method (doesn't emit signals)
     DiagnosticResult diagnoseComponentInternal(const ComponentSpec& component);
+
+private slots:
+    // 保留必要的槽方法用于内部使用
+    void onTestCompleted();
+    
+    // === 新增模块信号处理槽 ===
+    // 信号配置模块槽
+    void onSignalConfigurationChanged();
+    
+    // 端口配置模块槽
+    void onPortConfigurationCompleted(const TestConfiguration& config);
+    void onPortValidationFailed(const QString& error);
+    
+    // 测试执行模块槽
+    void onTestExecutionCompleted(const QString& testId, const TestData& testData);
+    void onTestExecutionFailed(const QString& testId, const QString& error);
+    void onTestExecutionProgress(const QString& testId, int percentage);
+    
+    // 故障分析模块槽
+    void onAnalysisCompleted(const QString& testId, const AnalysisResult& result);
+    void onAnalysisProgress(const QString& testId, int percentage);
+    
+    // WiringGuide 集成槽
+    void onWiringGuideCompleted(const QString& testId);
+    void onWiringVerificationCompleted(bool success, const QString& message);
 };
 
 #endif // FAULTDIAGNOSTIC_H

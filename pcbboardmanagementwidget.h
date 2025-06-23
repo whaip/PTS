@@ -181,8 +181,12 @@ private:
       // 状态信息
     QString current_board_id_;
     QList<ComponentInfo> current_components_;
-    cv::Mat current_board_image_;    QList<PCBBoardInfo> identification_candidates_;
+    cv::Mat current_board_image_;
+    QList<PCBBoardInfo> identification_candidates_;
     QString selected_candidate_id_;
+    
+    // 异步识别
+    QThread* identification_worker_thread_;
     
     // 图像显示状态
     double zoom_factor_;

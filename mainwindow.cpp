@@ -139,6 +139,27 @@ MainWindow::~MainWindow()
         batch_testing_active_ = false;
     }
     
+    if (current_wiring_dialog_) {
+        disconnect(current_wiring_dialog_, nullptr, nullptr, nullptr);
+        current_wiring_dialog_->close();
+        current_wiring_dialog_->deleteLater();
+        current_wiring_dialog_ = nullptr;
+    }
+
+    if (fault_diagnostic_) {
+        disconnect(fault_diagnostic_, nullptr, nullptr, nullptr);
+        
+        // 强制删除，触发其析构函数
+        delete fault_diagnostic_;
+        fault_diagnostic_ = nullptr;
+        
+        qDebug() << "故障诊断模块清理完成";
+        
+        // 处理事件，确保所有析构操作完成
+        QApplication::processEvents();
+        QThread::msleep(200);
+    }
+
     // 清理PCB分析器 - 需要先断开信号连接
     if (pcb_analyzer_) {
         disconnect(pcb_analyzer_, nullptr, this, nullptr);
@@ -182,32 +203,18 @@ MainWindow::~MainWindow()
         device_test_window_->close();
         device_test_window_->deleteLater();
         device_test_window_ = nullptr;
-    }
-    
-    // 关闭设备管理器
+    }    // 关闭设备管理器
     if (device_manager_) {
         disconnect(device_manager_, nullptr, this, nullptr);
         device_manager_->shutdownDeviceThreads();
-    }
-    
-    // 断开故障诊断的信号连接
-    if (fault_diagnostic_) {
-        disconnect(fault_diagnostic_, nullptr, this, nullptr);
-    }
-    
-    // 其他组件的信号断开
-    if (sequence_manager_) {
-        disconnect(sequence_manager_, nullptr, this, nullptr);
-    }
-    
-    if (result_exporter_) {
-        disconnect(result_exporter_, nullptr, this, nullptr);
     }
     
     // 强制处理所有待处理的事件
     QApplication::processEvents();
     
     delete ui;
+    
+    qDebug() << "MainWindow 析构完成";
 }
 
 void MainWindow::setupUI()
@@ -446,7 +453,8 @@ void MainWindow::setupMenuBar()
     file_menu->addAction("退出", this, &QWidget::close);
       // 系统菜单
     QMenu* system_menu = menu_bar->addMenu("系统");
-    system_menu->addAction("初始化设备", this, &MainWindow::initializeSystem);    system_menu->addAction("关闭设备", this, &MainWindow::shutdownSystem);
+    system_menu->addAction("初始化设备", this, &MainWindow::initializeSystem);
+    system_menu->addAction("关闭设备", this, &MainWindow::shutdownSystem);
     system_menu->addSeparator();
     system_menu->addAction("设备管理器测试", this, &MainWindow::openDeviceManagerTest);
     system_menu->addSeparator();
@@ -591,9 +599,10 @@ void MainWindow::runNextTest()
         QTimer::singleShot(100, this, &MainWindow::runNextTest);
         return;
     }
-    
-    // 创建组件规格
-    ComponentSpecs specs = step.specs;
+      // 创建组件规格 - 转换ComponentSpecs到ComponentSpec
+    ComponentSpecs originalSpecs = step.specs;
+    ComponentSpec specs = fault_diagnostic_->convertFromComponentSpecs(originalSpecs, step.componentType, 
+                                                                     QString("Step_%1").arg(current_test_index_ + 1));
     
     // 启动诊断
     fault_diagnostic_->diagnoseComponentAsync(step.componentType, 
@@ -1289,12 +1298,14 @@ void MainWindow::showWiringGuideForComponent(const ComponentSpec& component)
                     
                     // 生成测试任务
                     TestTask task = task_generator_->generateTestTask(config, component);
+                      // 执行测试任务
+                    single_test_button_->setText("端口配置中...");
+                    single_result_text_->append("接线完成，开始端口配置...\n");
                     
-                    // 执行测试任务
-                    single_test_button_->setText("执行测试中...");
-                    single_result_text_->append("接线完成，开始执行测试任务...\n");
-                    
-                     fault_diagnostic_->diagnoseComponent(component);
+                    // 显示端口配置对话框
+                    QTimer::singleShot(500, [this, component]() {
+                        showPortConfigurationForComponent(component);
+                    });
                     // if (task_generator_->executeTestTask(task, device_manager_)) {
                     //     // 任务执行成功，开始故障诊断
                     //     QTimer::singleShot(1000, [this, component]() {
@@ -1631,6 +1642,79 @@ QString MainWindow::getStatusIcon(DeviceStatus status)
     case DeviceStatus::CONNECTED: return "✅";
     case DeviceStatus::ERROR: return "❌";
     default: return "⚪";
+    }
+}
+
+void MainWindow::showPortConfigurationForComponent(const ComponentSpec& component)
+{
+    // 显示端口配置对话框
+    single_result_text_->append("正在显示端口配置对话框...\n");
+    
+    // 首先获取推荐的测试方案
+    QStringList schemes = fault_diagnostic_->getAvailableTestSchemes();
+    QString recommendedScheme;
+    
+    // 根据元件类型选择合适的测试方案
+    switch (component.type) {
+        case ComponentType::RESISTOR:
+            recommendedScheme = "Resistor_Standard";
+            break;
+        case ComponentType::CAPACITOR:
+            recommendedScheme = "Capacitor_Standard";
+            break;
+        case ComponentType::INDUCTOR:
+            recommendedScheme = "Inductor_Standard";
+            break;
+        case ComponentType::DIODE:
+            recommendedScheme = "Diode_Standard";
+            break;
+        case ComponentType::IC:
+            recommendedScheme = "IC_Standard";
+            break;
+        default:
+            recommendedScheme = schemes.isEmpty() ? "" : schemes.first();
+            break;
+    }
+    
+    if (recommendedScheme.isEmpty()) {
+        single_result_text_->append("错误：没有可用的测试方案！\n");
+        single_test_button_->setEnabled(true);
+        single_test_button_->setText("开始测试");
+        return;
+    }
+    
+    single_result_text_->append(QString("使用测试方案：%1\n").arg(recommendedScheme));
+    
+    // 设置活动测试方案
+    if (!fault_diagnostic_->setActiveTestScheme(recommendedScheme)) {
+        single_result_text_->append("错误：无法设置测试方案！\n");
+        single_test_button_->setEnabled(true);
+        single_test_button_->setText("开始测试");
+        return;
+    }
+    
+    // 显示端口配置对话框
+    if (fault_diagnostic_->showPortConfigurationDialog()) {
+        single_result_text_->append("端口配置完成，开始执行测试...\n");
+        single_test_button_->setText("执行测试中...");
+        
+        // 延迟执行故障诊断，让用户看到状态更新
+        QTimer::singleShot(1000, [this, component]() {
+            single_test_button_->setText("故障诊断中...");
+            single_result_text_->append("开始故障诊断分析...\n");
+            
+            // 执行故障诊断
+            DiagnosticResult result = fault_diagnostic_->diagnoseComponent(component);
+            
+            // 手动触发诊断完成事件（以防信号没有正确触发）
+            QTimer::singleShot(100, [this, result]() {
+                onDiagnosticCompleted(result);
+            });
+        });
+    } else {
+        single_result_text_->append("端口配置被取消。\n");
+        single_test_button_->setEnabled(true);
+        single_test_button_->setText("开始测试");
     }
 }
 

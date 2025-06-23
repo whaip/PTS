@@ -84,6 +84,7 @@ private slots:
     void startWiringGuide();        // 开始接线引导
     void onWiringCompleted(const WiringConfiguration& config);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
+    void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
 
 private:
     Ui::MainWindow *ui;    // 核心组件
