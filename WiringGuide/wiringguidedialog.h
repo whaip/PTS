@@ -2,126 +2,153 @@
 #define WIRINGGUIDEDIALOG_H
 
 #include <QDialog>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
 #include <QComboBox>
-#include <QSpinBox>
-#include <QDoubleSpinBox>
-#include <QGroupBox>
-#include <QListWidget>
 #include <QTableWidget>
 #include <QTextEdit>
+#include <QListWidget>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QProgressBar>
 #include <QCheckBox>
-#include <QSplitter>
-#include <QTabWidget>
-#include <QPixmap>
+#include <QLineEdit>
 #include <QGraphicsView>
 #include <QGraphicsScene>
-#include <QGraphicsPixmapItem>
-#include <QScrollArea>
-#include <QFrame>
-#include <QMessageBox>
+#include <QGraphicsItem>
+#include <QSplitter>
 #include <QTimer>
-#include <QFormLayout>
-#include "wiringresource.h"
-#include "wiringschematic.h"
-#include "../faultdiagnostic.h"
+#include "portmanager.h"
+#include "portdefinitions.h"
+#include "commontypes.h"
+
+using namespace PortDefinitions;
 
 class WiringGuideDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit WiringGuideDialog(const ComponentSpec& component, QWidget *parent = nullptr);
+    explicit WiringGuideDialog(const ComponentSpec& component, 
+                              PortManager* portManager,
+                              QWidget *parent = nullptr);
     ~WiringGuideDialog();
-
-    // 获取用户配置的接线方案
-    WiringConfiguration getWiringConfiguration() const;
     
-    // 设置测试参数
-    void setTestParameters(double voltage, double current, bool useDMM = true);
+    // 获取配置结果
+    WiringScheme getWiringScheme() const;
+    bool isWiringCompleted() const { return wiringCompleted_; }
+
+signals:
+    void wiringCompleted(const WiringScheme& scheme);
+    void wiringCancelled();
+
+protected:
+    void reject() override;
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void onResourceSelectionChanged();
     void onPortSelectionChanged();
-    void onWiringStepCompleted(int step);
-    void onGenerateTestTask();
+    void onAutoAllocatePorts();
+    void onManualAllocatePorts();
+    void onValidateConnections(); // 保留声明，但实现已简化
+    void onStartWiring();
+    void onNextStep();
+    void onPreviousStep();
     void onResetWiring();
-    void onShowSchematic();
-    void onValidateConnections();
+    void onGenerateScheme();
+    void updateWiringProgress();
+    void onConnectionCompleted();
+    void onShowPortDetails();
+    void onComponentTypeChanged();
 
 private:
     void setupUI();
-    void setupResourceSelectionPage();
-    void setupWiringGuidePage();
-    void setupVerificationPage();
-    void setupSchematicDisplay();
-    void connectSignals();
+    void setupComponentConfigPage();
+    void setupPortSelectionPage();
+    void setupWiringInstructionPage();
+    void setupValidationPage();
     
-    void updateAvailableResources();
+    void updateAvailablePorts();
+    void updatePortTable();
     void updateWiringInstructions();
     void updateConnectionDiagram();
-    void validateUserSelections();
-    void generateWiringSteps();
+    void updateValidationResults();
+      void generateWiringSteps();
+    void createConnectionInstructions();
+      // Add missing helper function declarations
+    QString generateTestParametersDescription() const;
+    QString portTypeToString(PortType type) const;
+    QString getPortUsage(PortType type) const;  // Fixed parameter type
+    QString getConnectionPoint(PortType type) const;  // Fixed parameter type
+    QString getWireColor(PortType type) const;
+    QColor getWireColor(const QString& portId) const;  // Added overload for QString
+    QString generateDetailedInstruction(const ConnectionInfo& connection) const;
+    QString componentTypeToString(ComponentType type) const;
+    double getTestVoltage() const;  // Removed parameter
+    double getTestFrequency() const;  // Removed parameter
+      // Missing connection generation functions  
+    QVector<ConnectionInfo> generateConnectionsForComponent(ComponentType type, const QVector<PortInfo>& ports);  // Match implementation
+    QVector<ConnectionInfo> generateResistorConnections(const QVector<PortInfo>& ports);  // Match implementation
+    QVector<ConnectionInfo> generateCapacitorConnections(const QVector<PortInfo>& ports);  // Match implementation
+    QVector<ConnectionInfo> generateInductorConnections(const QVector<PortInfo>& ports);  // Match implementation
+    QVector<ConnectionInfo> generateDiodeConnections(const QVector<PortInfo>& ports);  // Match implementation
+    QVector<ConnectionInfo> generateICConnections(const QVector<PortInfo>& ports);  // Match implementation
+    
+    // Missing UI update functions
+    void updateWiringStepsList();
+    bool validateCurrentConfiguration() const;
+    
+    ComponentSpec component_;
+    PortManager* portManager_;
+    WiringScheme currentScheme_;
+    
+    bool wiringCompleted_;
+    int currentStepIndex_;
+    QVector<ConnectionInfo> wiringSteps_;
     
     // UI组件
-    QTabWidget* tab_widget_;
+    QTabWidget* tabWidget_;
     
-    // 资源选择页面
-    QGroupBox* power_selection_group_;
-    QGroupBox* dmm_selection_group_;
-    QGroupBox* digital_io_group_;
-    QGroupBox* analog_io_group_;
+    // 元件配置页面
+    QWidget* componentConfigPage_;
+    QLabel* componentTypeLabel_;
+    QLabel* componentValueLabel_;
+    QLineEdit* componentRefEdit_;
+    QDoubleSpinBox* nominalValueSpin_;
+    QDoubleSpinBox* toleranceSpin_;
+    QTextEdit* testParametersEdit_;
     
-    QComboBox* voltage_source_combo_;
-    QComboBox* current_source_combo_;
-    QComboBox* dmm_channel_combo_;
-    QListWidget* digital_output_list_;
-    QListWidget* digital_input_list_;
-    QListWidget* analog_output_list_;
-    QListWidget* analog_input_list_;
+    // 端口选择页面
+    QWidget* portSelectionPage_;
+    QTableWidget* availablePortsTable_;
+    QTableWidget* selectedPortsTable_;
+    QPushButton* autoAllocateBtn_;
+    QPushButton* manualAllocateBtn_;
+    QPushButton* clearSelectionBtn_;
+    QLabel* portStatusLabel_;
+      // 接线指导页面
+    QWidget* wiringInstructionPage_;
+    QListWidget* wiringStepsList_;
+    QTextEdit* currentStepDetails_;
+    QGraphicsView* connectionDiagramView_;
+    QGraphicsScene* connectionDiagramScene_;
+    QPushButton* nextStepBtn_;
+    QPushButton* prevStepBtn_;
+    QProgressBar* wiringProgressBar_;
     
-    // 接线引导页面
-    QListWidget* wiring_steps_list_;
-    QTextEdit* current_step_detail_;
-    QGraphicsView* wiring_diagram_view_;
-    QGraphicsScene* wiring_diagram_scene_;
-    QProgressBar* wiring_progress_;
-    QPushButton* step_completed_btn_;
-    QPushButton* previous_step_btn_;
-    QPushButton* next_step_btn_;
-    
-    // 验证页面
-    QTableWidget* connection_table_;
-    QPushButton* validate_btn_;
-    QPushButton* generate_task_btn_;
-    QTextEdit* validation_result_;
-    
-    // 原理图显示
-    WiringSchematic* schematic_widget_;
-    
-    // 数据成员
-    ComponentSpec component_;
-    WiringResourceManager* resource_manager_;
-    WiringConfiguration current_config_;
-    QList<WiringStep> wiring_steps_;
-    int current_step_index_;
-    double test_voltage_;
-    double test_current_;
-    bool use_dmm_;
-    bool wiring_completed_;
-    
-    // 资源限制
-    static const int MAX_DIGITAL_OUTPUTS = 12;
-    static const int MAX_POWER_OUTPUTS = 4;
-    static const int MAX_ANALOG_OUTPUTS = 16;
-    static const int MAX_DIGITAL_INPUTS = 16;
-    static const int MAX_ANALOG_INPUTS = 32;
-    static const int DMM_CHANNELS = 1;
+    // 验证页面已移除 - 接线完成后直接生成方案
+    // QWidget* validationPage_;
+    // QTableWidget* connectionTableWidget_;
+    // QTextEdit* validationResultsEdit_;
+    // QPushButton* validateBtn_;
+    // QPushButton* generateSchemeBtn_;
+    // QPushButton* resetBtn_;
 };
 
 #endif // WIRINGGUIDEDIALOG_H

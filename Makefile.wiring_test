@@ -1,0 +1,86 @@
+# Makefile for Wiring Guide Test
+# 接线引导系统测试程序编译配置
+
+CXX = g++
+MOC = moc
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+QT_PATH = C:/Qt/6.5.0/mingw_64
+QT_INCLUDE = -I$(QT_PATH)/include \
+             -I$(QT_PATH)/include/QtCore \
+             -I$(QT_PATH)/include/QtGui \
+             -I$(QT_PATH)/include/QtWidgets \
+             -I. \
+             -I./WiringGuide
+
+QT_LIBS = -L$(QT_PATH)/lib \
+          -lQt6Core \
+          -lQt6Gui \
+          -lQt6Widgets
+
+SOURCES = test_wiring_guide.cpp \
+          WiringGuide/portmanager.cpp \
+          WiringGuide/wiringresourcemanager.cpp \
+          WiringGuide/wiringtaskgenerator.cpp \
+          WiringGuide/wiringguidedialog.cpp \
+          devicemanager.cpp
+
+HEADERS = WiringGuide/portdefinitions.h \
+          WiringGuide/portmanager.h \
+          WiringGuide/wiringresourcemanager.h \
+          WiringGuide/wiringtaskgenerator.h \
+          WiringGuide/wiringguidedialog.h \
+          devicemanager.h \
+          commontypes.h
+
+MOC_SOURCES = WiringGuide/moc_portmanager.cpp \
+              WiringGuide/moc_wiringresourcemanager.cpp \
+              WiringGuide/moc_wiringtaskgenerator.cpp \
+              WiringGuide/moc_wiringguidedialog.cpp \
+              moc_devicemanager.cpp
+
+OBJECTS = $(SOURCES:.cpp=.o) $(MOC_SOURCES:.cpp=.o)
+TARGET = test_wiring_guide.exe
+
+.PHONY: all clean test run
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CXX) $(OBJECTS) -o $(TARGET) $(QT_LIBS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) $(QT_INCLUDE) -c $< -o $@
+
+# MOC files generation
+WiringGuide/moc_%.cpp: WiringGuide/%.h
+	$(MOC) $(QT_INCLUDE) $< -o $@
+
+moc_%.cpp: %.h
+	$(MOC) $(QT_INCLUDE) $< -o $@
+
+test: $(TARGET)
+	./$(TARGET)
+
+run-gui: $(TARGET)
+	./$(TARGET) --show-gui
+
+clean:
+	rm -f $(OBJECTS) $(MOC_SOURCES) $(TARGET)
+	rm -f WiringGuide/moc_*.cpp moc_*.cpp
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all       - Build the test program"
+	@echo "  test      - Build and run console test"
+	@echo "  run-gui   - Build and run GUI test"
+	@echo "  clean     - Clean build files"
+	@echo "  help      - Show this help"
+
+# Dependencies
+test_wiring_guide.o: test_wiring_guide.cpp $(HEADERS)
+WiringGuide/portmanager.o: WiringGuide/portmanager.cpp WiringGuide/portmanager.h
+WiringGuide/wiringresourcemanager.o: WiringGuide/wiringresourcemanager.cpp WiringGuide/wiringresourcemanager.h
+WiringGuide/wiringtaskgenerator.o: WiringGuide/wiringtaskgenerator.cpp WiringGuide/wiringtaskgenerator.h
+WiringGuide/wiringguidedialog.o: WiringGuide/wiringguidedialog.cpp WiringGuide/wiringguidedialog.h
+devicemanager.o: devicemanager.cpp devicemanager.h

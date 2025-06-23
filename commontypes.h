@@ -7,6 +7,7 @@
 #include <QVariant>
 #include <QVector>
 #include <QDateTime>
+#include <QDebug>
 
 // 元件类型枚举
 enum class ComponentType {
@@ -23,6 +24,25 @@ enum class ComponentType {
 inline uint qHash(ComponentType key, uint seed = 0)
 {
     return qHash(static_cast<int>(key), seed);
+}
+
+// ComponentType转换为字符串的辅助函数
+inline QString componentTypeToString(ComponentType type) {    switch (type) {
+        case ComponentType::RESISTOR: return "电阻";
+        case ComponentType::CAPACITOR: return "电容";
+        case ComponentType::INDUCTOR: return "电感";
+        case ComponentType::DIODE: return "二极管";
+        case ComponentType::TRANSISTOR: return "晶体管";
+        case ComponentType::IC: return "集成电路";
+        case ComponentType::UNKNOWN:
+        default: return "未知";
+    }
+}
+
+// QDebug operator for ComponentType
+inline QDebug operator<<(QDebug debug, ComponentType type) {
+    debug.nospace() << "ComponentType(" << componentTypeToString(type) << ")";
+    return debug.space();
 }
 
 // 故障类型枚举
@@ -81,6 +101,49 @@ struct PortConfig {
                   amplitude(1.0), frequency(1000.0), phase(0.0),
                   samplesPerChannel(1000), isOutput(false),
                   rangeMin(-10.0), rangeMax(10.0), sampleRate(10000.0) {}
+};
+
+// ComponentSpec结构 - 元件规格定义
+struct ComponentSpec {
+    QString reference;           // 元件标识 (如 R1, C1, U1)
+    QString name;               // 元件名称
+    ComponentType type;         // 元件类型
+    QString value;              // 元件值 (如 "100K", "10uF", "555")
+    QString package;            // 封装类型 (如 "0603", "SOP8", "DIP14")
+    QString tolerance;          // 容差 (如 "±5%", "±10%")
+    QString voltage;            // 额定电压
+    QString power;              // 额定功率
+    QString manufacturer;       // 制造商
+    QString partNumber;         // 器件型号
+    QString description;        // 描述
+    QStringList testPoints;     // 测试点列表
+    QMap<QString, QString> parameters;  // 其他参数
+    
+    // 测试相关属性
+    bool requiresTesting;       // 是否需要测试
+    QString testCategory;       // 测试类别
+    QStringList testMethods;    // 测试方法列表
+    
+    // 数值型参数 (用于故障诊断)
+    double nominal_value = 0.0; // 标称值
+    double tolerance_percent = 5.0; // 容差百分比
+    
+    // 测试配置参数
+    int channel = 0;            // 测试通道
+    double test_voltage = 5.0;  // 测试电压
+    double test_current = 0.1;  // 测试电流
+    double max_voltage = 10.0;  // 最大电压
+    double max_current = 1.0;   // 最大电流
+    double temp_coefficient = 0.0; // 温度系数
+    double max_esr = 100.0;     // 最大等效串联电阻
+    double max_leakage = 1e-6;  // 最大漏电流
+    bool requires_dmm = false;  // 是否需要万用表
+    
+    ComponentSpec() : type(ComponentType::UNKNOWN), requiresTesting(true) {}
+    
+    // 便利构造函数
+    ComponentSpec(const QString& ref, ComponentType t, const QString& val = "") 
+        : reference(ref), type(t), value(val), requiresTesting(true) {}
 };
 
 // 端口映射结构

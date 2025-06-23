@@ -68,8 +68,9 @@ SOURCES += \
     pcbboardmanagementwidget.cpp \
     PCB_Components_Detect/staticlabelviewdialog.cpp \
     WiringGuide/wiringguidedialog.cpp \
-    WiringGuide/wiringresource.cpp \
-    WiringGuide/wiringschematic.cpp \
+    WiringGuide/portmanager.cpp \
+    WiringGuide/wiringguidedialog.cpp \
+    WiringGuide/wiringresourcemanager.cpp \
     WiringGuide/wiringtaskgenerator.cpp
 
 HEADERS += \
@@ -105,8 +106,9 @@ HEADERS += \
     5711waveformconfig.h \
     PCB_Components_Detect/staticlabelviewdialog.h \
     WiringGuide/wiringguidedialog.h \
-    WiringGuide/wiringresource.h \
-    WiringGuide/wiringschematic.h \
+    WiringGuide/portdefinitions.h \
+    WiringGuide/portmanager.h \
+    WiringGuide/wiringresourcemanager.h \
     WiringGuide/wiringtaskgenerator.h
 
 FORMS += \

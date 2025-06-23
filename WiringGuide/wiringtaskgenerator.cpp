@@ -1,553 +1,713 @@
 #include "wiringtaskgenerator.h"
-#include <QStandardPaths>
-#include <QDir>
-#include <QFile>
-#include <QJsonDocument>
-#include <QUuid>
 #include <QDebug>
-#include <QtMath>
+#include <QUuid>
+#include <QDateTime>
 
-// TestTask JSON序列化实现
-QJsonObject TestTask::toJson() const {
-    QJsonObject obj;
-    obj["task_id"] = task_id;
-    obj["component_reference"] = component_reference;
-    obj["wiring_config_id"] = wiring_config_id;
-    obj["created_time"] = created_time.toString(Qt::ISODate);
-    obj["description"] = description;
-    obj["is_executed"] = is_executed;
-    obj["execution_result"] = execution_result;
-    
-    QJsonArray operations_array;
-    for (const auto& operation : operations) {
-        QJsonObject op_obj;
-        op_obj["command"] = static_cast<int>(operation.command);
-        op_obj["channel"] = operation.channel;
-        op_obj["value"] = operation.value;
-        op_obj["sample_rate"] = operation.sampleRate;
-        op_obj["timeout"] = operation.timeout;
-        op_obj["blocking"] = operation.blocking;
-        op_obj["device_name"] = operation.deviceName;
-        op_obj["sync_group"] = operation.syncGroup;
-        op_obj["sync_delay"] = operation.syncDelay;
-        operations_array.append(op_obj);
-    }
-    obj["operations"] = operations_array;
-    
-    return obj;
-}
-
-TestTask TestTask::fromJson(const QJsonObject& json) {
-    TestTask task;
-    task.task_id = json["task_id"].toString();
-    task.component_reference = json["component_reference"].toString();
-    task.wiring_config_id = json["wiring_config_id"].toString();
-    task.created_time = QDateTime::fromString(json["created_time"].toString(), Qt::ISODate);
-    task.description = json["description"].toString();
-    task.is_executed = json["is_executed"].toBool();
-    task.execution_result = json["execution_result"].toString();
-    
-    QJsonArray operations_array = json["operations"].toArray();
-    for (const auto& op_value : operations_array) {
-        QJsonObject op_obj = op_value.toObject();
-        DeviceOperation operation;
-        operation.command = static_cast<DeviceCommand>(op_obj["command"].toInt());
-        operation.channel = op_obj["channel"].toInt();
-        operation.value = op_obj["value"].toDouble();
-        operation.sampleRate = op_obj["sample_rate"].toDouble();
-        operation.timeout = op_obj["timeout"].toInt();
-        operation.blocking = op_obj["blocking"].toBool();
-        operation.deviceName = op_obj["device_name"].toString();
-        operation.syncGroup = op_obj["sync_group"].toString();
-        operation.syncDelay = op_obj["sync_delay"].toInt();
-        task.operations.append(operation);
-    }
-    
-    return task;
-}
-
-//=============================================================================
-// WiringTaskGenerator 实现
-//=============================================================================
-
-WiringTaskGenerator::WiringTaskGenerator(QObject *parent)
+WiringTaskGenerator::WiringTaskGenerator(WiringResourceManager* resourceManager, QObject *parent)
     : QObject(parent)
+    , resourceManager_(resourceManager)
+    , scheduleTimer_(new QTimer(this))
 {
-    task_storage_path_ = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) 
-                        + "/FaultDetect/TestTasks/";
-    QDir().mkpath(task_storage_path_);
+    // 连接资源管理器信号
+    if (resourceManager_) {
+        connect(resourceManager_, &WiringResourceManager::schemeCreated,
+                this, &WiringTaskGenerator::onSchemeCreated);
+        connect(resourceManager_, &WiringResourceManager::resourcesAllocated,
+                this, &WiringTaskGenerator::onResourcesAllocated);
+        connect(resourceManager_, &WiringResourceManager::resourcesReleased,
+                this, &WiringTaskGenerator::onResourcesReleased);
+    }
+    
+    // 设置调度定时器
+    connect(scheduleTimer_, &QTimer::timeout, this, &WiringTaskGenerator::checkTaskSchedule);
+    scheduleTimer_->start(5000); // 每5秒检查一次调度
 }
 
 WiringTaskGenerator::~WiringTaskGenerator()
 {
-    // 保存所有未完成的任务状态
-    for (auto it = active_tasks_.begin(); it != active_tasks_.end(); ++it) {
-        if (!it.value().is_executed) {
-            QString file_path = task_storage_path_ + it.key() + ".json";
-            saveTestTask(it.value(), file_path);
+}
+
+QString WiringTaskGenerator::generateTask(const ComponentSpec& component)
+{
+    qDebug() << "生成测试任务:" << component.reference;
+    
+    try {
+        // 生成最优接线方案
+        WiringScheme optimalScheme = resourceManager_->generateOptimalScheme(component);
+        if (optimalScheme.schemeId.isEmpty()) {
+            QString error = QString("无法为元件 %1 生成接线方案").arg(component.reference);
+            emit errorOccurred(error);
+            return QString();
         }
+        
+        // 创建测试任务
+        TestTask task = createTaskFromScheme(optimalScheme, component);
+        
+        // 验证任务
+        QStringList errors;
+        if (!validateTaskConfiguration(task, errors)) {
+            QString error = QString("任务验证失败: %1").arg(errors.join("; "));
+            emit errorOccurred(error);
+            return QString();
+        }
+        
+        // 保存任务
+        tasks_[task.taskId] = task;
+        
+        qDebug() << "测试任务生成成功:" << task.taskName;
+        emit taskGenerated(task);
+        
+        return task.taskId;
+        
+    } catch (const std::exception& e) {
+        QString error = QString("生成任务时发生异常: %1").arg(e.what());
+        emit errorOccurred(error);
+        return QString();
     }
 }
 
-TestTask WiringTaskGenerator::generateTestTask(const WiringConfiguration& wiringConfig, 
-                                              const ComponentSpec& component)
+QString WiringTaskGenerator::generateTaskFromScheme(const WiringScheme& scheme, const ComponentSpec& component)
+{
+    qDebug() << "从方案生成测试任务:" << scheme.schemeName;
+    
+    TestTask task = createTaskFromScheme(scheme, component);
+    
+    // 验证任务
+    QStringList errors;
+    if (!validateTaskConfiguration(task, errors)) {
+        QString error = QString("任务验证失败: %1").arg(errors.join("; "));
+        emit errorOccurred(error);
+        return QString();
+    }
+    
+    // 保存任务
+    tasks_[task.taskId] = task;
+    
+    emit taskGenerated(task);
+    return task.taskId;
+}
+
+QString WiringTaskGenerator::generateBatchTasks(const QVector<ComponentSpec>& components)
+{
+    qDebug() << "生成批量测试任务，数量:" << components.size();
+    
+    QStringList taskIds;
+    QString batchId = QUuid::createUuid().toString();
+    
+    for (const ComponentSpec& component : components) {
+        QString taskId = generateTask(component);
+        if (!taskId.isEmpty()) {
+            taskIds.append(taskId);
+            
+            // 为批量任务添加标记
+            if (tasks_.contains(taskId)) {
+                tasks_[taskId].notes += QString(" [批量任务: %1]").arg(batchId);
+            }
+        }
+    }
+    
+    if (!taskIds.isEmpty()) {
+        emit batchTasksGenerated(taskIds);
+        qDebug() << "批量任务生成成功，数量:" << taskIds.size();
+    } else {
+        emit errorOccurred("批量任务生成失败");
+    }
+    
+    return batchId;
+}
+
+TestTask WiringTaskGenerator::getTask(const QString& taskId) const
+{
+    return tasks_.value(taskId, TestTask());
+}
+
+QVector<TestTask> WiringTaskGenerator::getAllTasks() const
+{
+    QVector<TestTask> allTasks;
+    for (auto it = tasks_.begin(); it != tasks_.end(); ++it) {
+        allTasks.append(it.value());
+    }
+    return allTasks;
+}
+
+QVector<TestTask> WiringTaskGenerator::getTasksByStatus(const QString& status) const
+{
+    QVector<TestTask> filteredTasks;
+    for (auto it = tasks_.begin(); it != tasks_.end(); ++it) {
+        if (it.value().status == status) {
+            filteredTasks.append(it.value());
+        }
+    }
+    return filteredTasks;
+}
+
+QVector<TestTask> WiringTaskGenerator::getTasksByComponent(ComponentType componentType) const
+{
+    QVector<TestTask> filteredTasks;
+    for (auto it = tasks_.begin(); it != tasks_.end(); ++it) {
+        if (it.value().component.type == componentType) {
+            filteredTasks.append(it.value());
+        }
+    }
+    return filteredTasks;
+}
+
+bool WiringTaskGenerator::updateTaskStatus(const QString& taskId, const QString& status)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    QString oldStatus = tasks_[taskId].status;
+    tasks_[taskId].status = status;
+    
+    qDebug() << "任务状态更新:" << taskId << oldStatus << "->" << status;
+    emit taskUpdated(taskId, status);
+    
+    if (status == "completed") {
+        emit taskCompleted(taskId, true);
+    } else if (status == "failed") {
+        emit taskCompleted(taskId, false);
+    }
+    
+    return true;
+}
+
+bool WiringTaskGenerator::scheduleTask(const QString& taskId, const QDateTime& scheduledTime)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    tasks_[taskId].scheduledTime = scheduledTime;
+    tasks_[taskId].status = "scheduled";
+    
+    qDebug() << "任务调度成功:" << taskId << "调度时间:" << scheduledTime.toString();
+    emit taskUpdated(taskId, "scheduled");
+    
+    return true;
+}
+
+bool WiringTaskGenerator::cancelTask(const QString& taskId)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    TestTask& task = tasks_[taskId];
+    
+    // 释放资源
+    if (resourceManager_) {
+        resourceManager_->releaseResourcesForScheme(task.wiringScheme);
+    }
+    
+    task.status = "cancelled";
+    
+    qDebug() << "任务取消成功:" << taskId;
+    emit taskUpdated(taskId, "cancelled");
+    
+    return true;
+}
+
+bool WiringTaskGenerator::deleteTask(const QString& taskId)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    // 先取消任务（释放资源）
+    cancelTask(taskId);
+    
+    // 删除任务
+    tasks_.remove(taskId);
+    
+    qDebug() << "任务删除成功:" << taskId;
+    return true;
+}
+
+bool WiringTaskGenerator::validateTask(const QString& taskId, QStringList& errors) const
+{
+    if (!tasks_.contains(taskId)) {
+        errors.append("任务不存在");
+        return false;
+    }
+    
+    const TestTask& task = tasks_[taskId];
+    return validateTaskConfiguration(task, errors);
+}
+
+bool WiringTaskGenerator::isTaskReady(const QString& taskId) const
+{
+    if (!tasks_.contains(taskId)) {
+        return false;
+    }
+    
+    const TestTask& task = tasks_[taskId];
+    
+    // 检查任务状态
+    if (task.status != "pending" && task.status != "ready") {
+        return false;
+    }
+      // 检查接线方案是否有效
+    QStringList errors;
+    if (!validateWiringScheme(task.wiringScheme, errors, task.component.reference)) {
+        return false;
+    }
+    
+    // 检查资源是否可用
+    if (resourceManager_) {
+        QStringList conflicts;
+        if (!resourceManager_->checkPortConflicts(task.wiringScheme, conflicts)) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+bool WiringTaskGenerator::prepareTaskExecution(const QString& taskId)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    TestTask& task = tasks_[taskId];
+    
+    // 分配资源
+    if (resourceManager_) {
+        if (!resourceManager_->allocateResourcesForScheme(task.wiringScheme)) {
+            qWarning() << "资源分配失败:" << taskId;
+            emit taskFailed(taskId, "资源分配失败");
+            return false;
+        }
+    }
+    
+    // 更新任务状态
+    task.status = "ready";
+    emit taskUpdated(taskId, "ready");
+    
+    qDebug() << "任务执行准备完成:" << taskId;
+    return true;
+}
+
+bool WiringTaskGenerator::finalizeTaskExecution(const QString& taskId, bool success, const QString& result)
+{
+    if (!tasks_.contains(taskId)) {
+        qWarning() << "任务不存在:" << taskId;
+        return false;
+    }
+    
+    TestTask& task = tasks_[taskId];
+    
+    // 释放资源
+    if (resourceManager_) {
+        resourceManager_->releaseResourcesForScheme(task.wiringScheme);
+    }
+    
+    // 更新任务状态
+    if (success) {
+        task.status = "completed";
+        task.notes += QString(" [执行成功: %1]").arg(result);
+        emit taskCompleted(taskId, true);
+    } else {
+        task.status = "failed";
+        task.notes += QString(" [执行失败: %1]").arg(result);
+        emit taskFailed(taskId, result);
+    }
+    
+    emit taskUpdated(taskId, task.status);
+    
+    qDebug() << "任务执行完成:" << taskId << (success ? "成功" : "失败");
+    return true;
+}
+
+QStringList WiringTaskGenerator::generateTasksFromTemplate(ComponentType componentType, int count)
+{
+    QStringList taskIds;
+    
+    if (!resourceManager_) {
+        emit errorOccurred("资源管理器未初始化");
+        return taskIds;
+    }
+    
+    QVector<WiringScheme> templates = resourceManager_->getTemplatesForComponent(componentType);
+    if (templates.isEmpty()) {
+        emit errorOccurred(QString("没有找到 %1 的模板").arg(componentTypeToString(componentType)));
+        return taskIds;
+    }
+    
+    WiringScheme templateScheme = templates.first();
+    
+    for (int i = 0; i < count; ++i) {
+        // 创建虚拟元件规格
+        ComponentSpec component;
+        component.reference = QString("%1_%2").arg(componentTypeToString(componentType)).arg(i + 1);
+        component.type = componentType;
+        component.nominal_value = 1000; // 默认值
+        component.tolerance_percent = 5.0;
+        
+        QString taskId = generateTaskFromScheme(templateScheme, component);
+        if (!taskId.isEmpty()) {
+            taskIds.append(taskId);
+        }
+    }
+    
+    return taskIds;
+}
+
+bool WiringTaskGenerator::executeBatchTasks(const QStringList& taskIds)
+{
+    qDebug() << "执行批量任务，数量:" << taskIds.size();
+    
+    bool allSuccess = true;
+    
+    for (const QString& taskId : taskIds) {
+        if (!prepareTaskExecution(taskId)) {
+            allSuccess = false;
+            qWarning() << "任务准备失败:" << taskId;
+        }
+    }
+    
+    return allSuccess;
+}
+
+int WiringTaskGenerator::getTotalTasks() const
+{
+    return tasks_.size();
+}
+
+int WiringTaskGenerator::getCompletedTasks() const
+{
+    return getTasksByStatus("completed").size();
+}
+
+int WiringTaskGenerator::getPendingTasks() const
+{
+    return getTasksByStatus("pending").size();
+}
+
+QMap<QString, int> WiringTaskGenerator::getTaskStatistics() const
+{
+    QMap<QString, int> stats;
+    
+    for (auto it = tasks_.begin(); it != tasks_.end(); ++it) {
+        const QString& status = it.value().status;
+        stats[status]++;
+    }
+    
+    return stats;
+}
+
+// 私有方法实现
+TestTask WiringTaskGenerator::createTaskFromComponent(const ComponentSpec& component)
 {
     TestTask task;
-    task.task_id = QUuid::createUuid().toString();
-    task.component_reference = component.reference;
-    task.wiring_config_id = wiringConfig.config_id;
-    task.created_time = QDateTime::currentDateTime();
-    task.description = QString("为元件 %1 生成的测试任务").arg(component.reference);
-    task.is_executed = false;
+    task.taskId = generateUniqueTaskId();
+    task.taskName = generateTaskName(component);
+    task.component = component;
+    task.testParameters = generateTestParameters(component);
+    task.status = "pending";
+    task.notes = QString("为元件 %1 自动生成的测试任务").arg(component.reference);
     
-    try {
-        // 生成初始化操作序列
-        QList<DeviceOperation> init_ops = createInitializationSequence(wiringConfig);
-        task.operations.append(init_ops);
-        
-        // 根据元件类型生成特定的测试操作
-        QList<DeviceOperation> test_ops;
-        switch (component.type) {
-        case ComponentType::RESISTOR:
-            test_ops = generateResistorTestOperations(component, wiringConfig);
-            break;
-        case ComponentType::CAPACITOR:
-            test_ops = generateCapacitorTestOperations(component, wiringConfig);
-            break;
-        case ComponentType::INDUCTOR:
-            test_ops = generateInductorTestOperations(component, wiringConfig);
-            break;
-        case ComponentType::DIODE:
-            test_ops = generateDiodeTestOperations(component, wiringConfig);
-            break;
-        default:
-            qWarning() << "不支持的元件类型:" << static_cast<int>(component.type);
-            break;
-        }
-        task.operations.append(test_ops);
-        
-        // 生成测量操作序列
-        QList<DeviceOperation> measure_ops = createMeasurementSequence(component, wiringConfig);
-        task.operations.append(measure_ops);
-        
-        // 生成关闭操作序列
-        QList<DeviceOperation> shutdown_ops = createShutdownSequence(wiringConfig);
-        task.operations.append(shutdown_ops);
-        
-        // 将任务加入活动任务列表
-        active_tasks_[task.task_id] = task;
-        task_execution_status_[task.task_id] = "已生成";
-        
-        emit taskGenerated(task);
-        qDebug() << "测试任务生成成功:" << task.task_id;
-        
-    } catch (const std::exception& e) {
-        task.execution_result = QString("任务生成失败: %1").arg(e.what());
-        emit errorOccurred(task.execution_result);
+    return task;
+}
+
+TestTask WiringTaskGenerator::createTaskFromScheme(const WiringScheme& scheme, const ComponentSpec& component)
+{
+    TestTask task = createTaskFromComponent(component);
+    task.wiringScheme = scheme;
+    
+    // 合并测试参数
+    for (auto it = scheme.testParameters.begin(); it != scheme.testParameters.end(); ++it) {
+        task.testParameters[it.key()] = it.value();
     }
     
     return task;
 }
 
-bool WiringTaskGenerator::executeTestTask(const TestTask& task, DeviceManager* deviceManager)
+QString WiringTaskGenerator::generateUniqueTaskId() const
 {
-    if (!deviceManager) {
-        emit errorOccurred("设备管理器为空");
-        return false;
-    }
-    
-    if (!deviceManager->isSystemReady()) {
-        emit errorOccurred("测试系统未就绪");
-        return false;
-    }
-    
-    task_execution_status_[task.task_id] = "执行中";
-    emit taskExecutionStarted(task.task_id);
-    
-    try {
-        // 逐个执行设备操作
-        for (const auto& operation : task.operations) {
-            if (!deviceManager->submitOperation(operation.deviceName, operation)) {
-                QString error = QString("设备操作失败: %1").arg(operation.deviceName);
-                emit errorOccurred(error);
-                task_execution_status_[task.task_id] = "执行失败";
-                return false;
-            }
-            
-            // 如果是阻塞操作，等待结果
-            if (operation.blocking) {
-                DeviceResult result = deviceManager->waitForResult(operation.deviceName, operation.timeout);
-                if (!result.success) {
-                    QString error = QString("设备操作执行失败: %1 - %2")
-                                   .arg(operation.deviceName).arg(result.error);
-                    emit errorOccurred(error);
-                    task_execution_status_[task.task_id] = "执行失败";
-                    return false;
-                }
-            }
-        }
-        
-        // 标记任务为已执行
-        if (active_tasks_.contains(task.task_id)) {
-            active_tasks_[task.task_id].is_executed = true;
-            active_tasks_[task.task_id].execution_result = "执行成功";
-        }
-        
-        task_execution_status_[task.task_id] = "执行完成";
-        emit taskExecutionCompleted(task.task_id, true);
-        
-        qDebug() << "测试任务执行成功:" << task.task_id;
-        return true;
-        
-    } catch (const std::exception& e) {
-        QString error = QString("任务执行异常: %1").arg(e.what());
-        emit errorOccurred(error);
-        task_execution_status_[task.task_id] = "执行异常";
-        emit taskExecutionCompleted(task.task_id, false);
-        return false;
+    return QUuid::createUuid().toString();
+}
+
+QString WiringTaskGenerator::generateTaskName(const ComponentSpec& component) const
+{
+    return QString("%1测试任务_%2").arg(component.reference).arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+}
+
+QMap<QString, QVariant> WiringTaskGenerator::generateTestParameters(const ComponentSpec& component) const
+{
+    switch (component.type) {
+    case ComponentType::RESISTOR:
+        return generateResistorTestParameters(component);
+    case ComponentType::CAPACITOR:
+        return generateCapacitorTestParameters(component);
+    case ComponentType::INDUCTOR:
+        return generateInductorTestParameters(component);
+    case ComponentType::DIODE:
+        return generateDiodeTestParameters(component);
+    case ComponentType::IC:
+        return generateICTestParameters(component);
+    default:
+        return generateResistorTestParameters(component);
     }
 }
 
-bool WiringTaskGenerator::validateTestTask(const TestTask& task, QStringList& errors)
+QMap<QString, QVariant> WiringTaskGenerator::generateResistorTestParameters(const ComponentSpec& component) const
+{
+    QMap<QString, QVariant> params;
+    
+    params["test_method"] = "four_wire";
+    params["test_voltage"] = 1.0;
+    params["test_current"] = qMin(0.001, 1.0 / component.nominal_value);
+    params["measurement_range"] = "auto";
+    params["expected_value"] = component.nominal_value;
+    params["tolerance"] = component.tolerance_percent;
+    params["timeout"] = calculateTestTimeout(component);
+    
+    return params;
+}
+
+QMap<QString, QVariant> WiringTaskGenerator::generateCapacitorTestParameters(const ComponentSpec& component) const
+{
+    QMap<QString, QVariant> params;
+    
+    params["test_method"] = "ac_measurement";
+    params["test_frequency"] = 1000.0;
+    params["test_voltage"] = 1.0;
+    params["measurement_range"] = "auto";
+    params["expected_value"] = component.nominal_value;
+    params["tolerance"] = component.tolerance_percent;
+    params["timeout"] = calculateTestTimeout(component);
+    
+    return params;
+}
+
+QMap<QString, QVariant> WiringTaskGenerator::generateInductorTestParameters(const ComponentSpec& component) const
+{
+    QMap<QString, QVariant> params;
+    
+    params["test_method"] = "ac_measurement";
+    params["test_frequency"] = 1000.0;
+    params["test_voltage"] = 1.0;
+    params["measurement_range"] = "auto";
+    params["expected_value"] = component.nominal_value;
+    params["tolerance"] = component.tolerance_percent;
+    params["timeout"] = calculateTestTimeout(component);
+    
+    return params;
+}
+
+QMap<QString, QVariant> WiringTaskGenerator::generateDiodeTestParameters(const ComponentSpec& component) const
+{
+    QMap<QString, QVariant> params;
+    
+    params["test_method"] = "iv_curve";
+    params["forward_voltage"] = 3.3;
+    params["reverse_voltage"] = -5.0;
+    params["current_limit"] = 0.01;
+    params["measurement_range"] = "auto";
+    params["timeout"] = calculateTestTimeout(component);
+    
+    return params;
+}
+
+QMap<QString, QVariant> WiringTaskGenerator::generateICTestParameters(const ComponentSpec& component) const
+{
+    QMap<QString, QVariant> params;
+    
+    params["test_method"] = "functional_test";
+    params["supply_voltage"] = 5.0;
+    params["logic_level_high"] = 3.3;
+    params["logic_level_low"] = 0.0;
+    params["clock_frequency"] = 10000.0;
+    params["timeout"] = calculateTestTimeout(component) * 2; // IC测试通常需要更长时间
+    
+    return params;
+}
+
+bool WiringTaskGenerator::validateTaskConfiguration(const TestTask& task, QStringList& errors) const
 {
     errors.clear();
-    bool is_valid = true;
+    bool isValid = true;
     
-    // 检查任务基本信息
-    if (task.task_id.isEmpty()) {
-        errors.append("任务ID为空");
-        is_valid = false;
+    // 验证基本信息
+    if (task.taskId.isEmpty()) {
+        errors.append("任务ID不能为空");
+        isValid = false;
     }
     
-    if (task.component_reference.isEmpty()) {
-        errors.append("元件标识为空");
-        is_valid = false;
+    if (task.taskName.isEmpty()) {
+        errors.append("任务名称不能为空");
+        isValid = false;
     }
     
-    if (task.operations.isEmpty()) {
-        errors.append("操作序列为空");
-        is_valid = false;
+    if (task.component.reference.isEmpty()) {
+        errors.append("元件编号不能为空");
+        isValid = false;
+    }
+      // 验证接线方案
+    if (!validateWiringScheme(task.wiringScheme, errors, task.component.reference)) {
+        isValid = false;
     }
     
-    // 检查操作序列的有效性
-    QSet<QString> used_devices;
-    for (const auto& operation : task.operations) {
-        if (operation.deviceName.isEmpty()) {
-            errors.append("设备名称为空");
-            is_valid = false;
-        }
-        
-        used_devices.insert(operation.deviceName);
-        
-        // 检查操作参数的合理性
-        switch (operation.command) {
-        case DeviceCommand::CONFIGURE_CHANNEL:
-            if (operation.channel < 0) {
-                errors.append(QString("无效的通道号: %1").arg(operation.channel));
-                is_valid = false;
-            }
-            break;
-        case DeviceCommand::START_MEASUREMENT:
-        case DeviceCommand::STOP_MEASUREMENT:
-            if (operation.sampleRate <= 0) {
-                errors.append("采样率必须大于0");
-                is_valid = false;
-            }
-            break;
-        case DeviceCommand::WRITE_DATA:
-            // 检查输出值的范围
-            break;
-        default:
-            break;
-        }
-        
-        if (operation.timeout <= 0) {
-            errors.append("超时时间必须大于0");
-            is_valid = false;
-        }
+    // 验证测试参数
+    if (!validateTestParameters(task.testParameters, task.component.type, errors)) {
+        isValid = false;
     }
     
-    return is_valid;
+    return isValid;
 }
 
-QList<DeviceOperation> WiringTaskGenerator::generateResistorTestOperations(const ComponentSpec& component, 
-                                                                          const WiringConfiguration& config)
+bool WiringTaskGenerator::validateWiringScheme(const WiringScheme& scheme, QStringList& errors) const
 {
-    QList<DeviceOperation> operations;
-    
-    // 找到电源端口
-    ResourcePort power_port;
-    bool found_power = false;
-    for (const auto& resource : config.used_resources) {
-        if (resource.type == ResourceType::POWER_OUTPUT) {
-            power_port = resource;
-            found_power = true;
-            break;
-        }
-    }
-    
-    if (found_power) {
-        // 配置电源输出
-        DeviceOperation power_config = createPowerOutputOperation(power_port, 
-                                                                 component.test_voltage, 
-                                                                 component.test_current);
-        operations.append(power_config);
-        
-        // 启动电源输出
-        DeviceOperation power_start;
-        power_start.command = DeviceCommand::START_MEASUREMENT;
-        power_start.deviceName = power_port.device_name;
-        power_start.channel = power_port.device_channel;
-        power_start.timeout = 2000;
-        power_start.blocking = true;
-        operations.append(power_start);
-        
-        // 等待稳定
-        DeviceOperation wait_stable;
-        wait_stable.command = DeviceCommand::READ_DATA;
-        wait_stable.deviceName = "SYSTEM";
-        wait_stable.value = 100; // 等待100ms
-        wait_stable.timeout = 1000;
-        wait_stable.blocking = true;
-        operations.append(wait_stable);
-    }
-    
-    return operations;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::generateCapacitorTestOperations(const ComponentSpec& component, 
-                                                                           const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 电容测试需要特殊的充放电序列
-    // 这里实现简化的测试流程
-    
-    return operations;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::generateInductorTestOperations(const ComponentSpec& component, 
-                                                                          const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 电感测试通常需要交流信号
-    // 这里实现简化的测试流程
-    
-    return operations;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::generateDiodeTestOperations(const ComponentSpec& component, 
-                                                                       const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 二极管测试需要正向和反向偏置
-    // 这里实现简化的测试流程
-    
-    return operations;
-}
-
-DeviceOperation WiringTaskGenerator::createPowerOutputOperation(const ResourcePort& powerPort, 
-                                                               double voltage, double current)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::CONFIGURE_CHANNEL;
-    operation.deviceName = powerPort.device_name;
-    operation.channel = powerPort.device_channel;
-    operation.value = voltage;
-    operation.timeout = 5000;
-    operation.blocking = true;
-    
-    // 在参数中传递电流限制
-    operation.parameters["current_limit"] = current;
-    operation.parameters["voltage_output"] = voltage;
-    
-    return operation;
-}
-
-DeviceOperation WiringTaskGenerator::createDMMOperation(const ResourcePort& dmmPort, 
-                                                       const QString& measurement_type)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::START_MEASUREMENT;
-    operation.deviceName = dmmPort.device_name;
-    operation.channel = dmmPort.device_channel;
-    operation.timeout = 3000;
-    operation.blocking = true;
-    
-    operation.parameters["measurement_type"] = measurement_type;
-    
-    return operation;
-}
-
-DeviceOperation WiringTaskGenerator::createDigitalIOOperation(const ResourcePort& ioPort, 
-                                                             bool output_value)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::WRITE_DATA;
-    operation.deviceName = ioPort.device_name;
-    operation.channel = ioPort.device_channel;
-    operation.value = output_value ? 1.0 : 0.0;
-    operation.timeout = 1000;
-    operation.blocking = false;
-    
-    return operation;
-}
-
-DeviceOperation WiringTaskGenerator::createAnalogIOOperation(const ResourcePort& ioPort, 
-                                                            double value)
-{
-    DeviceOperation operation;
-    operation.command = DeviceCommand::WRITE_DATA;
-    operation.deviceName = ioPort.device_name;
-    operation.channel = ioPort.device_channel;
-    operation.value = value;
-    operation.timeout = 1000;
-    operation.blocking = false;
-    
-    return operation;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::createInitializationSequence(const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 为每个使用的资源创建初始化操作
-    for (const auto& resource : config.used_resources) {
-        DeviceOperation init_op;
-        init_op.command = DeviceCommand::INITIALIZE;
-        init_op.deviceName = resource.device_name;
-        init_op.channel = resource.device_channel;
-        init_op.timeout = 3000;
-        init_op.blocking = true;
-        operations.append(init_op);
-    }
-    
-    return operations;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::createMeasurementSequence(const ComponentSpec& component, 
-                                                                     const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 找到万用表端口
-    for (const auto& resource : config.used_resources) {
-        if (resource.type == ResourceType::DMM) {
-            // 根据元件类型选择测量模式
-            QString measurement_type;
-            switch (component.type) {
-            case ComponentType::RESISTOR:
-                measurement_type = "RESISTANCE";
-                break;
-            case ComponentType::CAPACITOR:
-                measurement_type = "CAPACITANCE";
-                break;
-            case ComponentType::INDUCTOR:
-                measurement_type = "INDUCTANCE";
-                break;
-            case ComponentType::DIODE:
-                measurement_type = "DIODE_TEST";
-                break;
-            default:
-                measurement_type = "DC_VOLTAGE";
-                break;
-            }
-            
-            DeviceOperation measure_op = createDMMOperation(resource, measurement_type);
-            operations.append(measure_op);
-            break;
-        }
-    }
-    
-    return operations;
-}
-
-QList<DeviceOperation> WiringTaskGenerator::createShutdownSequence(const WiringConfiguration& config)
-{
-    QList<DeviceOperation> operations;
-    
-    // 关闭所有输出
-    for (const auto& resource : config.used_resources) {
-        if (resource.type == ResourceType::POWER_OUTPUT || 
-            resource.type == ResourceType::ANALOG_OUTPUT ||
-            resource.type == ResourceType::DIGITAL_OUTPUT) {
-            
-            DeviceOperation shutdown_op;
-            shutdown_op.command = DeviceCommand::STOP_MEASUREMENT;
-            shutdown_op.deviceName = resource.device_name;
-            shutdown_op.channel = resource.device_channel;
-            shutdown_op.value = 0.0;
-            shutdown_op.timeout = 2000;
-            shutdown_op.blocking = true;
-            operations.append(shutdown_op);
-        }
-    }
-    
-    return operations;
-}
-
-bool WiringTaskGenerator::saveTestTask(const TestTask& task, const QString& filePath)
-{
-    try {
-        QJsonDocument doc(task.toJson());
-        
-        QFile file(filePath);
-        if (!file.open(QIODevice::WriteOnly)) {
-            emit errorOccurred(QString("无法保存任务文件: %1").arg(filePath));
-            return false;
-        }
-        
-        file.write(doc.toJson());
-        file.close();
-        
-        qDebug() << "测试任务已保存:" << filePath;
-        return true;
-        
-    } catch (const std::exception& e) {
-        emit errorOccurred(QString("保存任务失败: %1").arg(e.what()));
+    if (scheme.schemeId.isEmpty()) {
+        errors.append("接线方案ID不能为空");
         return false;
     }
+    
+    if (scheme.connections.isEmpty()) {
+        errors.append("接线连接不能为空");
+        return false;
+    }
+    
+    // 使用资源管理器验证
+    if (resourceManager_) {
+        return resourceManager_->validateWiringScheme(scheme, errors);
+    }
+    
+    return true;
 }
 
-bool WiringTaskGenerator::loadTestTask(const QString& filePath, TestTask& task)
+bool WiringTaskGenerator::validateWiringScheme(const WiringScheme& scheme, QStringList& errors, const QString& currentUser) const
 {
-    try {
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) {
-            emit errorOccurred(QString("无法打开任务文件: %1").arg(filePath));
-            return false;
-        }
-        
-        QByteArray data = file.readAll();
-        file.close();
-        
-        QJsonDocument doc = QJsonDocument::fromJson(data);
-        if (doc.isNull()) {
-            emit errorOccurred("任务文件格式错误");
-            return false;
-        }
-        
-        task = TestTask::fromJson(doc.object());
-        active_tasks_[task.task_id] = task;
-        
-        qDebug() << "测试任务已加载:" << filePath;
-        return true;
-        
-    } catch (const std::exception& e) {
-        emit errorOccurred(QString("加载任务失败: %1").arg(e.what()));
+    if (scheme.schemeId.isEmpty()) {
+        errors.append("接线方案ID不能为空");
         return false;
+    }
+    
+    if (scheme.connections.isEmpty()) {
+        errors.append("接线连接不能为空");
+        return false;
+    }
+    
+    // 使用资源管理器验证（传递当前用户信息）
+    if (resourceManager_) {
+        return resourceManager_->validateWiringScheme(scheme, errors, currentUser);
+    }
+    
+    return true;
+}
+
+bool WiringTaskGenerator::validateTestParameters(const QMap<QString, QVariant>& parameters, ComponentType type, QStringList& errors) const
+{
+    // 检查必需的测试参数
+    QStringList requiredParams;
+    
+    switch (type) {
+    case ComponentType::RESISTOR:
+        requiredParams << "test_method" << "test_voltage" << "expected_value";
+        break;
+    case ComponentType::CAPACITOR:
+    case ComponentType::INDUCTOR:
+        requiredParams << "test_method" << "test_frequency" << "expected_value";
+        break;
+    case ComponentType::DIODE:
+        requiredParams << "test_method" << "forward_voltage";
+        break;
+    case ComponentType::IC:
+        requiredParams << "test_method" << "supply_voltage";
+        break;
+    }
+    
+    for (const QString& param : requiredParams) {
+        if (!parameters.contains(param)) {
+            errors.append(QString("缺少必需的测试参数: %1").arg(param));
+        }
+    }
+    
+    return errors.isEmpty();
+}
+
+void WiringTaskGenerator::checkTaskSchedule()
+{
+    QDateTime currentTime = QDateTime::currentDateTime();
+    QVector<TestTask> scheduledTasks = getScheduledTasks();
+    
+    for (const TestTask& task : scheduledTasks) {
+        if (task.scheduledTime <= currentTime && task.status == "scheduled") {
+            // 自动准备执行
+            if (prepareTaskExecution(task.taskId)) {
+                qDebug() << "自动执行调度任务:" << task.taskName;
+            }
+        }
     }
 }
 
-QString WiringTaskGenerator::getTaskExecutionStatus(const QString& taskId) const
+QVector<TestTask> WiringTaskGenerator::getScheduledTasks() const
 {
-    return task_execution_status_.value(taskId, "未知状态");
+    return getTasksByStatus("scheduled");
 }
 
-void WiringTaskGenerator::onDeviceOperationCompleted(const QString& deviceName, const DeviceResult& result)
+void WiringTaskGenerator::scheduleNextTask()
 {
-    // 处理设备操作完成的回调
-    qDebug() << "设备操作完成:" << deviceName << "结果:" << result.success;
+    // 实现任务调度逻辑
+    // 这里可以添加优先级、资源可用性等考虑因素
+}
+
+QString WiringTaskGenerator::formatTaskId(const QString& prefix) const
+{
+    return QString("%1_%2").arg(prefix).arg(QDateTime::currentDateTime().toString("yyyyMMddhhmmsszzz"));
+}
+
+QString WiringTaskGenerator::componentTypeToString(ComponentType type) const
+{
+    switch (type) {
+    case ComponentType::RESISTOR: return "R";
+    case ComponentType::CAPACITOR: return "C";
+    case ComponentType::INDUCTOR: return "L";
+    case ComponentType::DIODE: return "D";
+    case ComponentType::IC: return "IC";
+    default: return "UNKNOWN";
+    }
+}
+
+double WiringTaskGenerator::calculateTestTimeout(const ComponentSpec& component) const
+{
+    // 根据元件类型和参数计算测试超时时间（秒）
+    switch (component.type) {
+    case ComponentType::RESISTOR:
+        return 10.0; // 电阻测试通常很快
+    case ComponentType::CAPACITOR:
+        return 15.0; // 电容测试可能需要充放电时间
+    case ComponentType::INDUCTOR:
+        return 15.0; // 电感测试需要建立磁场
+    case ComponentType::DIODE:
+        return 20.0; // 二极管IV特性测试需要多个测试点
+    case ComponentType::IC:
+        return 60.0; // IC功能测试可能很复杂
+    default:
+        return 30.0;
+    }
+}
+
+// 槽函数实现
+void WiringTaskGenerator::onSchemeCreated(const QString& schemeId)
+{
+    qDebug() << "接收到方案创建信号:" << schemeId;
+}
+
+void WiringTaskGenerator::onResourcesAllocated(const QString& schemeId)
+{
+    qDebug() << "接收到资源分配信号:" << schemeId;
+}
+
+void WiringTaskGenerator::onResourcesReleased(const QString& schemeId)
+{
+    qDebug() << "接收到资源释放信号:" << schemeId;
 }

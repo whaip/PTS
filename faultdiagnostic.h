@@ -20,30 +20,7 @@ struct TestSchemeSignals;
 struct ComponentSpecs;
 struct TestSequence;
 
-// 元件规格结构体（扁平化设计，用于故障诊断）
-struct ComponentSpec {
-    ComponentType type = ComponentType::UNKNOWN;
-    QString reference;          // 器件标识 (如R1, C2, IC3)
-    double nominal_value = 0.0; // 标称值
-    double tolerance = 0.05;    // 容差 (如0.05表示5%)
-    double max_voltage = 0.0;   // 最大工作电压
-    double max_current = 0.0;   // 最大工作电流
-    int channel = 0;           // 测试通道
-    QString description;        // 描述信息
-    
-    // 测试参数
-    double test_voltage = 1.0;  // 测试电压
-    double test_current = 0.001; // 测试电流
-    bool requires_dmm = false;  // 是否需要万用表
-    QString connection_notes;   // 连接注意事项
-    
-    // 高级参数
-    double temp_coefficient = 0.0;  // 温度系数
-    double max_esr = 0.0;           // 最大ESR (电容)
-    double max_leakage = 0.0;       // 最大漏电流
-    
-    ComponentSpec() = default;
-};
+
 
 // 测量结果结构体
 struct MeasurementResult {

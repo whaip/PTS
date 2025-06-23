@@ -41,7 +41,8 @@
 #include "devicemanagertestwindow.h"
 // 新增：接线引导相关包含
 #include "WiringGuide/wiringguidedialog.h"
-#include "WiringGuide/wiringresource.h"
+#include "WiringGuide/portmanager.h"
+#include "WiringGuide/wiringresourcemanager.h"
 #include "WiringGuide/wiringtaskgenerator.h"
 
 QT_BEGIN_NAMESPACE
@@ -82,7 +83,7 @@ private slots:
     void openBoardManagement();
     void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
     void startWiringGuide();        // 开始接线引导
-    void onWiringCompleted(const WiringConfiguration& config);  // 接线完成回调
+    void onWiringCompleted(const WiringScheme& scheme);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
     void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
 
@@ -101,13 +102,12 @@ private:
     PCBBoardManagementWidget* board_management_widget_; // 新增：PCB板卡管理窗口
     PCBBoardManager* board_manager_;            // 新增：PCB板卡管理器
     DeviceManagerTestWindow* device_test_window_;  // 新增：设备管理器测试窗口
-    QTimer* status_timer_;
-    
-    // 新增：接线引导相关成员
+    QTimer* status_timer_;    // 新增：接线引导相关成员
+    PortManager* port_manager_;
     WiringResourceManager* wiring_resource_manager_;
     WiringGuideDialog* current_wiring_dialog_;
-    WiringConfiguration current_wiring_config_;
     WiringTaskGenerator* task_generator_;
+    QString current_task_id_;  // 保存当前执行的任务ID
     
     // UI组件
     QTabWidget* main_tabs_;

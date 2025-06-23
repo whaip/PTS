@@ -377,10 +377,9 @@ DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec&
 DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "resistor";
+    result.componentId = spec.reference;    result.componentType = "resistor";
     result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance;
+    result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing resistor:" << spec.reference;
     
@@ -426,9 +425,8 @@ DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
             result.result = DiagnosticResult::FAIL;
             result.faultTypes.append("OUT_OF_TOLERANCE");
             result.notes = QString("电阻超差，测量值: %1Ω，标称值: %2Ω ±%3%")
-                .arg(compensated_value, 0, 'f', 2)
-                .arg(spec.nominal_value, 0, 'f', 2)
-                .arg(spec.tolerance * 100, 0, 'f', 1);
+                .arg(compensated_value, 0, 'f', 2)                .arg(spec.nominal_value, 0, 'f', 2)
+                .arg(spec.tolerance_percent * 100, 0, 'f', 1);
             break;
         default:
             result.result = DiagnosticResult::ERROR;
@@ -443,10 +441,9 @@ DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseCapacitor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "capacitor";
+    result.componentId = spec.reference;    result.componentType = "capacitor";
     result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance;
+    result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing capacitor:" << spec.reference;
     
@@ -513,10 +510,9 @@ DiagnosticResult FaultDiagnostic::diagnoseCapacitor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "inductor";
+    result.componentId = spec.reference;    result.componentType = "inductor";
     result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance;
+    result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing inductor:" << spec.reference;
     
@@ -538,13 +534,12 @@ DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
     } else if (result.measurementData.primary_value > spec.nominal_value * 10) {
         result.result = DiagnosticResult::FAIL;
         result.faultTypes.append("OPEN_CIRCUIT");
-        result.notes = "电感开路";
-    } else if (!isWithinTolerance(spec.nominal_value, result.measurementData.primary_value, spec.tolerance)) {
+        result.notes = "电感开路";    } else if (!isWithinTolerance(spec.nominal_value, result.measurementData.primary_value, spec.tolerance_percent)) {
         result.result = DiagnosticResult::FAIL;
         result.faultTypes.append("OUT_OF_TOLERANCE");
         result.notes = QString("电感值超差，测量值: %1mH，标称值: %2mH")
             .arg(result.measurementData.primary_value * 1000, 0, 'f', 2)
-            .arg(spec.nominal_value * 1000, 0, 'f', 2);    } else {
+            .arg(spec.nominal_value * 1000, 0, 'f', 2);} else {
         result.result = DiagnosticResult::PASS;
         result.notes = QString("电感正常，测量值: %1mH")
             .arg(result.measurementData.primary_value * 1000, 0, 'f', 2);
@@ -556,10 +551,9 @@ DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "diode";
+    result.componentId = spec.reference;      result.componentType = "diode";
     result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance;
+    result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing diode:" << spec.reference;
     
@@ -592,7 +586,8 @@ DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
             break;
         case FaultType::DIODE_LEAKAGE:
             result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("DIODE_LEAKAGE");            result.notes = QString("二极管反向漏电流过大: %1μA")
+            result.faultTypes.append("DIODE_LEAKAGE");            
+            result.notes = QString("二极管反向漏电流过大: %1μA")
                 .arg(result.measurementData.leakage_current * 1e6, 0, 'f', 2);
             break;
         default:
@@ -608,10 +603,9 @@ DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseIC(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "ic";
+    result.componentId = spec.reference;      result.componentType = "ic";
     result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance;
+    result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing IC:" << spec.reference;
     
@@ -1262,7 +1256,7 @@ FaultType FaultDiagnostic::analyzeResistorFault(const ComponentSpec& spec, const
     }
     
     // 容差检查
-    if (!isWithinTolerance(spec.nominal_value, measured_value, spec.tolerance)) {
+    if (!isWithinTolerance(spec.nominal_value, measured_value, spec.tolerance_percent)) {
         return FaultType::OUT_OF_TOLERANCE;
     }
     
@@ -1292,7 +1286,7 @@ FaultType FaultDiagnostic::analyzeCapacitorFault(const ComponentSpec& spec, cons
     }
     
     // 容差检查
-    if (!isWithinTolerance(spec.nominal_value, measurement.primary_value, spec.tolerance)) {
+    if (!isWithinTolerance(spec.nominal_value, measurement.primary_value, spec.tolerance_percent)) {
         return FaultType::OUT_OF_TOLERANCE;
     }
     
@@ -1340,13 +1334,13 @@ FaultType FaultDiagnostic::analyzeICFault(const ComponentSpec& spec, const Measu
 
 bool FaultDiagnostic::applyTestVoltage(int channel, double voltage)
 {
-    // 验证通道号有效性 (JY5711通常支持0-31通道)
+    // 验证通道号有效性 (JY5711支持0-31通道)
     if (channel < 0 || channel > 31) {
         qDebug() << "Invalid channel number:" << channel << "Valid range: 0-31";
         return false;
     }
     
-    // 验证电压范围 (JY5711通常支持±10V)
+    // 验证电压范围 (JY5711支持±10V)
     if (voltage < -10.0 || voltage > 10.0) {
         qDebug() << "Invalid voltage:" << voltage << "V. Valid range: ±10V";
         return false;
@@ -1604,11 +1598,9 @@ ComponentSpec FaultDiagnostic::convertToLegacyComponentSpec(const TestSchemeSign
         spec.channel = firstMapping.channel;
         spec.test_voltage = config.testParameters.value("voltage", 1.0).toDouble();
         spec.test_current = config.testParameters.value("current", 0.001).toDouble();
-    }
-    
-    // 设置默认值
+    }    // 设置默认值
     spec.nominal_value = config.testParameters.value("nominal_value", 1000.0).toDouble();
-    spec.tolerance = config.testParameters.value("tolerance", 0.05).toDouble();
+    spec.tolerance_percent = config.testParameters.value("tolerance", 0.05).toDouble();
     spec.max_voltage = config.testParameters.value("max_voltage", 10.0).toDouble();
     spec.max_current = config.testParameters.value("max_current", 0.1).toDouble();
     
@@ -2265,60 +2257,54 @@ ComponentSpec FaultDiagnostic::convertFromComponentSpecs(const ComponentSpecs& s
     spec.reference = reference;
     spec.description = QString("从ComponentSpecs转换的%1").arg(componentType);
     spec.channel = 0; // 默认通道，需要后续设置
-    
-    // 根据组件类型设置参数
+      // 根据组件类型设置参数
     if (componentType == "resistor" || componentType == "电阻") {
         spec.type = ComponentType::RESISTOR;
         spec.nominal_value = specs.resistance.nominal;
-        spec.tolerance = specs.resistance.tolerance;
+        spec.tolerance_percent = specs.resistance.tolerance;
         spec.temp_coefficient = specs.resistance.tempCoefficient;
         spec.test_voltage = 1.0; // 默认测试电压
         spec.test_current = 0.001; // 默认测试电流
         spec.max_voltage = 50.0; // 默认最大电压
         spec.max_current = 0.1; // 默认最大电流
-    }
-    else if (componentType == "capacitor" || componentType == "电容") {
+    }    else if (componentType == "capacitor" || componentType == "电容") {
         spec.type = ComponentType::CAPACITOR;
         spec.nominal_value = specs.capacitance.nominal;
-        spec.tolerance = specs.capacitance.tolerance;
+        spec.tolerance_percent = specs.capacitance.tolerance;
         spec.max_esr = specs.capacitance.esr;
         spec.max_leakage = specs.capacitance.leakageCurrent;
         spec.test_voltage = 1.0;
         spec.test_current = 0.001;
         spec.max_voltage = 25.0;
         spec.max_current = 0.05;
-    }
-    else if (componentType == "inductor" || componentType == "电感") {
-        spec.type = ComponentType::INDUCTOR;
+    }    else if (componentType == "inductor" || componentType == "电感") {
+        spec.type = ComponentType::INDUCTOR;        
         spec.nominal_value = specs.inductance.nominal;
-        spec.tolerance = specs.inductance.tolerance;
+        spec.tolerance_percent = specs.inductance.tolerance;
         spec.test_voltage = 1.0;
         spec.test_current = 0.001;
         spec.max_voltage = 10.0;
         spec.max_current = 0.1;
-    }
-    else if (componentType == "diode" || componentType == "二极管") {
-        spec.type = ComponentType::DIODE;
+    }    else if (componentType == "diode" || componentType == "二极管") {
+        spec.type = ComponentType::DIODE;        
         spec.nominal_value = specs.diode.forwardVoltage;
-        spec.tolerance = 0.1; // 10% 默认容差
+        spec.tolerance_percent = 0.1; // 10% 默认容差
         spec.max_leakage = specs.diode.reverseLeakage;
         spec.max_voltage = specs.diode.breakdownVoltage;
         spec.test_voltage = 1.5;
         spec.test_current = 0.01;
-        spec.max_current = 0.1;
-    }
-    else if (componentType == "ic" || componentType == "IC" || componentType == "集成电路") {
+        spec.max_current = 0.1;    }    else if (componentType == "ic" || componentType == "IC" || componentType == "集成电路") {
         spec.type = ComponentType::IC;
         spec.nominal_value = specs.ic.supplyVoltage;
-        spec.tolerance = 0.05; // 5% 默认容差
+        spec.tolerance_percent = 0.05; // 5% 默认容差
         spec.max_voltage = specs.ic.supplyVoltage;
         spec.max_current = specs.ic.supplyCurrent;
         spec.test_voltage = specs.ic.supplyVoltage;
         spec.test_current = specs.ic.supplyCurrent;
-    }
-    else {
+    }    else {
         spec.type = ComponentType::UNKNOWN;
-        spec.nominal_value = 0.0;        spec.tolerance = 0.05;
+        spec.nominal_value = 0.0;
+        spec.tolerance_percent = 0.05;
         spec.test_voltage = 1.0;
         spec.test_current = 0.001;
         spec.max_voltage = 10.0;

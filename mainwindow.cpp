@@ -18,15 +18,18 @@ MainWindow::MainWindow(QWidget *parent)
     , fault_diagnostic_(nullptr)
     , sequence_manager_(nullptr)
     , result_exporter_(nullptr)      
-    , pcb_identifier_(nullptr)    
+    , pcb_identifier_(nullptr)
+    , current_task_id_(QString())  // 初始化任务ID为空
     , pcb_dialog_(nullptr)
     , camera_control_(nullptr)
     , pcb_analyzer_(nullptr)
     , history_widget_(nullptr)
-    , detection_manager_(nullptr)    , board_management_widget_(nullptr)
-    , board_manager_(nullptr)
+    , detection_manager_(nullptr)    
+    , board_management_widget_(nullptr)
+    , board_manager_(nullptr)    
     , device_test_window_(nullptr)  // 新增：设备管理器测试窗口
     , status_timer_(new QTimer(this))
+    , port_manager_(nullptr)
     , wiring_resource_manager_(nullptr)
     , current_wiring_dialog_(nullptr)
     , task_generator_(nullptr)
@@ -49,19 +52,24 @@ MainWindow::MainWindow(QWidget *parent)
     pcb_analyzer_ = new RealtimePCBAnalyzerWidget();
     pcb_analyzer_->setPCBIdentifier(pcb_identifier_);
     pcb_analyzer_->setCameraManager(camera_control_->getCameraManager());
+      // 新增：初始化端口管理器
+    port_manager_ = new PortManager(device_manager_, this);
+    if (!port_manager_->initializePorts()) {
+        QMessageBox::warning(this, "警告", "端口系统初始化失败");
+    }
     
     // 新增：初始化接线引导资源管理器
-    wiring_resource_manager_ = new WiringResourceManager(this);
+    wiring_resource_manager_ = new WiringResourceManager(port_manager_, this);
     if (!wiring_resource_manager_->initializeResources()) {
         QMessageBox::warning(this, "警告", "接线引导资源初始化失败");
     }
     
     // 初始化任务生成器
-    task_generator_ = new WiringTaskGenerator(this);
+    task_generator_ = new WiringTaskGenerator(wiring_resource_manager_, this);
     connect(task_generator_, &WiringTaskGenerator::taskGenerated,
             [this](const TestTask& task) {
-                qDebug() << "测试任务已生成:" << task.task_id;
-                statusBar()->showMessage(QString("测试任务已生成: %1").arg(task.task_id), 3000);
+                qDebug() << "测试任务已生成:" << task.taskId;
+                statusBar()->showMessage(QString("测试任务已生成: %1").arg(task.taskName), 3000);
             });
     connect(task_generator_, &WiringTaskGenerator::errorOccurred,
             this, &MainWindow::onErrorOccurred);
@@ -138,11 +146,11 @@ MainWindow::~MainWindow()
     if (batch_testing_active_) {
         batch_testing_active_ = false;
     }
-    
-    if (current_wiring_dialog_) {
+      if (current_wiring_dialog_) {
         disconnect(current_wiring_dialog_, nullptr, nullptr, nullptr);
         current_wiring_dialog_->close();
-        current_wiring_dialog_->deleteLater();
+        // 改为同步删除，确保在port_manager_删除前完成
+        delete current_wiring_dialog_;
         current_wiring_dialog_ = nullptr;
     }
 
@@ -195,15 +203,33 @@ MainWindow::~MainWindow()
         disconnect(history_widget_, nullptr, this, nullptr);
         history_widget_->close();        history_widget_->deleteLater();
         history_widget_ = nullptr;
-    }
-    
-    // 清理设备管理器测试窗口
+    }    // 清理设备管理器测试窗口
     if (device_test_window_) {
         disconnect(device_test_window_, nullptr, this, nullptr);
         device_test_window_->close();
         device_test_window_->deleteLater();
         device_test_window_ = nullptr;
-    }    // 关闭设备管理器
+    }
+      // 清理接线引导相关组件 - 先清理task_generator，再清理resource manager，最后清理port manager
+    if (task_generator_) {
+        disconnect(task_generator_, nullptr, this, nullptr);
+        task_generator_->deleteLater();
+        task_generator_ = nullptr;
+    }
+    
+    // 先清理wiring_resource_manager_，它会调用releaseAllResources()
+    if (wiring_resource_manager_) {
+        disconnect(wiring_resource_manager_, nullptr, this, nullptr);
+        wiring_resource_manager_->deleteLater();  // 不再手动调用releaseAllResources，让析构函数处理
+        wiring_resource_manager_ = nullptr;
+    }
+    
+    // 最后清理port_manager_，避免双重释放端口
+    if (port_manager_) {
+        disconnect(port_manager_, nullptr, this, nullptr);
+        port_manager_->deleteLater();  // 不再手动调用releaseAllPorts，资源已经被上面释放了
+        port_manager_ = nullptr;
+    }// 关闭设备管理器
     if (device_manager_) {
         disconnect(device_manager_, nullptr, this, nullptr);
         device_manager_->shutdownDeviceThreads();
@@ -309,10 +335,15 @@ void MainWindow::setupSingleTestPage()
     tolerance_spin_->setValue(5.0);
     tolerance_spin_->setSuffix(" %");
     param_layout->addRow("容差:", tolerance_spin_);
-    
-    channel_spin_ = new QSpinBox();
+      channel_spin_ = new QSpinBox();
     channel_spin_->setRange(0, 31);
     param_layout->addRow("测试通道:", channel_spin_);
+    
+    // 添加接线引导按钮
+    QPushButton* wiring_guide_button = new QPushButton("接线引导");
+    wiring_guide_button->setToolTip("打开接线引导对话框");
+    connect(wiring_guide_button, &QPushButton::clicked, this, &MainWindow::startWiringGuide);
+    param_layout->addRow("接线设置:", wiring_guide_button);
     
     single_test_button_ = new QPushButton("开始测试");
     single_test_button_->setEnabled(false);
@@ -526,6 +557,9 @@ void MainWindow::startSingleTest()
 {
     ComponentSpec component = createComponentFromUI();
     
+    // 清除之前的任务ID
+    current_task_id_.clear();
+    
     // 检查系统是否就绪
     if (!device_manager_ || !device_manager_->isSystemReady()) {
         QMessageBox::warning(this, "系统未就绪", "请先初始化测试设备！");
@@ -653,6 +687,15 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
 {
     // 添加结果到列表
     test_results_.append(result);
+    
+    // 完成任务并释放端口
+    if (task_generator_ && !current_task_id_.isEmpty()) {
+        bool success = (result.result == DiagnosticResult::PASS);
+        QString resultString = (result.result == DiagnosticResult::PASS) ? "PASS" : 
+                              (result.result == DiagnosticResult::FAIL) ? "FAIL" : "ERROR";
+        task_generator_->finalizeTaskExecution(current_task_id_, success, resultString);
+        current_task_id_.clear();  // 清除任务ID
+    }
     
     // 在单元件测试时更新结果显示
     if (main_tabs_->currentWidget() == single_test_page_) {
@@ -937,54 +980,42 @@ void MainWindow::addComponent()
         component.description = desc_edit->text();
         
         // 根据类型设置特定参数
-        switch (component.type) {
-            case ComponentType::RESISTOR:
-                component.nominal_value = resistance_spin->value();
-                component.tolerance = resistor_tolerance_spin->value() / 100.0;
+        switch (component.type) {            case ComponentType::RESISTOR:                component.nominal_value = resistance_spin->value();
+                component.tolerance_percent = resistor_tolerance_spin->value() / 100.0;
                 component.temp_coefficient = temp_coeff_spin->value();
                 component.max_voltage = sqrt(max_power_spin->value() * resistance_spin->value()); // P = V²/R
                 component.max_current = sqrt(max_power_spin->value() / resistance_spin->value()); // P = I²R
-                break;
-                
-            case ComponentType::CAPACITOR:
+                break;                  case ComponentType::CAPACITOR:
                 component.nominal_value = capacitance_spin->value();
-                component.tolerance = capacitor_tolerance_spin->value() / 100.0;
+                component.tolerance_percent = capacitor_tolerance_spin->value() / 100.0;
                 component.max_esr = max_esr_spin->value();
                 component.max_leakage = max_leakage_spin->value();
                 component.max_voltage = cap_voltage_spin->value();
                 component.max_current = 0.1; // 默认最大电流
-                break;
-                
-            case ComponentType::INDUCTOR:
+                break;                  case ComponentType::INDUCTOR:
                 component.nominal_value = inductance_spin->value();
-                component.tolerance = inductor_tolerance_spin->value() / 100.0;
+                component.tolerance_percent = inductor_tolerance_spin->value() / 100.0;
                 component.max_current = max_current_spin->value();
                 component.max_voltage = 50.0; // 默认最大电压
                 component.temp_coefficient = dcr_spin->value(); // 使用temp_coefficient字段存储DCR
-                break;
-                
-            case ComponentType::DIODE:
+                break;                  case ComponentType::DIODE:
                 component.nominal_value = forward_voltage_spin->value();
-                component.tolerance = diode_tolerance_spin->value() / 100.0;
+                component.tolerance_percent = diode_tolerance_spin->value() / 100.0;
                 component.max_voltage = reverse_voltage_spin->value();
                 component.max_leakage = diode_leakage_spin->value();
                 component.max_current = 1.0; // 默认最大电流
-                break;
-                
-            case ComponentType::IC:
+                break;                  case ComponentType::IC:
                 component.nominal_value = supply_voltage_spin->value();
-                component.tolerance = ic_tolerance_spin->value() / 100.0;
+                component.tolerance_percent = ic_tolerance_spin->value() / 100.0;
                 component.max_voltage = supply_voltage_spin->value();
                 component.max_current = ic_max_current_spin->value();
                 // 将IC类型存储在描述中
                 if (!ic_type_edit->text().isEmpty()) {
                     component.description += QString(" [%1]").arg(ic_type_edit->text());
                 }
-                break;
-                
-            default:
+                break;                  default:
                 component.nominal_value = 1000.0;
-                component.tolerance = 0.05;
+                component.tolerance_percent = 0.05;
                 break;
         }
         
@@ -1260,100 +1291,83 @@ void MainWindow::startWiringGuide()
     // 获取当前选中的元件
     // 这里需要从UI中获取当前要测试的元件信息
     ComponentSpec component;
-    component.reference = "R1";  // 示例，实际应从UI获取
-    component.type = ComponentType::RESISTOR;
-    component.nominal_value = 1000.0;  // 1KΩ
-    component.tolerance = 0.05;  // 5%
-    component.test_voltage = 3.3;  // 3.3V
-    component.test_current = 0.01;  // 10mA
-    component.requires_dmm = true;
-    component.description = "测试电阻";
+    component.reference = component_ref_edit_->text().isEmpty() ? "R1" : component_ref_edit_->text();
+    component.type = static_cast<ComponentType>(component_type_combo_->currentIndex());
+    component.nominal_value = nominal_value_spin_->value();
+    component.tolerance_percent = tolerance_spin_->value();
     
     showWiringGuideForComponent(component);
 }
 
 void MainWindow::showWiringGuideForComponent(const ComponentSpec& component)
-{
-    // 如果已有接线对话框在显示，先关闭
+{    // 如果已有接线对话框在显示，先关闭
     if (current_wiring_dialog_) {
         current_wiring_dialog_->close();
-        current_wiring_dialog_->deleteLater();
+        // 改为同步删除，确保立即释放资源
+        delete current_wiring_dialog_;
         current_wiring_dialog_ = nullptr;
     }
     
+    if (!port_manager_) {
+        QMessageBox::warning(this, "错误", "端口管理器未初始化");
+        return;
+    }
+    
     // 创建接线引导对话框
-    current_wiring_dialog_ = new WiringGuideDialog(component, this);
-    current_wiring_dialog_->setTestParameters(component.test_voltage, 
-                                              component.test_current, 
-                                              component.requires_dmm);
-      // 连接信号
-    connect(current_wiring_dialog_, &QDialog::accepted, 
-            [this, component]() {
-                if (current_wiring_dialog_) {
-                    WiringConfiguration config = current_wiring_dialog_->getWiringConfiguration();
-                    onWiringCompleted(config);
-                    
-                    // 保存配置并生成测试任务
-                    current_wiring_config_ = config;
-                    
-                    // 生成测试任务
-                    TestTask task = task_generator_->generateTestTask(config, component);
-                      // 执行测试任务
-                    single_test_button_->setText("端口配置中...");
-                    single_result_text_->append("接线完成，开始端口配置...\n");
-                    
-                    // 显示端口配置对话框
-                    QTimer::singleShot(500, [this, component]() {
-                        showPortConfigurationForComponent(component);
-                    });
-                    // if (task_generator_->executeTestTask(task, device_manager_)) {
-                    //     // 任务执行成功，开始故障诊断
-                    //     QTimer::singleShot(1000, [this, component]() {
-                    //         single_test_button_->setText("故障诊断中...");
-                    //         single_result_text_->append("开始故障诊断分析...\n");
-                    //         fault_diagnostic_->diagnoseComponent(component);
-                    //     });
-                    // } else {
-                    //     // 任务执行失败
-                    //     single_result_text_->append("测试任务执行失败！\n");
-                    //     single_test_button_->setEnabled(true);
-                    //     single_test_button_->setText("开始测试");
-                    // }
-                }
-                
-                current_wiring_dialog_ = nullptr;
-            });
-      connect(current_wiring_dialog_, &QDialog::rejected, 
+    current_wiring_dialog_ = new WiringGuideDialog(component, port_manager_, this);
+    
+    // 连接信号
+    connect(current_wiring_dialog_, &WiringGuideDialog::wiringCompleted,
+            this, &MainWindow::onWiringCompleted);
+    connect(current_wiring_dialog_, &WiringGuideDialog::wiringCancelled,
             [this]() {
                 // 用户取消了接线引导，恢复按钮状态
                 single_test_button_->setEnabled(true);
                 single_test_button_->setText("开始测试");
-                single_result_text_->append("接线引导已取消。\n");
                 current_wiring_dialog_ = nullptr;
             });
-    
-    // 显示对话框
+      // 显示对话框
     current_wiring_dialog_->show();
 }
 
-void MainWindow::onWiringCompleted(const WiringConfiguration& config)
+void MainWindow::onWiringCompleted(const WiringScheme& scheme)
 {
     // 接线完成后的处理
-    statusBar()->showMessage(QString("接线配置完成 - 配置ID: %1").arg(config.config_id), 3000);
+    statusBar()->showMessage(QString("接线配置完成 - %1").arg(scheme.schemeName), 3000);
     
-    // 更新UI状态
-    // 这里可以更新状态栏、进度条等
-    
-    // 记录接线配置
-    current_wiring_config_ = config;
-    
-    // 可以在这里添加接线验证逻辑
-    QStringList errors;
-    if (wiring_resource_manager_->validateWiringConfiguration(config, errors)) {
-        statusBar()->showMessage("接线验证通过，准备开始测试", 2000);
+    // 生成测试任务
+    if (task_generator_) {
+        ComponentSpec component = createComponentFromUI();
+        QString taskId = task_generator_->generateTaskFromScheme(scheme, component);
+          if (!taskId.isEmpty()) {
+            current_task_id_ = taskId;  // 保存任务ID以便后续清理
+            single_result_text_->append(QString("接线方案应用成功: %1\n").arg(scheme.schemeName));
+            single_result_text_->append(QString("测试任务已生成: %1\n").arg(taskId));
+            
+            // 准备执行测试
+            if (task_generator_->prepareTaskExecution(taskId)) {
+                single_result_text_->append("测试任务准备完成，开始执行测试...\n");
+                
+                // 开始故障诊断
+                QTimer::singleShot(1000, [this, component]() {
+                    single_test_button_->setText("故障诊断中...");
+                    fault_diagnostic_->diagnoseComponent(component);
+                });
+            } else {
+                single_result_text_->append("测试任务准备失败\n");
+                current_task_id_.clear();  // 清除任务ID
+                single_test_button_->setEnabled(true);
+                single_test_button_->setText("开始测试");
+            }
+        } else {
+            QMessageBox::warning(this, "错误", "测试任务生成失败");
+            single_test_button_->setEnabled(true);
+            single_test_button_->setText("开始测试");
+        }
     } else {
-        QString error_msg = "接线验证失败:\n" + errors.join("\n");
-        QMessageBox::warning(this, "接线验证失败", error_msg);
+        QMessageBox::warning(this, "错误", "任务生成器未初始化");
+        single_test_button_->setEnabled(true);
+        single_test_button_->setText("开始测试");
     }
 }
 
@@ -1455,26 +1469,20 @@ TestStep MainWindow::createTestStepFromComponent(const ComponentSpec& component)
     // 基本信息
     switch (component.type) {
     case ComponentType::RESISTOR:
-        step.componentType = "resistor";
-        step.testName = QString("电阻测试 - %1").arg(component.reference);
-        step.specs.resistance.nominal = component.nominal_value;
-        step.specs.resistance.tolerance = component.tolerance;
+        step.componentType = "resistor";        step.testName = QString("电阻测试 - %1").arg(component.reference);        step.specs.resistance.nominal = component.nominal_value;
+        step.specs.resistance.tolerance = component.tolerance_percent;
         step.specs.resistance.tempCoefficient = component.temp_coefficient;
         break;
 
     case ComponentType::CAPACITOR:
-        step.componentType = "capacitor";
-        step.testName = QString("电容测试 - %1").arg(component.reference);
-        step.specs.capacitance.nominal = component.nominal_value;
-        step.specs.capacitance.tolerance = component.tolerance;
+        step.componentType = "capacitor";        step.testName = QString("电容测试 - %1").arg(component.reference);        step.specs.capacitance.nominal = component.nominal_value;
+        step.specs.capacitance.tolerance = component.tolerance_percent;
         step.specs.capacitance.esr = component.max_esr;
         step.specs.capacitance.leakageCurrent = component.max_leakage;
         break;
     case ComponentType::INDUCTOR:
-        step.componentType = "inductor";
-        step.testName = QString("电感测试 - %1").arg(component.reference);
-        step.specs.inductance.nominal = component.nominal_value;
-        step.specs.inductance.tolerance = component.tolerance;
+        step.componentType = "inductor";        step.testName = QString("电感测试 - %1").arg(component.reference);        step.specs.inductance.nominal = component.nominal_value;
+        step.specs.inductance.tolerance = component.tolerance_percent;
         step.specs.inductance.dcResistance = 0.1; // 默认直流电阻
         step.specs.inductance.qFactory = 50.0; // 默认品质因数
         break;
@@ -1486,9 +1494,7 @@ TestStep MainWindow::createTestStepFromComponent(const ComponentSpec& component)
         step.specs.diode.breakdownVoltage = component.max_voltage * 1.2; // 击穿电压比最大工作电压高20%
         break;
     case ComponentType::IC:
-        step.componentType = "ic";
-        step.testName = QString("集成电路测试 - %1").arg(component.reference);
-        step.specs.ic.supplyVoltage = component.nominal_value;
+        step.componentType = "ic";        step.testName = QString("集成电路测试 - %1").arg(component.reference);        step.specs.ic.supplyVoltage = component.nominal_value;
         step.specs.ic.supplyCurrent = component.max_current;
         step.specs.ic.inputLevels.high = component.nominal_value * 0.7; // 70% Vcc 为高电平
         step.specs.ic.inputLevels.low = component.nominal_value * 0.3;  // 30% Vcc 为低电平
@@ -1524,13 +1530,13 @@ ComponentSpec MainWindow::createComponentFromUI()
     if (type_text == "电阻") component.type = ComponentType::RESISTOR;
     else if (type_text == "电容") component.type = ComponentType::CAPACITOR;
     else if (type_text == "电感") component.type = ComponentType::INDUCTOR;
-    else if (type_text == "二极管") component.type = ComponentType::DIODE;
+    else if (type_text == "二极管") component.type = ComponentType::DIODE;    
     else if (type_text == "集成电路") component.type = ComponentType::IC;
-    else component.type = ComponentType::RESISTOR; // defaultcomponent.type = ComponentType::IC;
-
+    else component.type = ComponentType::RESISTOR; // default
+    
     component.reference = component_ref_edit_->text();
     component.nominal_value = nominal_value_spin_->value();
-    component.tolerance = tolerance_spin_->value() / 100.0;
+    component.tolerance_percent = tolerance_spin_->value() / 100.0;
     component.channel = channel_spin_->value();
 
     return component;
@@ -1647,74 +1653,60 @@ QString MainWindow::getStatusIcon(DeviceStatus status)
 
 void MainWindow::showPortConfigurationForComponent(const ComponentSpec& component)
 {
-    // 显示端口配置对话框
-    single_result_text_->append("正在显示端口配置对话框...\n");
-    
-    // 首先获取推荐的测试方案
-    QStringList schemes = fault_diagnostic_->getAvailableTestSchemes();
-    QString recommendedScheme;
-    
-    // 根据元件类型选择合适的测试方案
-    switch (component.type) {
-        case ComponentType::RESISTOR:
-            recommendedScheme = "Resistor_Standard";
-            break;
-        case ComponentType::CAPACITOR:
-            recommendedScheme = "Capacitor_Standard";
-            break;
-        case ComponentType::INDUCTOR:
-            recommendedScheme = "Inductor_Standard";
-            break;
-        case ComponentType::DIODE:
-            recommendedScheme = "Diode_Standard";
-            break;
-        case ComponentType::IC:
-            recommendedScheme = "IC_Standard";
-            break;
-        default:
-            recommendedScheme = schemes.isEmpty() ? "" : schemes.first();
-            break;
-    }
-    
-    if (recommendedScheme.isEmpty()) {
-        single_result_text_->append("错误：没有可用的测试方案！\n");
+    if (!port_manager_) {
+        QMessageBox::warning(this, "错误", "端口管理器未初始化");
         single_test_button_->setEnabled(true);
         single_test_button_->setText("开始测试");
         return;
     }
     
-    single_result_text_->append(QString("使用测试方案：%1\n").arg(recommendedScheme));
+    // 显示端口配置信息
+    single_result_text_->append("正在进行端口配置...\n");
     
-    // 设置活动测试方案
-    if (!fault_diagnostic_->setActiveTestScheme(recommendedScheme)) {
-        single_result_text_->append("错误：无法设置测试方案！\n");
+    // 获取推荐端口配置
+    QVector<PortInfo> recommendedPorts = port_manager_->getRecommendedPorts(component.type);
+    
+    if (recommendedPorts.isEmpty()) {
+        single_result_text_->append("错误：没有可用的端口配置！\n");
         single_test_button_->setEnabled(true);
         single_test_button_->setText("开始测试");
         return;
     }
     
-    // 显示端口配置对话框
-    if (fault_diagnostic_->showPortConfigurationDialog()) {
-        single_result_text_->append("端口配置完成，开始执行测试...\n");
-        single_test_button_->setText("执行测试中...");
+    // 自动分配端口
+    QVector<PortInfo> allocatedPorts = port_manager_->autoAllocatePorts(component.type, component.reference);
+    
+    if (allocatedPorts.isEmpty()) {
+        single_result_text_->append("错误：端口分配失败！\n");
+        single_test_button_->setEnabled(true);
+        single_test_button_->setText("开始测试");
+        return;
+    }
+    
+    // 显示分配的端口信息
+    single_result_text_->append(QString("成功分配 %1 个端口：\n").arg(allocatedPorts.size()));
+    for (const PortInfo& port : allocatedPorts) {
+        single_result_text_->append(QString("  - %1:%2 (%3)\n")
+                                   .arg(port.deviceName)
+                                   .arg(port.portNumber)
+                                   .arg(port.description));
+    }
+      single_result_text_->append("端口配置完成，开始执行测试...\n");
+    
+    single_test_button_->setText("执行测试中...");
+    
+    // 延迟执行故障诊断，让用户看到状态更新
+    QTimer::singleShot(1000, [this, component]() {
+        single_test_button_->setText("故障诊断中...");
+        single_result_text_->append("开始故障诊断分析...\n");
         
-        // 延迟执行故障诊断，让用户看到状态更新
-        QTimer::singleShot(1000, [this, component]() {
-            single_test_button_->setText("故障诊断中...");
-            single_result_text_->append("开始故障诊断分析...\n");
-            
-            // 执行故障诊断
-            DiagnosticResult result = fault_diagnostic_->diagnoseComponent(component);
-            
-            // 手动触发诊断完成事件（以防信号没有正确触发）
-            QTimer::singleShot(100, [this, result]() {
-                onDiagnosticCompleted(result);
-            });
+        // 执行故障诊断
+        DiagnosticResult result = fault_diagnostic_->diagnoseComponent(component);
+        
+        // 手动触发诊断完成事件（以防信号没有正确触发）
+        QTimer::singleShot(100, [this, result]() {
+            onDiagnosticCompleted(result);
         });
-    } else {
-        single_result_text_->append("端口配置被取消。\n");
-        single_test_button_->setEnabled(true);
-        single_test_button_->setText("开始测试");
-    }
+    });
 }
 
