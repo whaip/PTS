@@ -295,6 +295,12 @@ TestData FaultDiagnostic::executeSynchronousTest(const ComponentSpec& component)
         
         // 转换测量结果为TestData格式
         testData = convertFromMeasurementResult(measurement);
+        testData.metadata = {
+            {"component_reference", component.reference},
+            {"component_type", componentTypeToString(component.type)},
+            {"nominal_value", component.nominal_value},
+            {"tolerance", component.tolerance_percent}
+        };
         
         qDebug() << "同步测试完成:" << component.reference << "有效:" << testData.valid;
     }

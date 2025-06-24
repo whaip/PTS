@@ -39,7 +39,6 @@
 #include "pcbboardmanagementwidget.h"
 #include "pcbboardmanager.h"
 #include "devicemanagertestwindow.h"
-// 新增：接线引导相关包含
 #include "WiringGuide/wiringguidedialog.h"
 #include "WiringGuide/portmanager.h"
 #include "WiringGuide/wiringresourcemanager.h"
@@ -111,6 +110,7 @@ private:
     WiringGuideDialog* current_wiring_dialog_;
     WiringTaskGenerator* task_generator_;
     QString current_task_id_;  // 保存当前执行的任务ID
+    QString main_batch_task_id_;  // 保存批量测试的主任务ID
     
     // UI组件
     QTabWidget* main_tabs_;
@@ -161,10 +161,10 @@ private:
     bool batch_testing_active_;
     
     // 批量测试的统一接线方案管理
-    QMap<QString, WiringScheme> batch_wiring_schemes_;  // 组件引用 -> 接线方案
-    QMap<QString, QString> batch_task_ids_;             // 组件引用 -> 任务ID
     bool unified_wiring_prepared_;                      // 是否已准备统一接线
-      void setupUI();
+
+    // 私有方法
+    void setupUI();
     void setupDeviceStatusPage();
     void setupSingleTestPage();
     void setupBatchTestPage();
@@ -179,12 +179,11 @@ private:
     void populateComponentTable();
     QString formatResult(const DiagnosticResult& result);
     QString getStatusIcon(DeviceStatus status);
-    
-    // 批量测试的统一接线方案管理方法
-    bool prepareUnifiedWiringForBatch();
-    void clearBatchWiringSchemes();
-    bool executeBatchTestWithPreAllocatedWiring(const ComponentSpec& component);
-    void showUnifiedWiringGuideDialog();
+      // 批量测试的统一接线方案管理方法
+    ComponentSpec createBatchComponentSpec();
+    void startBatchTestWithUnifiedWiring(const ComponentSpec& batchComponent);
+    void onBatchWiringCompleted(const WiringScheme& scheme);
+    void executeBatchTestWithPreAllocatedWiring(const ComponentSpec& specs);
 };
 
 #endif // MAINWINDOW_H
