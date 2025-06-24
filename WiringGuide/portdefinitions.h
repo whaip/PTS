@@ -35,13 +35,21 @@ struct JY5322Ports {
     static constexpr int TOTAL_PORTS = 16;
 };
 
+// JY8902 万用表端口分配
+struct JY8902Ports {
+    static constexpr int DMM_CHANNEL_START = 0;
+    static constexpr int DMM_CHANNEL_END = 1;  // 2线法测量：通道0和通道1
+    static constexpr int TOTAL_PORTS = 2;
+};
+
 // 端口类型枚举
 enum class PortType {
     ANALOG_OUTPUT,    // 模拟输出
     DIGITAL_OUTPUT,   // 数字输出
     POWER_OUTPUT,     // 电源输出
     ANALOG_INPUT,     // 模拟输入
-    DIGITAL_INPUT     // 数字输入
+    DIGITAL_INPUT,    // 数字输入
+    DMM_MEASUREMENT   // 万用表测量端口
 };
 
 // 端口信息结构

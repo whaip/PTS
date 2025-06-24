@@ -1854,10 +1854,18 @@ DeviceResult DMMDeviceThread::configureContinuousResistanceMeasurement(const Dev
     int triggerDelay = params.value("triggerDelay", 10).toInt();
     int bufferSize = params.value("bufferSize", 1000).toInt();
     
+    // 根据官方示例重新计算采样间隔
+    if (useNPLC) {
+        sampleInterval = nplcValue * 0.02;
+        qDebug() << deviceName_ << "Using NPLC mode, recalculated sampleInterval:" << sampleInterval << "= nplcValue(" << nplcValue << ") * 0.02";
+    }
+    
     qDebug() << deviceName_ << "Configuring continuous resistance measurement (based on official example):"
              << "range:" << static_cast<int>(range)
              << "samplesPerTrigger:" << samplesPerTrigger
-             << "sampleInterval:" << sampleInterval;
+             << "sampleInterval:" << sampleInterval
+             << "useNPLC:" << useNPLC
+             << "nplcValue:" << nplcValue;
     
     // 停止当前任何正在进行的测量
     if (measurementActive_) {
@@ -2203,18 +2211,22 @@ void DMMDeviceThread::processContinuousResistanceData()
     qDebug() << deviceName_ << "读取前缓冲区状态 - Available:" << currentAvailable 
              << "Transferred:" << currentTransferred << "Overrun:" << currentOverrun;
     
-    // 读取数据
-    std::unique_ptr<double[]> pDataBuf = std::make_unique<double[]>(currentParams_.samplesPerTrigger);
+    // 读取数据（完全按照官方示例方式）
+    // 官方示例：pDataBuf = new double[20]; 然后 JY8902_DMM_ReadMultiPoint(hDevice, pDataBuf, samplesToAcq, -1, &actualSample)
+    double* pDataBuf = new double[currentParams_.samplesPerTrigger];
     int actualSample = 0;
     
-    statusResult = JY8902_DMM_ReadMultiPoint(deviceHandle_, pDataBuf.get(), 
+    statusResult = JY8902_DMM_ReadMultiPoint(deviceHandle_, pDataBuf, 
                                            currentParams_.samplesPerTrigger, -1, &actualSample);                           
     if (statusResult != 0) {
         qDebug() << deviceName_ << "数据读取错误:" << statusResult;
+        delete[] pDataBuf;  // 释放内存
         return;
     }
 
     if (actualSample <= 0) {
+        qDebug() << deviceName_ << "无效的样本数:" << actualSample << "期望最大:" << currentParams_.samplesPerTrigger;
+        delete[] pDataBuf;  // 释放内存
         return;
     }
 
@@ -2222,13 +2234,38 @@ void DMMDeviceThread::processContinuousResistanceData()
     {
         QMutexLocker locker(&dataMutex_);
         QVector<double> resistanceData;
+        
+        // 调试：输出前几个原始数据值
+        qDebug() << deviceName_ << "原始数据调试 - actualSample:" << actualSample;
+        qDebug() << deviceName_ << "完整原始数据输出：";
         for (int i = 0; i < actualSample; ++i) {
-            resistanceData.append(pDataBuf[i]);
+            qDebug() << deviceName_ << QString("原始数据[%1]: %2").arg(i).arg(pDataBuf[i], 0, 'e', 6);
         }
-        lastTriggerData_ = resistanceData;
-        dataReadyFlag_ = true;
-        qDebug() << deviceName_ << "数据已保存到lastTriggerData_，样本数：" << lastTriggerData_.size();
+        
+        // 按照官方示例，单通道数据直接使用索引 i（没有通道交替）
+        for (int i = 0; i < actualSample; ++i) {
+            double value = pDataBuf[i];
+            
+            // 数据合理性检查，过滤异常值
+            if (!std::isnan(value) && !std::isinf(value) && qAbs(value) < 1e15) {
+                resistanceData.append(value);
+            } else {
+                qDebug() << deviceName_ << "过滤异常数据点[" << i << "]:" << value;
+            }
+        }
+        
+        // 只有当有有效数据时才保存
+        if (!resistanceData.isEmpty()) {
+            lastTriggerData_ = resistanceData;
+            dataReadyFlag_ = true;
+            qDebug() << deviceName_ << "数据已保存到lastTriggerData_，样本数：" << lastTriggerData_.size();
+        } else {
+            qDebug() << deviceName_ << "所有数据点都是异常值，丢弃此次读取";
+        }
     }
+    
+    // 释放缓冲区内存（按照官方示例方式）
+    delete[] pDataBuf;
     
     qDebug() << deviceName_ << "Resistance data parsed and saved successfully";
 

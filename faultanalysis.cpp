@@ -32,7 +32,8 @@ protected:
             QString componentType = faultAnalysis_->determineComponentType(config_, componentSpecs_);
             
             if (faultAnalysis_->algorithms_.contains(componentType)) {
-                AnalysisAlgorithm* algorithm = faultAnalysis_->algorithms_[componentType];                AnalysisResult result = algorithm->analyze(config_, measurementData_, componentSpecs_);
+                AnalysisAlgorithm* algorithm = faultAnalysis_->algorithms_[componentType];                
+                AnalysisResult result = algorithm->analyze(config_, measurementData_, componentSpecs_);
                 result.testId = config_.testName;
                 result.componentType = componentType;
                 result.componentReference = config_.componentReference;
@@ -183,35 +184,7 @@ QMap<QString, QVector<double>> FaultAnalysis::convertTestDataToRawResults(const 
 
 QMap<QString, QVariant> FaultAnalysis::extractComponentSpecs(const TestData& testData)
 {
-    QMap<QString, QVariant> specs;
-    
-    // 从测试数据的元数据中提取组件规格
-    if (testData.metadata.contains("component_specs")) {
-        QVariantMap componentSpecs = testData.metadata["component_specs"].toMap();
-        for (auto it = componentSpecs.begin(); it != componentSpecs.end(); ++it) {
-            specs[it.key()] = it.value();
-        }
-    }
-    
-    // 设置默认值
-    if (!specs.contains("component_type")) {
-        // 尝试从testId中推断组件类型
-        QString testId = testData.testId.toLower();
-        if (testId.contains("resistor") || testId.contains("电阻")) {
-            specs["component_type"] = "RESISTOR";
-        } else if (testId.contains("capacitor") || testId.contains("电容")) {
-            specs["component_type"] = "CAPACITOR";
-        } else if (testId.contains("inductor") || testId.contains("电感")) {
-            specs["component_type"] = "INDUCTOR";
-        } else if (testId.contains("diode") || testId.contains("二极管")) {
-            specs["component_type"] = "DIODE";
-        } else if (testId.contains("ic") || testId.contains("芯片")) {
-            specs["component_type"] = "IC";
-        } else {
-            specs["component_type"] = "UNKNOWN";
-        }
-    }
-    
+    QMap<QString, QVariant> specs = testData.metadata;
     return specs;
 }
 
@@ -353,7 +326,8 @@ AnalysisResult ResistorAnalysisAlgorithm::analyze(const TestConfiguration& confi
         calculationMethod = "欧姆定律计算";
         result.detailedResults["voltage_measurement"] = voltageData->mean;
         result.detailedResults["current_measurement"] = currentData->mean;
-        result.detailedResults["calculated_resistance"] = measuredResistance;    } else {
+        result.detailedResults["calculated_resistance"] = measuredResistance;
+    } else {
         result.result = AnalysisResult::ERROR;
         result.notes.append("缺少有效的测量数据");
         result.confidence = 0.0;

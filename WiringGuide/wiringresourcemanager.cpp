@@ -154,40 +154,31 @@ WiringScheme WiringResourceManager::createDefaultResistorTemplate() const
     scheme.schemeName = "标准电阻测试模板";
     scheme.componentType = ComponentType::RESISTOR;
     scheme.description = "使用四线法测量电阻的标准接线方案";
-    
-    // 创建默认连接
-    // 这里需要根据实际的端口配置来设置
+      // 创建默认连接 - 电阻使用万用表2线法测量
     if (portManager_) {
         QVector<PortInfo> recommendedPorts = portManager_->getRecommendedPorts(ComponentType::RESISTOR);
         
-        if (recommendedPorts.size() >= 3) {
-            // 连接1：模拟输出到电阻第一端
+        if (recommendedPorts.size() >= 2) {
+            // 连接1：万用表通道0到电阻第一端
             ConnectionInfo conn1;
-            conn1.sourcePort = recommendedPorts[0]; // 假设第一个是模拟输出
+            conn1.sourcePort = recommendedPorts[0]; // 万用表CH0
             conn1.wireColor = "红色";
-            conn1.instruction = "连接到电阻第一端（信号输入）";
+            conn1.instruction = "连接万用表CH0到电阻第一端";
             scheme.connections.append(conn1);
             
-            // 连接2：模拟输入到电阻第一端（测量点）
+            // 连接2：万用表通道1到电阻第二端
             ConnectionInfo conn2;
-            conn2.sourcePort = recommendedPorts[1]; // 假设第二个是模拟输入
-            conn2.wireColor = "黄色";
-            conn2.instruction = "连接到电阻第一端（电压测量）";
+            conn2.sourcePort = recommendedPorts[1]; // 万用表CH1
+            conn2.wireColor = "黑色";
+            conn2.instruction = "连接万用表CH1到电阻第二端";
             scheme.connections.append(conn2);
-            
-            // 连接3：模拟输入到电阻第二端
-            ConnectionInfo conn3;
-            conn3.sourcePort = recommendedPorts[2]; // 假设第三个是模拟输入
-            conn3.wireColor = "绿色";
-            conn3.instruction = "连接到电阻第二端（电压测量）";
-            scheme.connections.append(conn3);
         }
     }
-    
-    // 设置测试参数
-    scheme.testParameters["test_method"] = "four_wire";
-    scheme.testParameters["test_voltage"] = 1.0;
-    scheme.testParameters["test_current"] = 0.001;
+      // 设置测试参数 - 2线法万用表测量
+    scheme.testParameters["test_method"] = "two_wire";
+    scheme.testParameters["measurement_function"] = "2_Wire_Resistance";
+    scheme.testParameters["device"] = "JY8902";
+    scheme.testParameters["samples_per_trigger"] = 20;
     scheme.testParameters["measurement_range"] = "auto";
     
     return scheme;
@@ -197,14 +188,35 @@ WiringScheme WiringResourceManager::createDefaultCapacitorTemplate() const
 {
     WiringScheme scheme;
     scheme.schemeId = QUuid::createUuid().toString();
-    scheme.schemeName = "标准电容测试模板";
-    scheme.componentType = ComponentType::CAPACITOR;
-    scheme.description = "使用交流信号测量电容的标准接线方案";
+    scheme.schemeName = "标准电容测试模板";    scheme.componentType = ComponentType::CAPACITOR;
+    scheme.description = "使用万用表测量电容的标准接线方案";
     
-    // 设置测试参数
-    scheme.testParameters["test_method"] = "ac_measurement";
+    // 创建默认连接 - 电容使用万用表测量
+    if (portManager_) {
+        QVector<PortInfo> recommendedPorts = portManager_->getRecommendedPorts(ComponentType::CAPACITOR);
+        
+        if (recommendedPorts.size() >= 2) {
+            // 连接1：万用表通道0到电容第一端
+            ConnectionInfo conn1;
+            conn1.sourcePort = recommendedPorts[0]; // 万用表CH0
+            conn1.wireColor = "红色";
+            conn1.instruction = "连接万用表CH0到电容正极";
+            scheme.connections.append(conn1);
+            
+            // 连接2：万用表通道1到电容第二端
+            ConnectionInfo conn2;
+            conn2.sourcePort = recommendedPorts[1]; // 万用表CH1
+            conn2.wireColor = "黑色";
+            conn2.instruction = "连接万用表CH1到电容负极";
+            scheme.connections.append(conn2);
+        }
+    }
+    
+    // 设置测试参数 - 万用表电容测量
+    scheme.testParameters["test_method"] = "dmm_capacitance";
+    scheme.testParameters["measurement_function"] = "Capacitance";
+    scheme.testParameters["device"] = "JY8902";
     scheme.testParameters["test_frequency"] = 1000.0;
-    scheme.testParameters["test_voltage"] = 1.0;
     scheme.testParameters["measurement_range"] = "auto";
     
     return scheme;
@@ -214,14 +226,35 @@ WiringScheme WiringResourceManager::createDefaultInductorTemplate() const
 {
     WiringScheme scheme;
     scheme.schemeId = QUuid::createUuid().toString();
-    scheme.schemeName = "标准电感测试模板";
-    scheme.componentType = ComponentType::INDUCTOR;
-    scheme.description = "使用交流信号测量电感的标准接线方案";
+    scheme.schemeName = "标准电感测试模板";    scheme.componentType = ComponentType::INDUCTOR;
+    scheme.description = "使用万用表测量电感的标准接线方案";
     
-    // 设置测试参数
-    scheme.testParameters["test_method"] = "ac_measurement";
+    // 创建默认连接 - 电感使用万用表测量
+    if (portManager_) {
+        QVector<PortInfo> recommendedPorts = portManager_->getRecommendedPorts(ComponentType::INDUCTOR);
+        
+        if (recommendedPorts.size() >= 2) {
+            // 连接1：万用表通道0到电感第一端
+            ConnectionInfo conn1;
+            conn1.sourcePort = recommendedPorts[0]; // 万用表CH0
+            conn1.wireColor = "红色";
+            conn1.instruction = "连接万用表CH0到电感第一端";
+            scheme.connections.append(conn1);
+            
+            // 连接2：万用表通道1到电感第二端
+            ConnectionInfo conn2;
+            conn2.sourcePort = recommendedPorts[1]; // 万用表CH1
+            conn2.wireColor = "黑色";
+            conn2.instruction = "连接万用表CH1到电感第二端";
+            scheme.connections.append(conn2);
+        }
+    }
+    
+    // 设置测试参数 - 万用表电感测量
+    scheme.testParameters["test_method"] = "dmm_inductance";
+    scheme.testParameters["measurement_function"] = "Inductance";
+    scheme.testParameters["device"] = "JY8902";
     scheme.testParameters["test_frequency"] = 1000.0;
-    scheme.testParameters["test_voltage"] = 1.0;
     scheme.testParameters["measurement_range"] = "auto";
     
     return scheme;
@@ -231,11 +264,38 @@ WiringScheme WiringResourceManager::createDefaultDiodeTemplate() const
 {
     WiringScheme scheme;
     scheme.schemeId = QUuid::createUuid().toString();
-    scheme.schemeName = "标准二极管测试模板";
-    scheme.componentType = ComponentType::DIODE;
+    scheme.schemeName = "标准二极管测试模板";    scheme.componentType = ComponentType::DIODE;
     scheme.description = "测量二极管正向和反向特性的接线方案";
     
-    // 设置测试参数
+    // 创建默认连接 - 二极管需要电压输出和电流/电压测量
+    if (portManager_) {
+        QVector<PortInfo> recommendedPorts = portManager_->getRecommendedPorts(ComponentType::DIODE);
+        
+        if (recommendedPorts.size() >= 3) {
+            // 连接1：模拟输出到二极管阳极
+            ConnectionInfo conn1;
+            conn1.sourcePort = recommendedPorts[0]; // 模拟输出
+            conn1.wireColor = "红色";
+            conn1.instruction = "连接模拟输出到二极管阳极";
+            scheme.connections.append(conn1);
+            
+            // 连接2：模拟输入测量阳极电压
+            ConnectionInfo conn2;
+            conn2.sourcePort = recommendedPorts[1]; // 模拟输入1
+            conn2.wireColor = "黄色";
+            conn2.instruction = "连接模拟输入到二极管阳极（电压测量）";
+            scheme.connections.append(conn2);
+            
+            // 连接3：模拟输入测量阴极电压
+            ConnectionInfo conn3;
+            conn3.sourcePort = recommendedPorts[2]; // 模拟输入2
+            conn3.wireColor = "绿色";
+            conn3.instruction = "连接模拟输入到二极管阴极（电压测量）";
+            scheme.connections.append(conn3);
+        }
+    }
+    
+    // 设置测试参数 - 二极管IV特性测量
     scheme.testParameters["test_method"] = "iv_curve";
     scheme.testParameters["forward_voltage"] = 3.3;
     scheme.testParameters["reverse_voltage"] = -5.0;
@@ -248,11 +308,56 @@ WiringScheme WiringResourceManager::createDefaultICTemplate() const
 {
     WiringScheme scheme;
     scheme.schemeId = QUuid::createUuid().toString();
-    scheme.schemeName = "标准IC测试模板";
-    scheme.componentType = ComponentType::IC;
+    scheme.schemeName = "标准IC测试模板";    scheme.componentType = ComponentType::IC;
     scheme.description = "IC功能测试的多端口接线方案";
     
-    // 设置测试参数
+    // 创建默认连接 - IC需要多个端口进行功能测试
+    if (portManager_) {
+        QVector<PortInfo> recommendedPorts = portManager_->getRecommendedPorts(ComponentType::IC);
+        
+        // IC测试通常需要更多端口，这里创建基本的电源和信号连接
+        int portIndex = 0;
+        
+        // 电源连接（如果有电源端口）
+        for (const auto& port : recommendedPorts) {
+            if (port.portType == PortType::POWER_OUTPUT && portIndex < 2) {
+                ConnectionInfo conn;
+                conn.sourcePort = port;
+                conn.wireColor = (portIndex == 0) ? "红色" : "黑色";
+                conn.instruction = QString("连接电源%1到IC电源引脚").arg(portIndex == 0 ? "正极" : "负极");
+                scheme.connections.append(conn);
+                portIndex++;
+            }
+        }
+        
+        // 数字输出连接
+        portIndex = 0;
+        for (const auto& port : recommendedPorts) {
+            if (port.portType == PortType::DIGITAL_OUTPUT && portIndex < 2) {
+                ConnectionInfo conn;
+                conn.sourcePort = port;
+                conn.wireColor = (portIndex == 0) ? "蓝色" : "紫色";
+                conn.instruction = QString("连接数字输出%1到IC输入引脚").arg(portIndex + 1);
+                scheme.connections.append(conn);
+                portIndex++;
+            }
+        }
+        
+        // 数字输入连接
+        portIndex = 0;
+        for (const auto& port : recommendedPorts) {
+            if (port.portType == PortType::DIGITAL_INPUT && portIndex < 2) {
+                ConnectionInfo conn;
+                conn.sourcePort = port;
+                conn.wireColor = (portIndex == 0) ? "橙色" : "灰色";
+                conn.instruction = QString("连接数字输入%1到IC输出引脚").arg(portIndex + 1);
+                scheme.connections.append(conn);
+                portIndex++;
+            }
+        }
+    }
+    
+    // 设置测试参数 - IC功能测试
     scheme.testParameters["test_method"] = "functional_test";
     scheme.testParameters["supply_voltage"] = 5.0;
     scheme.testParameters["logic_level_high"] = 3.3;

@@ -46,7 +46,7 @@ struct DiagnosticResult {
         FAIL = 1,
         ERROR = 2
     };
-      QString testId;             // 测试ID
+    QString testId;             // 测试ID
     QString componentType;      // 组件类型
     QString componentId;        // 组件标识
     TestResult result;          // 测试结果
@@ -263,9 +263,8 @@ private:
     TestData convertFromMeasurementResult(const MeasurementResult& measurement);
     
     // === 向后兼容的私有方法 ===
-    
-    // 基础测量方法
-    MeasurementResult measureResistance(int channel, double test_voltage = 1.0);
+      // 基础测量方法
+    MeasurementResult measureResistance(int channel, double test_voltage, double nominalValue);  // 带标称值的重载版本
     MeasurementResult measureCapacitance(int channel, double test_frequency = 1000.0);
     MeasurementResult measureInductance(int channel, double test_frequency = 10000.0);
     MeasurementResult measureDiodeCharacteristics(int channel);
@@ -276,12 +275,12 @@ private:
     FaultType analyzeCapacitorFault(const ComponentSpec& spec, const MeasurementResult& measurement);
     FaultType analyzeDiodeFault(const ComponentSpec& spec, const MeasurementResult& measurement);
     FaultType analyzeICFault(const ComponentSpec& spec, const MeasurementResult& measurement);
-    
-    // 辅助方法
+      // 辅助方法
     bool applyTestVoltage(int channel, double voltage);
     void waitForStabilization(int delay_ms = 10);
     double calculateTolerance(double nominal, double measured, double tolerance_percent);
     bool isWithinTolerance(double nominal, double measured, double tolerance_percent);
+    QString selectOptimalResistanceRange(double nominalValue);  // 根据标称值选择最佳电阻量程
     
     // 温度补偿
     double applyTemperatureCompensation(double value, double temp_coeff, double temperature);

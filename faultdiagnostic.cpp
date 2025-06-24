@@ -207,7 +207,8 @@ DiagnosticResult FaultDiagnostic::diagnoseComponentWithModules(const ComponentSp
         emit diagnosisCompleted(result);
         emit diagnosticCompleted(result);
         
-        return result;    }
+        return result;
+    }
     catch (const std::exception& e) {
         qWarning() << "模块化诊断失败，回退到传统方法:" << e.what();
         
@@ -261,14 +262,20 @@ TestData FaultDiagnostic::executeSynchronousTest(const ComponentSpec& component)
     TestData testData;
     testData.testId = currentTestId_;
     testData.timestamp = QDateTime::currentDateTime();
+    testData.metadata = {
+        {"component_reference", component.reference},
+        {"component_type", componentTypeToString(component.type)},
+        {"nominal_value", component.nominal_value},
+        {"tolerance", component.tolerance_percent}
+    };
     
     try {
         // 根据元件类型执行相应的测量
         MeasurementResult measurement;
         
-        switch (component.type) {
+        switch (component.type) {            
             case ComponentType::RESISTOR:
-                measurement = measureResistance(component.channel, component.test_voltage);
+                measurement = measureResistance(component.channel, component.test_voltage, component.nominal_value);
                 break;
             case ComponentType::CAPACITOR:
                 measurement = measureCapacitance(component.channel, 1000.0);
@@ -320,7 +327,9 @@ DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec&
 {
     DiagnosticResult result;
     result.componentId = component.reference;
-    result.componentType = QString::number(static_cast<int>(component.type));
+    result.componentType = componentTypeToString(component.type);  // 使用文本而不是数字
+    result.expectedValue = component.nominal_value;               // 设置期望值
+    result.tolerance = component.tolerance_percent;               // 设置容差
     
     if (!device_manager_ || !device_manager_->isSystemReady()) {
         result.result = DiagnosticResult::ERROR;
@@ -331,14 +340,14 @@ DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec&
     }
     
     // 首先检查连接性
-    if (!checkComponentConnection(component.channel)) {
-        result.result = DiagnosticResult::FAIL;
-        result.faultTypes.append("NO_CONNECTION");
-        result.notes = "元件未连接或连接不良";
-        result.confidence = 0.95;
-        result.healthScore = 0.0;
-        return result;
-    }
+    // if (!checkComponentConnection(component.channel)) {
+    //     result.result = DiagnosticResult::FAIL;
+    //     result.faultTypes.append("NO_CONNECTION");
+    //     result.notes = "元件未连接或连接不良";
+    //     result.confidence = 0.95;
+    //     result.healthScore = 0.0;
+    //     return result;
+    // }
     
     // 根据元件类型选择诊断方法
     switch (component.type) {
@@ -377,14 +386,14 @@ DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec&
 DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;    result.componentType = "resistor";
+    result.componentId = spec.reference;
+    result.componentType = "电阻";  // 使用中文显示
     result.expectedValue = spec.nominal_value;
     result.tolerance = spec.tolerance_percent;
     
     qDebug() << "Diagnosing resistor:" << spec.reference;
-    
-    // 测量电阻值
-    result.measurementData = measureResistance(spec.channel, 1.0);
+      // 测量电阻值 - 使用动态量 程选择
+    result.measurementData = measureResistance(spec.channel, 1.0, spec.nominal_value);
     
     if (!result.measurementData.valid) {
         result.result = DiagnosticResult::ERROR;
@@ -441,7 +450,8 @@ DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseCapacitor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;    result.componentType = "capacitor";
+    result.componentId = spec.reference;
+    result.componentType = "电容";  // 使用中文显示
     result.expectedValue = spec.nominal_value;
     result.tolerance = spec.tolerance_percent;
     
@@ -510,7 +520,8 @@ DiagnosticResult FaultDiagnostic::diagnoseCapacitor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;    result.componentType = "inductor";
+    result.componentId = spec.reference;
+    result.componentType = "电感";  // 使用中文显示
     result.expectedValue = spec.nominal_value;
     result.tolerance = spec.tolerance_percent;
     
@@ -525,24 +536,43 @@ DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
         result.notes = "测量失败: " + result.measurementData.error_message;
         return result;
     }
-    
-    // 简单的电感故障判断
-    if (result.measurementData.primary_value < spec.nominal_value * 0.1) {
-        result.result = DiagnosticResult::FAIL;
-        result.faultTypes.append("SHORT_CIRCUIT");
-        result.notes = "电感短路";
-    } else if (result.measurementData.primary_value > spec.nominal_value * 10) {
-        result.result = DiagnosticResult::FAIL;
-        result.faultTypes.append("OPEN_CIRCUIT");
-        result.notes = "电感开路";    } else if (!isWithinTolerance(spec.nominal_value, result.measurementData.primary_value, spec.tolerance_percent)) {
-        result.result = DiagnosticResult::FAIL;
-        result.faultTypes.append("OUT_OF_TOLERANCE");
-        result.notes = QString("电感值超差，测量值: %1mH，标称值: %2mH")
-            .arg(result.measurementData.primary_value * 1000, 0, 'f', 2)
-            .arg(spec.nominal_value * 1000, 0, 'f', 2);} else {
-        result.result = DiagnosticResult::PASS;
-        result.notes = QString("电感正常，测量值: %1mH")
-            .arg(result.measurementData.primary_value * 1000, 0, 'f', 2);
+      // 电感故障判断 - 添加期望值为0的特殊处理
+    if (spec.nominal_value <= 1e-9) {
+        // 期望值接近0时，使用绝对阈值判断
+        if (result.measurementData.primary_value < 1e-9) {
+            result.result = DiagnosticResult::PASS;  // 测量值也接近0，认为正常
+            result.notes = QString("电感值正常，测量值: %1nH")
+                .arg(result.measurementData.primary_value * 1e9, 0, 'f', 2);
+        } else if (result.measurementData.primary_value > 1e-3) {
+            result.result = DiagnosticResult::FAIL;
+            result.faultTypes.append("OPEN_CIRCUIT");
+            result.notes = "电感开路";
+        } else {
+            result.result = DiagnosticResult::PASS;
+            result.notes = QString("电感值正常，测量值: %1μH")
+                .arg(result.measurementData.primary_value * 1e6, 0, 'f', 2);
+        }
+    } else {
+        // 正常的电感故障判断
+        if (result.measurementData.primary_value < spec.nominal_value * 0.1) {
+            result.result = DiagnosticResult::FAIL;
+            result.faultTypes.append("SHORT_CIRCUIT");
+            result.notes = "电感短路";
+        } else if (result.measurementData.primary_value > spec.nominal_value * 10) {
+            result.result = DiagnosticResult::FAIL;
+            result.faultTypes.append("OPEN_CIRCUIT");
+            result.notes = "电感开路";
+        } else if (!isWithinTolerance(spec.nominal_value, result.measurementData.primary_value, spec.tolerance_percent)) {
+            result.result = DiagnosticResult::FAIL;
+            result.faultTypes.append("OUT_OF_TOLERANCE");
+            result.notes = QString("电感值超差，测量值: %1mH，标称值: %2mH")
+                .arg(result.measurementData.primary_value * 1000, 0, 'f', 2)
+                .arg(spec.nominal_value * 1000, 0, 'f', 2);
+        } else {
+            result.result = DiagnosticResult::PASS;
+            result.notes = QString("电感正常，测量值: %1mH")
+                .arg(result.measurementData.primary_value * 1000, 0, 'f', 2);
+        }
     }
     
     return result;
@@ -551,7 +581,8 @@ DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;      result.componentType = "diode";
+    result.componentId = spec.reference;
+    result.componentType = "二极管";  // 使用中文显示
     result.expectedValue = spec.nominal_value;
     result.tolerance = spec.tolerance_percent;
     
@@ -603,7 +634,8 @@ DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
 DiagnosticResult FaultDiagnostic::diagnoseIC(const ComponentSpec& spec)
 {
     DiagnosticResult result;
-    result.componentId = spec.reference;      result.componentType = "ic";
+    result.componentId = spec.reference;
+    result.componentType = "集成电路";  // 使用中文显示
     result.expectedValue = spec.nominal_value;
     result.tolerance = spec.tolerance_percent;
     
@@ -643,34 +675,40 @@ DiagnosticResult FaultDiagnostic::diagnoseIC(const ComponentSpec& spec)
     return result;
 }
 
-MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_voltage)
+// 带标称值的重载版本，支持动态量程选择
+MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_voltage, double nominalValue)
 {
     MeasurementResult result;
     
-    // 使用DMM测量电阻 - 使用DeviceOperation方式
-    qDebug() << "开始电阻测量 - 通道:" << channel << "测试电压:" << test_voltage;
+    qDebug() << "开始2线法电阻测量（带动态量程） - 通道:" << channel 
+             << "标称值:" << nominalValue << "Ω";
     
-    // 1. 配置DMM连续电阻测量
+    // 1. 配置DMM 2线电阻测量，采集20个点
     DeviceOperation configOp;
     configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    configOp.parameters["range"] = "auto";
+    
+    // 根据标称值动态选择合适的量程
+    QString range = selectOptimalResistanceRange(nominalValue);
+    configOp.parameters["range"] = range;
+    qDebug() << "根据标称值" << nominalValue << "Ω 选择量程:" << range;
+    
     configOp.parameters["samplesPerTrigger"] = 20;
+    configOp.parameters["useNPLC"] = true;
+    configOp.parameters["nplcValue"] = 1;
     configOp.parameters["sampleInterval"] = 0.02;
-    configOp.parameters["useNPLC"] = false;
-    configOp.parameters["apertureTime"] = 0.02;
-    configOp.parameters["nplcValue"] = 3;
     configOp.parameters["triggerDelay"] = 10;
-    configOp.parameters["bufferSize"] = 1000;
-    configOp.parameters["timeout"] = 5000;
-    configOp.timeout = 5000;
+    configOp.parameters["bufferSize"] = 20;
+    configOp.parameters["timeout"] = 10000;
+    configOp.parameters["measurementFunction"] = "2_Wire_Resistance";
+    configOp.timeout = 10000;
     
     if (!device_manager_->submitOperation("JY8902", configOp)) {
-        result.error_message = "DMM配置操作提交失败";
+        result.error_message = "DMM 2线电阻测量配置失败";
         result.valid = false;
         return result;
     }
     
-    DeviceResult configResult = device_manager_->waitForResult("JY8902", 5000);
+    DeviceResult configResult = device_manager_->waitForResult("JY8902", 10000);
     if (!configResult.success) {
         result.error_message = "DMM配置失败: " + configResult.error;
         result.valid = false;
@@ -683,7 +721,7 @@ MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_vo
     startOp.timeout = 5000;
     
     if (!device_manager_->submitOperation("JY8902", startOp)) {
-        result.error_message = "DMM启动操作提交失败";
+        result.error_message = "DMM启动失败";
         result.valid = false;
         return result;
     }
@@ -698,47 +736,74 @@ MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_vo
     // 3. 发送软件触发
     DeviceOperation triggerOp;
     triggerOp.command = DeviceCommand::SYNC_TRIGGER;
-    triggerOp.timeout = 5000;
+    triggerOp.timeout = 10000;
     
     if (!device_manager_->submitOperation("JY8902", triggerOp)) {
-        result.error_message = "DMM软件触发操作提交失败";
+        result.error_message = "DMM触发失败";
         result.valid = false;
         return result;
     }
     
-    DeviceResult triggerResult = device_manager_->waitForResult("JY8902", 5000);
+    DeviceResult triggerResult = device_manager_->waitForResult("JY8902", 10000);
     if (!triggerResult.success) {
-        result.error_message = "DMM软件触发失败: " + triggerResult.error;
+        result.error_message = "DMM触发失败: " + triggerResult.error;
         result.valid = false;
         return result;
     }
     
-    // 4. 读取电阻数据
+    // 4. 读取数据
     QVector<QVector<double>> channelData;
-    
     DeviceManager::WaitResult waitResult = device_manager_->waitForDataWithEventLoop(
-        "JY8902", channelData, 50, 100, 15000);
+        "JY8902", channelData, 20, 100, 15000);
+    
     if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty()) {
         QVector<double> resistanceData = channelData[0];
-        double avgResistance = 0.0;
-        for (double val : resistanceData) {
-            avgResistance += val;
+        
+        // 验证采集点数是否达到预期
+        if (resistanceData.size() >= 16) {  // 期望20个点，允许20%容差
+            double avgResistance = 0.0;
+            double minResistance = resistanceData[0];
+            double maxResistance = resistanceData[0];
+            
+            // 计算统计信息
+            for (double val : resistanceData) {
+                avgResistance += val;
+                minResistance = qMin(minResistance, val);
+                maxResistance = qMax(maxResistance, val);
+            }
+            avgResistance /= resistanceData.size();
+            
+            // 计算标准差
+            double variance = 0.0;
+            for (double val : resistanceData) {
+                variance += (val - avgResistance) * (val - avgResistance);
+            }
+            double stdDev = qSqrt(variance / resistanceData.size());
+            
+            result.primary_value = avgResistance;
+            result.valid = true;
+            
+            qDebug() << "2线法电阻测量成功（动态量程）:";
+            qDebug() << "  标称值:" << nominalValue << "Ω";
+            qDebug() << "  选择量程:" << range;
+            qDebug() << "  采集点数:" << resistanceData.size();
+            qDebug() << "  平均值:" << avgResistance << "Ω";
+            qDebug() << "  标准差:" << stdDev << "Ω";
+            qDebug() << "  测量精度:" << (stdDev / avgResistance * 100) << "%";
+        } else {
+            result.error_message = QString("采集点数不足: 期望20点，实际%1点").arg(resistanceData.size());
+            result.valid = false;
         }
-        avgResistance /= resistanceData.size();
-        result.primary_value = avgResistance;
-        result.valid = true;
-        qDebug() << "电阻测量成功:" << result.primary_value << "Ω";
     } else {
-        result.error_message = "DMM读取失败: " + waitResult.errorMessage;
+        result.error_message = "DMM 2线法电阻数据读取失败: " + waitResult.errorMessage;
         result.valid = false;
     }
-    
     // 5. 停止连续测量
     DeviceOperation stopOp;
     stopOp.command = DeviceCommand::STOP_MEASUREMENT;
-    stopOp.timeout = 3000;
+    stopOp.timeout = 5000;
     device_manager_->submitOperation("JY8902", stopOp);
-    device_manager_->waitForResult("JY8902", 3000);
+    device_manager_->waitForResult("JY8902", 5000);
     
     return result;
 }
@@ -1245,6 +1310,18 @@ FaultType FaultDiagnostic::analyzeResistorFault(const ComponentSpec& spec, const
     // 温度补偿
     measured_value = applyTemperatureCompensation(measured_value, spec.temp_coefficient, measurement.temperature);
     
+    // 如果期望值为0或非常小，使用绝对值判断
+    if (spec.nominal_value <= 1e-6) {
+        // 期望值接近0时，使用绝对阈值判断
+        if (measured_value < 0.1) {
+            return FaultType::SHORT_CIRCUIT;  // 很小的阻值，认为短路
+        } else if (measured_value > 1e6) {
+            return FaultType::OPEN_CIRCUIT;   // 很大的阻值，认为开路
+        } else {
+            return FaultType::COMPONENT_OK;   // 在合理范围内
+        }
+    }
+    
     // 短路检查
     if (measured_value < spec.nominal_value * 0.1) {
         return FaultType::SHORT_CIRCUIT;
@@ -1265,12 +1342,24 @@ FaultType FaultDiagnostic::analyzeResistorFault(const ComponentSpec& spec, const
 
 FaultType FaultDiagnostic::analyzeCapacitorFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
+    // 如果期望值为0或非常小，使用绝对值判断
+    if (spec.nominal_value <= 1e-12) {
+        // 期望值接近0时，使用绝对阈值判断
+        if (measurement.primary_value < 1e-12) {
+            return FaultType::OPEN_CIRCUIT;  // 测量值也接近0，认为开路
+        } else if (measurement.primary_value > 1e-3) {
+            return FaultType::SHORT_CIRCUIT;  // 测量值很大，认为短路
+        } else {
+            return FaultType::COMPONENT_OK;  // 测量值在合理范围内
+        }
+    }
+    
     // 短路检查
     if (measurement.primary_value > spec.nominal_value * 100) {
         return FaultType::SHORT_CIRCUIT;
     }
     
-    // 开路检查
+    // 开路检查  
     if (measurement.primary_value < spec.nominal_value * 0.01) {
         return FaultType::OPEN_CIRCUIT;
     }
@@ -1295,15 +1384,30 @@ FaultType FaultDiagnostic::analyzeCapacitorFault(const ComponentSpec& spec, cons
 
 FaultType FaultDiagnostic::analyzeDiodeFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    // 正向压降检查
-    if (measurement.voltage < 0.3 || measurement.voltage > 1.2) {
-        if (measurement.voltage < 0.1) {
-            return FaultType::DIODE_SHORT;
-        } else {
-            return FaultType::DIODE_OPEN;
+    // 如果期望正向压降为0或非常小，使用默认范围判断
+    if (spec.nominal_value <= 0.1) {
+        // 期望值接近0时，使用标准二极管范围判断
+        if (measurement.voltage < 0.3 || measurement.voltage > 1.2) {
+            if (measurement.voltage < 0.1) {
+                return FaultType::DIODE_SHORT;
+            } else {
+                return FaultType::DIODE_OPEN;
+            }
+        }
+    } else {
+        // 有具体期望值时，使用期望值进行判断
+        double tolerance = spec.tolerance_percent > 0 ? spec.tolerance_percent : 0.2; // 默认20%容差
+        if (measurement.voltage < spec.nominal_value * (1.0 - tolerance) ||
+            measurement.voltage > spec.nominal_value * (1.0 + tolerance)) {
+            if (measurement.voltage < 0.1) {
+                return FaultType::DIODE_SHORT;
+            } else if (measurement.voltage > 2.0) {
+                return FaultType::DIODE_OPEN;
+            }
         }
     }
-      // 反向漏电流检查
+    
+    // 反向漏电流检查
     if (measurement.leakage_current > 1e-6) // 1μA
         return FaultType::DIODE_LEAKAGE;
     
@@ -1312,21 +1416,38 @@ FaultType FaultDiagnostic::analyzeDiodeFault(const ComponentSpec& spec, const Me
 
 FaultType FaultDiagnostic::analyzeICFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    // IC故障判断主要基于电源电流
-    if (measurement.current > spec.max_current) {
-        return FaultType::IC_OVERCURRENT;
-    }
-    
-    // 电压范围检查
-    if (measurement.voltage < spec.nominal_value * 0.9 || 
-        measurement.voltage > spec.nominal_value * 1.1) {
-        return FaultType::IC_LOGIC_ERROR;
-    }
-    
-    // 功耗检查
-    double power = measurement.voltage * measurement.current;
-    if (power > spec.max_voltage * spec.max_current) {
-        return FaultType::IC_OVERCURRENT;
+    // 如果期望供电电压为0或非常小，使用默认判断
+    if (spec.nominal_value <= 0.5) {
+        // 期望值接近0时，使用标准IC供电范围判断 (3.3V或5V)
+        if (measurement.voltage < 2.5 || measurement.voltage > 6.0) {
+            return FaultType::IC_LOGIC_ERROR;
+        }
+        // 电流检查 - 使用默认最大电流或合理阈值
+        double maxCurrent = spec.max_current > 0 ? spec.max_current : 0.1; // 默认100mA
+        if (measurement.current > maxCurrent) {
+            return FaultType::IC_OVERCURRENT;
+        }
+    } else {
+        // 有具体期望值时，使用期望值进行判断
+        // 电压范围检查 (±10%)
+        if (measurement.voltage < spec.nominal_value * 0.9 || 
+            measurement.voltage > spec.nominal_value * 1.1) {
+            return FaultType::IC_LOGIC_ERROR;
+        }
+        
+        // IC故障判断主要基于电源电流
+        if (spec.max_current > 0 && measurement.current > spec.max_current) {
+            return FaultType::IC_OVERCURRENT;
+        }
+        
+        // 功耗检查
+        double power = measurement.voltage * measurement.current;
+        double maxPower = spec.max_voltage > 0 && spec.max_current > 0 ? 
+                         spec.max_voltage * spec.max_current : 
+                         spec.nominal_value * 0.1; // 默认最大功耗
+        if (power > maxPower) {
+            return FaultType::IC_OVERCURRENT;
+        }
     }
     
     return FaultType::COMPONENT_OK;
@@ -1614,30 +1735,30 @@ DiagnosticResult FaultDiagnostic::convertFromAnalysisResult(const AnalysisResult
     result.testId = analysisResult.testId;
     result.componentType = analysisResult.componentType;
     result.componentId = analysisResult.componentId;
-    result.timestamp = analysisResult.timestamp;
+    result.timestamp = analysisResult.timestamp;    
     result.testEquipment = analysisResult.deviceInfo;
-    result.notes = analysisResult.summary;
+    result.notes = analysisResult.notes.join("; ");  // 使用分号和空格连接
     result.healthScore = analysisResult.healthScore;
     result.confidence = analysisResult.confidence;
+    result.expectedValue = analysisResult.expectedValue;
     
     // 转换测试结果
-    if (analysisResult.faultType == "PASS" || analysisResult.faultType == "NORMAL") {
+    if (analysisResult.result == AnalysisResult::PASS) {
         result.result = DiagnosticResult::PASS;
-    } else if (analysisResult.faultType == "ERROR" || analysisResult.faultType == "UNKNOWN") {
+    } else if (analysisResult.result == AnalysisResult::ERROR) {
         result.result = DiagnosticResult::ERROR;
     } else {
         result.result = DiagnosticResult::FAIL;
     }
     
     // 转换故障类型列表
-    result.faultTypes = analysisResult.details.value("fault_types", QStringList()).toStringList();
-    if (result.faultTypes.isEmpty() && !analysisResult.faultType.isEmpty()) {
-        result.faultTypes.append(analysisResult.faultType);
+    if (result.faultTypes.isEmpty() && !analysisResult.faultTypes.isEmpty()) {
+        result.faultTypes.append(analysisResult.faultTypes);
     }
     
     // 提取测量数据
-    result.expectedValue = analysisResult.details.value("nominal_value", 0.0).toDouble();
-    result.tolerance = analysisResult.details.value("tolerance", 0.05).toDouble();
+    result.expectedValue = analysisResult.expectedValue;
+    result.tolerance = analysisResult.tolerance;
     
     return result;
 }
@@ -2354,4 +2475,66 @@ TestConfiguration FaultDiagnostic::getCurrentTestConfiguration() const
 AnalysisResult FaultDiagnostic::getLastAnalysisResult() const
 {
     return lastAnalysisResult_;
+}
+
+QString FaultDiagnostic::selectOptimalResistanceRange(double nominalValue)
+{
+    // 根据标称值选择最适合的量程，确保测量精度
+    // JY8902 DMM 2线电阻量程定义：
+    // 100Ω, 1KΩ, 10KΩ, 100KΩ, 1MΩ, 10MΩ, 100MΩ
+    
+    qDebug() << "开始动态量程选择，标称值:" << nominalValue << "Ω";
+    
+    // 选择量程的策略：
+    // 1. 量程应该大于标称值，但不要过大（避免精度损失）
+    // 2. 一般选择比标称值大1-2个数量级的量程
+    // 3. 考虑元件容差，留有余量
+    
+    QString selectedRange;
+    
+    if (nominalValue <= 0) {
+        // 无效标称值，使用自动量程
+        selectedRange = "auto";
+        qDebug() << "标称值无效，使用自动量程";
+    }
+    else if (nominalValue <= 10.0) {
+        // 10Ω以下 -> 使用100Ω量程
+        selectedRange = "100";
+        qDebug() << "选择100Ω量程（适用于小阻值元件）";
+    }
+    else if (nominalValue <= 100.0) {
+        // 10Ω-100Ω -> 使用1KΩ量程
+        selectedRange = "1K";
+        qDebug() << "选择1KΩ量程（适用于低阻值元件）";
+    }
+    else if (nominalValue <= 1000.0) {
+        // 100Ω-1KΩ -> 使用10KΩ量程
+        selectedRange = "10K";
+        qDebug() << "选择10KΩ量程（适用于中等阻值元件）";
+    }
+    else if (nominalValue <= 10000.0) {
+        // 1KΩ-10KΩ -> 使用100KΩ量程
+        selectedRange = "100K";
+        qDebug() << "选择100KΩ量程（适用于中高阻值元件）";
+    }
+    else if (nominalValue <= 100000.0) {
+        // 10KΩ-100KΩ -> 使用1MΩ量程
+        selectedRange = "1M";
+        qDebug() << "选择1MΩ量程（适用于高阻值元件）";
+    }
+    else if (nominalValue <= 1000000.0) {
+        // 100KΩ-1MΩ -> 使用10MΩ量程
+        selectedRange = "10M";
+        qDebug() << "选择10MΩ量程（适用于很高阻值元件）";
+    }
+    else {
+        // 大于1MΩ -> 使用100MΩ量程
+        selectedRange = "100M";
+        qDebug() << "选择100MΩ量程（适用于超高阻值元件）";
+    }
+    
+    qDebug() << "动态量程选择完成:" << selectedRange 
+             << "（标称值:" << nominalValue << "Ω）";
+    
+    return selectedRange;
 }

@@ -62,11 +62,11 @@ bool PortManager::initializePorts()
     qDebug() << "初始化端口系统...";
     
     // 清空现有端口配置
-    devicePorts_.clear();
-      // 初始化各设备端口
+    devicePorts_.clear();    // 初始化各设备端口
     initializeJY5711Ports();
     initializeJY5323Ports();
     initializeJY5322Ports();
+    initializeJY8902Ports();  // 添加万用表端口初始化
     
     // 清理任何无效的端口分配（使用内部版本，因为已经持有锁）
     cleanupInvalidAllocationsInternal();
@@ -137,6 +137,22 @@ void PortManager::initializeJY5322Ports()
     
     devicePorts_[deviceName] = ports;
     qDebug() << "JY5322 端口初始化完成:" << ports.size() << "个端口";
+}
+
+void PortManager::initializeJY8902Ports()
+{
+    const QString deviceName = "JY8902";
+    QVector<PortInfo> ports;
+    
+    // 万用表测量端口 (0-1) - 2线法测量
+    for (int i = JY8902Ports::DMM_CHANNEL_START; i <= JY8902Ports::DMM_CHANNEL_END; ++i) {
+        PortInfo port(deviceName, i, PortType::DMM_MEASUREMENT,
+                     QString("万用表测量端口 CH%1").arg(i), 1000.0, 3.0);
+        ports.append(port);
+    }
+    
+    devicePorts_[deviceName] = ports;
+    qDebug() << "JY8902 万用表端口初始化完成:" << ports.size() << "个端口";
 }
 
 QVector<PortInfo> PortManager::getAvailablePorts(PortType type) const
@@ -327,32 +343,37 @@ QVector<PortInfo> PortManager::getRecommendedPorts(ComponentType componentType) 
 QVector<PortInfo> PortManager::getResistorPorts() const
 {
     QVector<PortInfo> ports;
-    QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
-    QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    QVector<PortInfo> availablePWR = getAvailablePorts(PortType::POWER_OUTPUT);
+    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
     
-    // 电阻测试需要：1个模拟输出，2个模拟输入，1个电源
-    if (!availableAO.isEmpty()) ports.append(availableAO.first());
-    if (availableAI.size() >= 2) {
-        ports.append(availableAI[0]);
-        ports.append(availableAI[1]);
+    // 电阻测试只需要万用表的2个端口进行2线法测量
+    if (availableDMM.size() >= 2) {
+        ports.append(availableDMM[0]);  // CH0
+        ports.append(availableDMM[1]);  // CH1
     }
-    if (!availablePWR.isEmpty()) ports.append(availablePWR.first());
     
+    qDebug() << "电阻测试端口配置: 需要2个万用表端口，可用" << availableDMM.size() << "个";
     return ports;
 }
 
 QVector<PortInfo> PortManager::getCapacitorPorts() const
 {
     QVector<PortInfo> ports;
+    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
     QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
     QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
     
-    // 电容测试需要：1个模拟输出，2个模拟输入
-    if (!availableAO.isEmpty()) ports.append(availableAO.first());
-    if (availableAI.size() >= 2) {
-        ports.append(availableAI[0]);
-        ports.append(availableAI[1]);
+    // 电容测试优先使用万用表直接测量，备选方案是阻抗测量
+    if (availableDMM.size() >= 2) {
+        // 方案1：万用表直接测量电容值
+        ports.append(availableDMM[0]);  // CH0
+        ports.append(availableDMM[1]);  // CH1
+        qDebug() << "电容测试端口配置: 使用万用表直接测量";
+    } else if (!availableAO.isEmpty() && availableAI.size() >= 2) {
+        // 方案2：交流阻抗测量法
+        ports.append(availableAO.first());  // 信号源
+        ports.append(availableAI[0]);       // 电压测量
+        ports.append(availableAI[1]);       // 电流测量
+        qDebug() << "电容测试端口配置: 使用阻抗测量法";
     }
     
     return ports;
@@ -361,14 +382,22 @@ QVector<PortInfo> PortManager::getCapacitorPorts() const
 QVector<PortInfo> PortManager::getInductorPorts() const
 {
     QVector<PortInfo> ports;
+    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
     QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
     QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
     
-    // 电感测试需要：1个模拟输出，2个模拟输入
-    if (!availableAO.isEmpty()) ports.append(availableAO.first());
-    if (availableAI.size() >= 2) {
-        ports.append(availableAI[0]);
-        ports.append(availableAI[1]);
+    // 电感测试：万用表无法直接测量电感，需要阻抗测量法
+    if (!availableAO.isEmpty() && availableAI.size() >= 2) {
+        // 交流阻抗测量法
+        ports.append(availableAO.first());  // 信号源
+        ports.append(availableAI[0]);       // 电压测量
+        ports.append(availableAI[1]);       // 电流测量
+        qDebug() << "电感测试端口配置: 使用阻抗测量法";
+    } else if (availableDMM.size() >= 2) {
+        // 备选：使用万用表测量直流电阻（DCR）
+        ports.append(availableDMM[0]);
+        ports.append(availableDMM[1]);
+        qDebug() << "电感测试端口配置: 使用万用表测量DCR";
     }
     
     return ports;
@@ -379,15 +408,19 @@ QVector<PortInfo> PortManager::getDiodePorts() const
     QVector<PortInfo> ports;
     QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
     QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    QVector<PortInfo> availablePWR = getAvailablePorts(PortType::POWER_OUTPUT);
+    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
     
-    // 二极管测试需要：1个模拟输出，2个模拟输入，1个电源
-    if (!availableAO.isEmpty()) ports.append(availableAO.first());
-    if (availableAI.size() >= 2) {
-        ports.append(availableAI[0]);
-        ports.append(availableAI[1]);
+    // 二极管测试需要：直流电压源 + 电压/电流测量
+    if (!availableAO.isEmpty() && !availableAI.isEmpty()) {
+        ports.append(availableAO.first());  // 直流电压源
+        ports.append(availableAI.first());  // 电压测量
+        qDebug() << "二极管测试端口配置: 使用电压源+模拟输入";
+    } else if (availableDMM.size() >= 2) {
+        // 备选方案：万用表二极管测试模式
+        ports.append(availableDMM[0]);
+        ports.append(availableDMM[1]);
+        qDebug() << "二极管测试端口配置: 使用万用表二极管模式";
     }
-    if (!availablePWR.isEmpty()) ports.append(availablePWR.first());
     
     return ports;
 }

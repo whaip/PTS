@@ -10,6 +10,9 @@
 #include <QLineEdit>
 #include <QRadioButton>
 #include <QThread>
+#include <QScrollArea>
+#include <QGroupBox>
+#include <QDialogButtonBox>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -31,10 +34,10 @@ MainWindow::MainWindow(QWidget *parent)
     , status_timer_(new QTimer(this))
     , port_manager_(nullptr)
     , wiring_resource_manager_(nullptr)
-    , current_wiring_dialog_(nullptr)
-    , task_generator_(nullptr)
+    , current_wiring_dialog_(nullptr)    , task_generator_(nullptr)
     , current_test_index_(0)
     , batch_testing_active_(false)
+    , unified_wiring_prepared_(false)
 {
     ui->setupUi(this);
     
@@ -584,6 +587,12 @@ void MainWindow::startSingleTest()
 
 void MainWindow::startBatchTest()
 {
+    // 如果当前正在进行批量测试，则停止测试
+    if (batch_testing_active_) {
+        stopBatchTest();
+        return;
+    }
+    
     if (current_sequence_.steps.isEmpty()) {
         // 如果没有测试序列，创建一个默认序列
         if (!sequence_manager_->createDefaultSequence(current_sequence_)) {
@@ -601,6 +610,15 @@ void MainWindow::startBatchTest()
         return;
     }
     
+    // 统一准备所有组件的接线方案
+    if (!prepareUnifiedWiringForBatch()) {
+        QMessageBox::warning(this, "接线准备失败", "无法为批量测试准备统一接线方案！");
+        return;
+    }
+    
+    // 显示统一接线引导对话框
+    showUnifiedWiringGuideDialog();
+    
     batch_testing_active_ = true;
     current_test_index_ = 0;
     
@@ -609,9 +627,10 @@ void MainWindow::startBatchTest()
     test_progress_->setVisible(true);
     test_progress_->setMaximum(current_sequence_.steps.size());
     test_progress_->setValue(0);
-    
     test_results_.clear();
     updateResultsTable();
+    
+    qDebug() << "开始批量测试，共" << current_sequence_.steps.size() << "个测试步骤";
     
     // 开始第一个测试
     runNextTest();
@@ -628,25 +647,30 @@ void MainWindow::runNextTest()
     const TestStep& step = current_sequence_.steps[current_test_index_];
     if (!step.enabled) {
         // 跳过禁用的测试
+        qDebug() << "跳过禁用的测试步骤：" << step.testName;
         current_test_index_++;
         test_progress_->setValue(current_test_index_);
         QTimer::singleShot(100, this, &MainWindow::runNextTest);
         return;
     }
+      qDebug() << "开始测试步骤" << (current_test_index_ + 1) << "/" << current_sequence_.steps.size() << ":" << step.testName;
       // 创建组件规格 - 转换ComponentSpecs到ComponentSpec
     ComponentSpecs originalSpecs = step.specs;
     ComponentSpec specs = fault_diagnostic_->convertFromComponentSpecs(originalSpecs, step.componentType, 
                                                                      QString("Step_%1").arg(current_test_index_ + 1));
     
-    // 启动诊断
-    fault_diagnostic_->diagnoseComponentAsync(step.componentType, 
-                                             QString("Step_%1").arg(current_test_index_ + 1), 
-                                             specs);
-    
     test_count_label_->setText(QString("正在测试: %1 (%2/%3)")
                               .arg(step.testName)
                               .arg(current_test_index_ + 1)
                               .arg(current_sequence_.steps.size()));
+    
+    // 使用预分配的接线方案进行批量测试
+    if (unified_wiring_prepared_) {
+        executeBatchTestWithPreAllocatedWiring(specs);
+    } else {
+        // 如果统一接线未准备好，回退到原来的方式
+        executeTestWithWiringGuide(specs);
+    }
 }
 
 void MainWindow::finishBatchTest()
@@ -706,21 +730,46 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
         single_test_button_->setEnabled(true);
         single_test_button_->setText("开始测试");
     }
-    
-    // 在批量测试时处理下一个测试
+      // 在批量测试时处理下一个测试
     if (batch_testing_active_) {
-        current_test_index_++;
-        test_progress_->setValue(current_test_index_);
         updateResultsTable();
         
-        // 延迟启动下一个测试，给UI时间更新
-        QTimer::singleShot(500, this, &MainWindow::runNextTest);
+        // 使用统一的下一个测试处理函数
+        proceedToNextBatchTest();
     }
 }
 
 void MainWindow::onErrorOccurred(const QString& error)
 {
-    QMessageBox::warning(this, "错误", error);
+    qDebug() << "错误发生：" << error;
+    
+    // 在批量测试中，记录错误但继续下一个测试
+    if (batch_testing_active_) {
+        // 创建错误结果记录
+        DiagnosticResult errorResult;
+        errorResult.testId = QString("batch_test_%1").arg(current_test_index_ + 1);
+        errorResult.componentType = "未知";
+        errorResult.componentId = QString("Step_%1").arg(current_test_index_ + 1);
+        errorResult.result = DiagnosticResult::ERROR;
+        errorResult.healthScore = 0.0;
+        errorResult.confidence = 0.0;
+        errorResult.notes = QString("测试错误: %1").arg(error);
+        errorResult.timestamp = QDateTime::currentDateTime();
+        
+        test_results_.append(errorResult);
+        
+        // 继续下一个测试
+        proceedToNextBatchTest();
+    } else {
+        // 在单元件测试中，显示错误对话框
+        QMessageBox::warning(this, "错误", error);
+        
+        // 恢复单元件测试按钮状态
+        if (single_test_button_) {
+            single_test_button_->setEnabled(true);
+            single_test_button_->setText("开始测试");
+        }
+    }
 }
 
 void MainWindow::addComponent()
@@ -980,31 +1029,37 @@ void MainWindow::addComponent()
         component.description = desc_edit->text();
         
         // 根据类型设置特定参数
-        switch (component.type) {            case ComponentType::RESISTOR:                component.nominal_value = resistance_spin->value();
+        switch (component.type) {            
+            case ComponentType::RESISTOR:                
+                component.nominal_value = resistance_spin->value();
                 component.tolerance_percent = resistor_tolerance_spin->value() / 100.0;
                 component.temp_coefficient = temp_coeff_spin->value();
                 component.max_voltage = sqrt(max_power_spin->value() * resistance_spin->value()); // P = V²/R
                 component.max_current = sqrt(max_power_spin->value() / resistance_spin->value()); // P = I²R
-                break;                  case ComponentType::CAPACITOR:
+                break;                  
+            case ComponentType::CAPACITOR:
                 component.nominal_value = capacitance_spin->value();
                 component.tolerance_percent = capacitor_tolerance_spin->value() / 100.0;
                 component.max_esr = max_esr_spin->value();
                 component.max_leakage = max_leakage_spin->value();
                 component.max_voltage = cap_voltage_spin->value();
                 component.max_current = 0.1; // 默认最大电流
-                break;                  case ComponentType::INDUCTOR:
+                break;                  
+            case ComponentType::INDUCTOR:
                 component.nominal_value = inductance_spin->value();
                 component.tolerance_percent = inductor_tolerance_spin->value() / 100.0;
                 component.max_current = max_current_spin->value();
                 component.max_voltage = 50.0; // 默认最大电压
                 component.temp_coefficient = dcr_spin->value(); // 使用temp_coefficient字段存储DCR
-                break;                  case ComponentType::DIODE:
+                break;                  
+            case ComponentType::DIODE:
                 component.nominal_value = forward_voltage_spin->value();
                 component.tolerance_percent = diode_tolerance_spin->value() / 100.0;
                 component.max_voltage = reverse_voltage_spin->value();
                 component.max_leakage = diode_leakage_spin->value();
                 component.max_current = 1.0; // 默认最大电流
-                break;                  case ComponentType::IC:
+                break;                  
+            case ComponentType::IC:
                 component.nominal_value = supply_voltage_spin->value();
                 component.tolerance_percent = ic_tolerance_spin->value() / 100.0;
                 component.max_voltage = supply_voltage_spin->value();
@@ -1013,7 +1068,8 @@ void MainWindow::addComponent()
                 if (!ic_type_edit->text().isEmpty()) {
                     component.description += QString(" [%1]").arg(ic_type_edit->text());
                 }
-                break;                  default:
+                break;                  
+            default:
                 component.nominal_value = 1000.0;
                 component.tolerance_percent = 0.05;
                 break;
@@ -1371,6 +1427,87 @@ void MainWindow::onWiringCompleted(const WiringScheme& scheme)
     }
 }
 
+// 批量测试的统一接线方案管理方法实现
+
+bool MainWindow::prepareUnifiedWiringForBatch()
+{
+    if (!task_generator_ || !wiring_resource_manager_) {
+        qDebug() << "错误：任务生成器或资源管理器未初始化";
+        return false;
+    }
+    
+    // 清理之前的方案
+    clearBatchWiringSchemes();
+    
+    qDebug() << "开始为批量测试准备统一接线方案...";
+    
+    // 为每个测试步骤生成接线方案和任务
+    for (int i = 0; i < current_sequence_.steps.size(); ++i) {
+        const TestStep& step = current_sequence_.steps[i];
+        
+        if (!step.enabled) {
+            continue;  // 跳过禁用的测试
+        }
+        
+        // 转换组件规格
+        ComponentSpecs originalSpecs = step.specs;
+        ComponentSpec component = fault_diagnostic_->convertFromComponentSpecs(
+            originalSpecs, step.componentType, QString("Step_%1").arg(i + 1));
+        
+        try {
+            // 生成最优接线方案
+            WiringScheme scheme = wiring_resource_manager_->generateOptimalScheme(component);
+            if (scheme.schemeId.isEmpty()) {
+                qDebug() << "错误：无法为组件" << component.reference << "生成接线方案";
+                continue;
+            }
+            
+            // 生成测试任务
+            QString taskId = task_generator_->generateTaskFromScheme(scheme, component);
+            if (taskId.isEmpty()) {
+                qDebug() << "错误：无法为组件" << component.reference << "生成测试任务";
+                continue;
+            }
+            
+            // 保存方案和任务ID
+            batch_wiring_schemes_[component.reference] = scheme;
+            batch_task_ids_[component.reference] = taskId;
+            
+            qDebug() << "为组件" << component.reference << "准备接线方案：" << scheme.schemeName;
+            
+        } catch (const std::exception& e) {
+            qDebug() << "为组件" << component.reference << "准备接线方案时发生异常：" << e.what();
+            continue;
+        }
+    }
+    
+    unified_wiring_prepared_ = !batch_wiring_schemes_.isEmpty();
+    
+    if (unified_wiring_prepared_) {
+        qDebug() << "统一接线方案准备完成，共" << batch_wiring_schemes_.size() << "个方案";
+    } else {
+        qDebug() << "统一接线方案准备失败";
+    }
+    
+    return unified_wiring_prepared_;
+}
+
+void MainWindow::clearBatchWiringSchemes()
+{
+    // 清理所有批量任务
+    for (auto it = batch_task_ids_.begin(); it != batch_task_ids_.end(); ++it) {
+        if (task_generator_) {
+            task_generator_->finalizeTaskExecution(it.value(), false, "CLEARED");
+        }
+    }
+    
+    batch_wiring_schemes_.clear();
+    batch_task_ids_.clear();
+    unified_wiring_prepared_ = false;
+    
+    qDebug() << "批量接线方案已清理";
+}
+
 //=============================================================================
 // 缺失的函数实现 - 修复链接器错误
 //=============================================================================
@@ -1704,9 +1841,246 @@ void MainWindow::showPortConfigurationForComponent(const ComponentSpec& componen
         DiagnosticResult result = fault_diagnostic_->diagnoseComponent(component);
         
         // 手动触发诊断完成事件（以防信号没有正确触发）
-        QTimer::singleShot(100, [this, result]() {
-            onDiagnosticCompleted(result);
-        });
+        // QTimer::singleShot(100, [this, result]() {
+        //     onDiagnosticCompleted(result);
+        // });
     });
+}
+
+void MainWindow::executeTestWithWiringGuide(const ComponentSpec& component)
+{
+    if (!task_generator_ || !wiring_resource_manager_) {
+        qDebug() << "错误：任务生成器或资源管理器未初始化";
+        // 跳过当前测试，继续下一个
+        proceedToNextBatchTest();
+        return;
+    }
+    
+    try {
+        // 自动生成最优接线方案
+        WiringScheme optimalScheme = wiring_resource_manager_->generateOptimalScheme(component);
+        if (optimalScheme.schemeId.isEmpty()) {
+            qDebug() << "错误：无法为组件" << component.reference << "生成接线方案";
+           
+
+            proceedToNextBatchTest();
+            return;
+        }
+        
+        qDebug() << "为组件" << component.reference << "生成接线方案：" << optimalScheme.schemeName;
+        
+        // 生成测试任务
+        QString taskId = task_generator_->generateTaskFromScheme(optimalScheme, component);
+        if (taskId.isEmpty()) {
+            qDebug() << "错误：无法生成测试任务";
+            proceedToNextBatchTest();
+            return;
+        }
+        
+        current_task_id_ = taskId;  // 保存任务ID以便后续清理
+        qDebug() << "测试任务已生成：" << taskId;
+        
+        // 准备执行测试
+        if (task_generator_->prepareTaskExecution(taskId)) {
+            qDebug() << "开始执行故障诊断：" << component.reference;
+            
+            // 使用延迟执行，避免阻塞UI
+            QTimer::singleShot(100, [this, component]() {
+                // 执行故障诊断
+                fault_diagnostic_->diagnoseComponent(component);
+            });
+        } else {
+            qDebug() << "错误：测试任务准备失败";
+            current_task_id_.clear();
+            proceedToNextBatchTest();
+        }
+        
+    } catch (const std::exception& e) {
+        qDebug() << "执行测试时发生异常：" << e.what();
+        current_task_id_.clear();
+        proceedToNextBatchTest();
+    }
+}
+
+bool MainWindow::executeBatchTestWithPreAllocatedWiring(const ComponentSpec& component)
+{
+    if (!unified_wiring_prepared_) {
+        qDebug() << "错误：统一接线方案未准备好";
+        return false;
+    }
+    
+    // 查找预分配的接线方案和任务
+    auto schemeIt = batch_wiring_schemes_.find(component.reference);
+    auto taskIt = batch_task_ids_.find(component.reference);
+    
+    if (schemeIt == batch_wiring_schemes_.end() || taskIt == batch_task_ids_.end()) {
+        qDebug() << "错误：未找到组件" << component.reference << "的预分配方案";
+        // 回退到原来的方式
+        executeTestWithWiringGuide(component);
+        return false;
+    }
+    
+    QString taskId = taskIt.value();
+    current_task_id_ = taskId;
+    
+    qDebug() << "使用预分配方案执行测试：" << component.reference << "，任务ID：" << taskId;
+    
+    try {
+        // 准备执行测试
+        if (task_generator_->prepareTaskExecution(taskId)) {
+            qDebug() << "开始执行故障诊断：" << component.reference;
+            
+            // 使用延迟执行，避免阻塞UI
+            QTimer::singleShot(100, [this, component]() {
+                // 执行故障诊断
+                fault_diagnostic_->diagnoseComponent(component);
+            });
+            
+            return true;
+        } else {
+            qDebug() << "错误：测试任务准备失败";
+            current_task_id_.clear();
+            return false;
+        }
+        
+    } catch (const std::exception& e) {
+        qDebug() << "执行预分配测试时发生异常：" << e.what();
+        current_task_id_.clear();
+        return false;
+    }
+}
+
+void MainWindow::proceedToNextBatchTest()
+{
+    if (!batch_testing_active_) {
+        return;
+    }
+    
+    // 移动到下一个测试
+    current_test_index_++;
+    test_progress_->setValue(current_test_index_);
+    
+    // 延迟执行下一个测试，给UI时间更新
+    QTimer::singleShot(500, this, &MainWindow::runNextTest);
+}
+
+void MainWindow::stopBatchTest()
+{
+    batch_testing_active_ = false;
+    
+    // 清理当前任务
+    if (task_generator_ && !current_task_id_.isEmpty()) {
+        task_generator_->finalizeTaskExecution(current_task_id_, false, "STOPPED");
+        current_task_id_.clear();
+    }
+    
+    // 释放所有端口
+    if (port_manager_) {
+        port_manager_->releaseAllPorts();
+    }
+    
+    // 清理批量接线方案
+    clearBatchWiringSchemes();
+    
+    batch_test_button_->setText("开始批量测试");
+    batch_test_button_->setEnabled(true);
+    test_progress_->setVisible(false);
+    
+    test_count_label_->setText(QString("测试已停止 (%1/%2)")
+                              .arg(current_test_index_)
+                              .arg(current_sequence_.steps.size()));
+    
+    QMessageBox::information(this, "测试停止", 
+        QString("批量测试已停止。\n已完成 %1 个测试，剩余 %2 个。")
+        .arg(current_test_index_)
+        .arg(current_sequence_.steps.size() - current_test_index_));
+}
+
+void MainWindow::showUnifiedWiringGuideDialog()
+{
+    if (!unified_wiring_prepared_ || batch_wiring_schemes_.isEmpty()) {
+        return;
+    }
+    
+    // 创建统一接线引导对话框
+    QDialog* unifiedDialog = new QDialog(this);
+    unifiedDialog->setWindowTitle("批量测试统一接线引导");
+    unifiedDialog->setModal(true);
+    unifiedDialog->setMinimumSize(800, 600);
+    
+    QVBoxLayout* mainLayout = new QVBoxLayout(unifiedDialog);
+    
+    // 添加说明文本
+    QLabel* instructionLabel = new QLabel(
+        "请按照以下统一接线方案完成所有组件的连接。\n"
+        "完成接线后，点击\"开始测试\"按钮开始批量测试。\n"
+        "注意：统一接线方案已优化端口分配，请严格按照指示连接。");
+    instructionLabel->setWordWrap(true);
+    instructionLabel->setStyleSheet("QLabel { background-color: #e6f3ff; padding: 10px; border: 1px solid #b3d9ff; border-radius: 5px; }");
+    mainLayout->addWidget(instructionLabel);
+    
+    // 创建接线方案显示区域
+    QScrollArea* scrollArea = new QScrollArea();
+    QWidget* contentWidget = new QWidget();
+    QVBoxLayout* contentLayout = new QVBoxLayout(contentWidget);
+    
+    // 为每个组件显示接线信息
+    for (auto it = batch_wiring_schemes_.begin(); it != batch_wiring_schemes_.end(); ++it) {
+        const QString& componentRef = it.key();
+        const WiringScheme& scheme = it.value();
+        
+        // 组件接线信息框
+        QGroupBox* componentGroup = new QGroupBox(QString("组件: %1 (%2)").arg(componentRef).arg(scheme.schemeName));
+        QVBoxLayout* groupLayout = new QVBoxLayout(componentGroup);
+          // 连接信息
+        for (const auto& connection : scheme.connections) {
+            QString connectionText = QString("从 %1:%2 -> 至 %3:%4")
+                .arg(connection.sourcePort.deviceName)
+                .arg(connection.sourcePort.portNumber)
+                .arg(connection.targetPort.deviceName)
+                .arg(connection.targetPort.portNumber);
+            
+            if (!connection.wireColor.isEmpty()) {
+                connectionText += QString(" [%1线]").arg(connection.wireColor);
+            }
+            
+            QLabel* connectionLabel = new QLabel(connectionText);
+            connectionLabel->setStyleSheet("QLabel { margin: 2px; padding: 2px; }");
+            groupLayout->addWidget(connectionLabel);
+            
+            // 添加连接说明
+            if (!connection.instruction.isEmpty()) {
+                QLabel* instructionLabel = new QLabel(QString("  说明: %1").arg(connection.instruction));
+                instructionLabel->setStyleSheet("QLabel { margin-left: 10px; font-size: 9pt; color: #666; }");
+                groupLayout->addWidget(instructionLabel);
+            }
+        }
+        
+        contentLayout->addWidget(componentGroup);
+    }
+    
+    scrollArea->setWidget(contentWidget);
+    scrollArea->setWidgetResizable(true);
+    mainLayout->addWidget(scrollArea);
+    
+    // 按钮区域
+    QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttonBox->button(QDialogButtonBox::Ok)->setText("接线完成，开始测试");
+    buttonBox->button(QDialogButtonBox::Cancel)->setText("取消");
+    
+    connect(buttonBox, &QDialogButtonBox::accepted, unifiedDialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, unifiedDialog, &QDialog::reject);
+    
+    mainLayout->addWidget(buttonBox);
+    
+    // 显示对话框
+    int result = unifiedDialog->exec();
+    
+    if (result == QDialog::Rejected) {
+        // 用户取消，停止批量测试
+        stopBatchTest();
+    }
+    
+    unifiedDialog->deleteLater();
 }
 

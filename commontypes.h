@@ -27,15 +27,16 @@ inline uint qHash(ComponentType key, uint seed = 0)
 }
 
 // ComponentType转换为字符串的辅助函数
-inline QString componentTypeToString(ComponentType type) {    switch (type) {
-        case ComponentType::RESISTOR: return "电阻";
-        case ComponentType::CAPACITOR: return "电容";
-        case ComponentType::INDUCTOR: return "电感";
-        case ComponentType::DIODE: return "二极管";
-        case ComponentType::TRANSISTOR: return "晶体管";
-        case ComponentType::IC: return "集成电路";
+inline QString componentTypeToString(ComponentType type) {   
+    switch (type) {
+        case ComponentType::RESISTOR: return "resistor";
+        case ComponentType::CAPACITOR: return "capacitor";
+        case ComponentType::INDUCTOR: return "inductor";
+        case ComponentType::DIODE: return "diode";
+        case ComponentType::TRANSISTOR: return "transistor";
+        case ComponentType::IC: return "integrated_circuit";
         case ComponentType::UNKNOWN:
-        default: return "未知";
+        default: return "unknown";
     }
 }
 

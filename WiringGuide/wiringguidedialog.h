@@ -141,14 +141,7 @@ private:
     QPushButton* nextStepBtn_;
     QPushButton* prevStepBtn_;
     QProgressBar* wiringProgressBar_;
-    
-    // 验证页面已移除 - 接线完成后直接生成方案
-    // QWidget* validationPage_;
-    // QTableWidget* connectionTableWidget_;
-    // QTextEdit* validationResultsEdit_;
-    // QPushButton* validateBtn_;
-    // QPushButton* generateSchemeBtn_;
-    // QPushButton* resetBtn_;
+
 };
 
 #endif // WIRINGGUIDEDIALOG_H

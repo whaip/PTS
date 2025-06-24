@@ -73,12 +73,13 @@ private slots:
     void saveTestSequence();
     void exportResults();
     void clearResults();
-    void updateSystemStatus();
+    void updateSystemStatus();    
     void runNextTest();
-    void finishBatchTest();    
+    void finishBatchTest();
+    void stopBatchTest();               // 停止批量测试
     void openPCBIdentification();  // 新增：打开PCB识别界面
     void openCameraControl();      // 新增：打开相机控制界面
-    void openPCBAnalyzer();         // 新增：打开PCB综合分析器
+    void openPCBAnalyzer();         // 新增：打开PCB综合分析器    
     void openDetectionHistory();    // 新增：打开检测历史管理    
     void openBoardManagement();
     void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
@@ -86,6 +87,8 @@ private slots:
     void onWiringCompleted(const WiringScheme& scheme);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
     void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
+    void executeTestWithWiringGuide(const ComponentSpec& component);  // 使用接线引导执行测试（批量测试用）
+    void proceedToNextBatchTest();  // 继续下一个批量测试
 
 private:
     Ui::MainWindow *ui;    // 核心组件
@@ -150,15 +153,18 @@ private:
     // 状态栏
     QLabel* system_status_label_;
     QLabel* test_count_label_;
-    QProgressBar* status_progress_;
-    // 数据
+    QProgressBar* status_progress_;    // 数据
     QVector<ComponentSpec> test_components_;
     QList<DiagnosticResult> test_results_;
     TestSequence current_sequence_;
     int current_test_index_;
     bool batch_testing_active_;
     
-    void setupUI();
+    // 批量测试的统一接线方案管理
+    QMap<QString, WiringScheme> batch_wiring_schemes_;  // 组件引用 -> 接线方案
+    QMap<QString, QString> batch_task_ids_;             // 组件引用 -> 任务ID
+    bool unified_wiring_prepared_;                      // 是否已准备统一接线
+      void setupUI();
     void setupDeviceStatusPage();
     void setupSingleTestPage();
     void setupBatchTestPage();
@@ -173,6 +179,12 @@ private:
     void populateComponentTable();
     QString formatResult(const DiagnosticResult& result);
     QString getStatusIcon(DeviceStatus status);
+    
+    // 批量测试的统一接线方案管理方法
+    bool prepareUnifiedWiringForBatch();
+    void clearBatchWiringSchemes();
+    bool executeBatchTestWithPreAllocatedWiring(const ComponentSpec& component);
+    void showUnifiedWiringGuideDialog();
 };
 
 #endif // MAINWINDOW_H

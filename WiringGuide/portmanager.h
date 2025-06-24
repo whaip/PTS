@@ -70,10 +70,10 @@ private:
     QMap<QString, QVector<PortInfo>> devicePorts_;  // 设备名 -> 端口列表
     mutable QMutex portMutex_;
     QTimer* statusUpdateTimer_;
-    
-    void initializeJY5711Ports();
+      void initializeJY5711Ports();
     void initializeJY5323Ports();
     void initializeJY5322Ports();
+    void initializeJY8902Ports();  // 添加万用表端口初始化函数
       QString generatePortKey(const QString& deviceName, int portNumber) const;
     PortInfo* findPort(const QString& deviceName, int portNumber);
     const PortInfo* findPort(const QString& deviceName, int portNumber) const;
