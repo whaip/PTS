@@ -145,6 +145,10 @@ struct ComponentSpec {
     // 便利构造函数
     ComponentSpec(const QString& ref, ComponentType t, const QString& val = "") 
         : reference(ref), type(t), value(val), requiresTesting(true) {}
+    
+    // 兼容性访问器 - id字段作为reference的别名
+    const QString& id() const { return reference; }
+    void setId(const QString& newId) { reference = newId; }
 };
 
 // 端口映射结构

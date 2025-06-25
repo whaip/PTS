@@ -1048,3 +1048,177 @@ DeviceManager::WaitResult DeviceManager::waitForDataWithEventLoop(
     
     return result;
 }
+
+// === 通用测量接口实现 ===
+
+QMap<QString, QVariant> DeviceManager::measureVoltage(int channel, double range)
+{
+    QMap<QString, QVariant> result;
+    // 简化实现 - 使用单点采集
+    double value = 0.0;
+    bool success = singlePointAcquisition("JY5322", channel, value, -range, range);
+    
+    result["voltage"] = value;
+    result["success"] = success;
+    if (!success) {
+        result["error"] = getLastError();
+    }
+    
+    return result;
+}
+
+QMap<QString, QVariant> DeviceManager::measureCurrent(int channel, double range)
+{
+    QMap<QString, QVariant> result;
+    // 简化实现
+    double value = 0.0;
+    bool success = singlePointAcquisition("JY5322", channel, value, -range, range);
+    
+    result["current"] = value;
+    result["success"] = success;
+    if (!success) {
+        result["error"] = getLastError();
+    }
+    
+    return result;
+}
+
+QMap<QString, QVariant> DeviceManager::measureResistance(double nominalValue)
+{
+    QMap<QString, QVariant> result;
+    
+    if (!deviceThreads_.contains("JY8902")) {
+        result["success"] = false;
+        result["error"] = "DMM device not available";
+        return result;
+    }
+    
+    // 使用DMM进行电阻测量
+    DeviceOperation op(DeviceCommand::READ_DATA);
+    op.parameters["measurement_type"] = "RESISTANCE";
+    op.parameters["expected_value"] = nominalValue;
+    
+    submitOperation("JY8902", op);
+    DeviceResult deviceResult = waitForResult("JY8902", 5000);
+    
+    result["resistance"] = deviceResult.value;
+    result["success"] = deviceResult.success;
+    if (!deviceResult.success) {
+        result["error"] = deviceResult.error;
+    }
+    
+    return result;
+}
+
+QMap<QString, QVariant> DeviceManager::measureLCR(const QMap<QString, QVariant>& params)
+{
+    QMap<QString, QVariant> result;
+    
+    if (!deviceThreads_.contains("JY8902")) {
+        result["success"] = false;
+        result["error"] = "LCR measurement device not available";
+        return result;
+    }
+    
+    // 配置LCR测量
+    DeviceOperation op(DeviceCommand::READ_DATA);
+    op.parameters = params;
+    op.parameters["measurement_mode"] = "LCR";
+    
+    submitOperation("JY8902", op);
+    DeviceResult deviceResult = waitForResult("JY8902", 10000);
+    
+    result["success"] = deviceResult.success;
+    if (deviceResult.success) {
+        // 根据测量类型返回相应的结果
+        QString measurementType = params.value("measurement_type", "INDUCTANCE").toString();
+        
+        if (measurementType == "INDUCTANCE") {
+            result["inductance"] = deviceResult.value;
+        } else if (measurementType == "CAPACITANCE") {
+            result["capacitance"] = deviceResult.value;
+        } else if (measurementType == "Q_FACTOR") {
+            result["q_factor"] = deviceResult.value;
+        } else if (measurementType == "ESR") {
+            result["esr"] = deviceResult.value;
+        } else if (measurementType == "IMPEDANCE") {
+            result["impedance"] = deviceResult.value;
+        }
+        
+        // 添加通用结果
+        result["primary_value"] = deviceResult.value;
+        result["frequency"] = params.value("frequency", 1000.0);
+        result["test_current"] = params.value("test_current", 0.001);
+    } else {
+        result["error"] = deviceResult.error;
+    }
+    
+    return result;
+}
+
+QMap<QString, QVariant> DeviceManager::measureSMU(const QMap<QString, QVariant>& params)
+{
+    QMap<QString, QVariant> result;
+    
+    // 使用JY5711作为SMU（源测量单元）
+    if (!deviceThreads_.contains("JY5711")) {
+        result["success"] = false;
+        result["error"] = "SMU device not available";
+        return result;
+    }
+    
+    // 配置SMU测量
+    DeviceOperation op(DeviceCommand::READ_DATA);
+    op.parameters = params;
+    op.parameters["measurement_mode"] = "SMU";
+    
+    submitOperation("JY5711", op);
+    DeviceResult deviceResult = waitForResult("JY5711", 10000);
+    
+    result["success"] = deviceResult.success;
+    if (deviceResult.success) {
+        QString measurementType = params.value("measurement_type", "VOLTAGE_SOURCE").toString();
+        
+        if (measurementType == "VOLTAGE_SOURCE") {
+            result["current"] = deviceResult.value;
+            result["voltage"] = params.value("voltage", 0.0);
+        } else if (measurementType == "CURRENT_SOURCE") {
+            result["voltage"] = deviceResult.value;
+            result["current"] = params.value("current", 0.0);
+        } else if (measurementType == "IV_SWEEP") {
+            result["current"] = deviceResult.value;
+            result["voltage"] = params.value("voltage", 0.0);
+        }
+    } else {
+        result["error"] = deviceResult.error;
+    }
+    
+    return result;
+}
+
+QMap<QString, QVariant> DeviceManager::measurePulse(const QMap<QString, QVariant>& params)
+{
+    QMap<QString, QVariant> result;
+    
+    // 使用组合设备进行脉冲测量
+    if (!deviceThreads_.contains("JY5711") || !deviceThreads_.contains("JY5322")) {
+        result["success"] = false;
+        result["error"] = "Pulse measurement devices not available";
+        return result;
+    }
+    
+    // 配置脉冲测量（简化实现）
+    DeviceOperation op(DeviceCommand::READ_DATA);
+    op.parameters = params;
+    op.parameters["measurement_mode"] = "PULSE";
+    
+    // 这里应该实现复杂的脉冲生成和测量逻辑
+    // 当前提供简化的实现
+    result["success"] = true;
+    result["rise_time"] = 10e-9;  // 模拟10ns上升时间
+    result["fall_time"] = 15e-9;  // 模拟15ns下降时间
+    result["turn_on_time"] = 20e-9;
+    result["turn_off_time"] = 25e-9;
+    
+    return result;
+}

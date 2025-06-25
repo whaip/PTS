@@ -11,7 +11,9 @@ CONFIG += c++17
 # 包含路径
 INCLUDEPATH += include \
                include/onnxruntime \
-               include/opencv2
+               include/opencv2 \
+               ComponentDiagnosticFramework
+
 
 # 库路径
 win32 {
@@ -47,8 +49,17 @@ SOURCES += \
     signalconfiguration.cpp \
     portconfiguration.cpp \
     faultanalysis.cpp \
-    testsequencemanager.cpp \
+    testsequencemanager.cpp \    
     resultexporter.cpp \
+    ComponentDiagnosticFramework/basecomponentdiagnostic.cpp \
+    ComponentDiagnosticFramework/componentdiagnosticframework.cpp \
+    ComponentDiagnosticFramework/componentdiagnosticmanager.cpp \
+    ComponentDiagnosticFramework/Components/resistordiagnostic.cpp \
+    ComponentDiagnosticFramework/Components/capacitordiagnostic.cpp \
+    ComponentDiagnosticFramework/Components/inductordiagnostic.cpp \
+    ComponentDiagnosticFramework/Components/diodediagnostic.cpp \
+    ComponentDiagnosticFramework/Components/icdiagnostic.cpp \
+    componentimageselector.cpp \
     pcbidentifier.cpp \
     pcbidentificationdialog.cpp \
     cameramanager.cpp \
@@ -83,8 +94,17 @@ HEADERS += \
     signalconfiguration.h \
     portconfiguration.h \
     faultanalysis.h \
-    testsequencemanager.h \
+    testsequencemanager.h \    
     resultexporter.h \
+    ComponentDiagnosticFramework/basecomponentdiagnostic.h \
+    ComponentDiagnosticFramework/componentdiagnosticframework.h \
+    ComponentDiagnosticFramework/componentdiagnosticmanager.h \
+    ComponentDiagnosticFramework/Components/resistordiagnostic.h \
+    ComponentDiagnosticFramework/Components/capacitordiagnostic.h \
+    ComponentDiagnosticFramework/Components/inductordiagnostic.h \
+    ComponentDiagnosticFramework/Components/diodediagnostic.h \
+    ComponentDiagnosticFramework/Components/icdiagnostic.h \
+    componentimageselector.h \
     pcbidentifier.h \
     pcbidentificationdialog.h \
     cameramanager.h \
@@ -113,19 +133,17 @@ HEADERS += \
 
 FORMS += \
     mainwindow.ui
-
-# 复制DLL到输出目录
+    
 win32 {
     CONFIG(debug, debug|release) {
         DESTDIR = $$PWD/build/debug
     } else {
         DESTDIR = $$PWD/build/release
     }
-    
+
     # 复制必要的DLL文件
     QMAKE_POST_LINK += $$quote(xcopy /Y /Q $$shell_path($$PWD/bin/*.dll) $$shell_path($$DESTDIR) > nul$$escape_expand(\n\t))
 }
-
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin

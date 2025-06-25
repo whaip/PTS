@@ -1,1345 +1,695 @@
 #include "faultdiagnostic.h"
-#include "signalconfiguration.h"
-#include "portconfiguration.h"
-#include "faultanalysis.h"
-#include "testsequencemanager.h"
-#include "include/JY8902.h"
-#include "5711waveformconfig.h"
+#include "ComponentDiagnosticFramework/componentdiagnosticframework.h"
 #include <QDebug>
-#include <QThread>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QApplication>
-#include <QJsonArray>
-#include <QtMath>
+#include <QUuid>
 #include <QTimer>
-#include <QElapsedTimer>
-#include <QCoreApplication>
+#include <QApplication>
 #include <QMessageBox>
 
 FaultDiagnostic::FaultDiagnostic(DeviceManager* deviceManager, QObject *parent)
     : QObject(parent)
     , device_manager_(deviceManager)
-    , use_threaded_manager_(false)
-    , threaded_device_manager_(deviceManager)
-    , currentState_(WorkflowState::IDLE)
-    , wiringGuideEnabled_(true)
+    , diagnostic_manager_(nullptr)
 {
-    // 初始化三大模块
-    initializeModules();
-    connectModuleSignals();
+    qDebug() << "初始化基于ComponentDiagnosticFramework的FaultDiagnostic...";
+    
+    if (!initializeDiagnosticFramework()) {
+        qCritical() << "诊断框架初始化失败";
+        setError("诊断框架初始化失败");
+    }
 }
 
 FaultDiagnostic::~FaultDiagnostic()
 {
-    qDebug() << "FaultDiagnostic 析构开始...";
+    qDebug() << "FaultDiagnostic 析构...";
     
-    // 设置析构标志，防止新的操作
-    currentState_ = WorkflowState::ERROR;
-    
-    try {
-        // 断开所有信号连接，防止析构过程中触发槽函数
-        disconnect(this, nullptr, nullptr, nullptr);
-        
-        // 停止所有异步操作（直接调用，不使用QMetaObject::invokeMethod）
-        if (faultAnalysis_) {
-            qDebug() << "停止故障分析模块...";
-            
-            // 断开故障分析模块的信号连接
-            disconnect(faultAnalysis_.get(), nullptr, nullptr, nullptr);
-            
-            // 直接调用停止方法
-            faultAnalysis_->stopAllAnalysis();
-            
-            qDebug() << "故障分析模块信号已断开";
+    if (diagnostic_manager_) {
+        // 取消所有活动任务
+        auto activeTasks = diagnostic_manager_->getActiveTasks();
+        for (const QString& taskId : activeTasks) {
+            diagnostic_manager_->cancelTask(taskId);
         }
         
-        // 停止端口配置模块
-        if (portConfig_) {
-            qDebug() << "停止端口配置的所有操作...";
-            
-            // 断开端口配置模块的信号连接
-            disconnect(portConfig_.get(), nullptr, nullptr, nullptr);
-            
-            // 停止任何正在进行的端口操作（直接调用）
-            // portConfig_->stopAllOperations(); // 如果这个方法存在的话
-            
-            qDebug() << "端口配置操作已停止";
-            qDebug() << "端口配置模块信号已断开";
-        }
+        // 清理已完成的任务
+        diagnostic_manager_->cleanupCompletedTasks();
         
-        // 停止信号配置模块
-        if (signalConfig_) {
-            disconnect(signalConfig_.get(), nullptr, nullptr, nullptr);
-            qDebug() << "信号配置模块信号已断开";
-        }
-        
-        // 处理待处理事件，让所有信号处理完成
-        QApplication::processEvents();
-        QThread::msleep(50);  // 减少等待时间
-        
-        // 按依赖顺序释放模块（故障分析 -> 端口配置 -> 信号配置）
-        if (faultAnalysis_) {
-            qDebug() << "释放故障分析模块...";
-            faultAnalysis_.reset();
-        }
-        
-        if (portConfig_) {
-            qDebug() << "释放端口配置模块...";
-            portConfig_.reset();
-        }
-        
-        if (signalConfig_) {
-            qDebug() << "释放信号配置模块...";
-            signalConfig_.reset();
-        }
-        
-        // 最后处理事件队列
-        QApplication::processEvents();
-        
-        qDebug() << "FaultDiagnostic 析构完成";
-    } catch (const std::exception& e) {
-        qCritical() << "FaultDiagnostic析构过程中发生异常:" << e.what();
-    } catch (...) {
-        qCritical() << "FaultDiagnostic析构过程中发生未知异常";
+        delete diagnostic_manager_;
+        diagnostic_manager_ = nullptr;
     }
 }
+
+bool FaultDiagnostic::initializeDiagnosticFramework()
+{
+    try {
+        qInfo() << "开始创建诊断管理器...";
+        
+        // 创建诊断管理器
+        diagnostic_manager_ = ComponentDiagnosticFramework::createDiagnosticManager(device_manager_, this);
+        
+        if (!diagnostic_manager_) {
+            setError("无法创建诊断管理器");
+            return false;
+        }
+        
+        qInfo() << "诊断管理器创建成功";
+        
+        // 连接框架信号
+        connectFrameworkSignals();
+        
+        qInfo() << "诊断框架初始化成功";
+        // 暂时注释掉这行以避免卡住
+        // qInfo() << "支持的组件类型:" << getSupportedComponentTypes();
+        
+        return true;
+        
+    } catch (const std::exception& e) {
+        setError(QString("框架初始化异常: %1").arg(e.what()));
+        return false;
+    }
+}
+
+void FaultDiagnostic::connectFrameworkSignals()
+{
+    if (!diagnostic_manager_) {
+        return;
+    }
+    
+    // 连接单个组件诊断信号
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisStarted,
+            this, &FaultDiagnostic::onFrameworkComponentDiagnosisStarted);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisProgress,
+            this, &FaultDiagnostic::onFrameworkComponentDiagnosisProgress);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisCompleted,
+            this, &FaultDiagnostic::onFrameworkComponentDiagnosisCompleted);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisError,
+            this, &FaultDiagnostic::onFrameworkComponentDiagnosisError);
+    
+    // 连接批量诊断信号
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::batchDiagnosisStarted,
+            this, &FaultDiagnostic::onFrameworkBatchDiagnosisStarted);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::batchDiagnosisProgress,
+            this, &FaultDiagnostic::onFrameworkBatchDiagnosisProgress);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::batchDiagnosisCompleted,
+            this, &FaultDiagnostic::onFrameworkBatchDiagnosisCompleted);
+    connect(diagnostic_manager_, &ComponentDiagnosticManager::batchDiagnosisError,
+            this, &FaultDiagnostic::onFrameworkBatchDiagnosisError);
+}
+
+// === 主要诊断接口实现 ===
 
 DiagnosticResult FaultDiagnostic::diagnoseComponent(const ComponentSpec& component)
 {
-    // === 新的模块化诊断流程 ===
-    
-    // 发出诊断开始信号
-    emit diagnosisStarted(component);
-    
-    // 如果模块化系统可用，使用新的工作流程
-    if (signalConfig_ && portConfig_ && faultAnalysis_) {
-        return diagnoseComponentWithModules(component);
+    if (!diagnostic_manager_) {
+        return createErrorResult("无诊断管理器", "诊断管理器未初始化");
     }
-    
-    // === 回退到传统诊断方法 ===
-    
-    // 首先发出接线引导信号
-    emit wiringRequired(component);
-    
-    DiagnosticResult result = diagnoseComponentInternal(component);
-    
-    // 发出诊断完成信号
-    emit diagnosisCompleted(result);
-    emit diagnosticCompleted(result);
-    
-    return result;
-}
-
-// 使用模块化系统的诊断方法
-DiagnosticResult FaultDiagnostic::diagnoseComponentWithModules(const ComponentSpec& component)
-{
-    qDebug() << "使用模块化系统诊断元件:" << component.reference;
     
     try {
-        // 1. 根据元件类型设置测试方案
-        QString componentTypeStr;
-        switch (component.type) {
-            case ComponentType::RESISTOR:
-                componentTypeStr = "resistor";
-                break;
-            case ComponentType::CAPACITOR:
-                componentTypeStr = "capacitor";
-                break;
-            case ComponentType::INDUCTOR:
-                componentTypeStr = "inductor";
-                break;
-            case ComponentType::DIODE:
-                componentTypeStr = "diode";
-                break;
-            case ComponentType::IC:
-                componentTypeStr = "ic";
-                break;
-            default:
-                throw std::runtime_error("不支持的元件类型");
-        }
+        qDebug() << "开始诊断组件:" << component.reference << "类型:" << componentTypeToString(component.type);
         
-        // 2. 配置信号方案
-        if (!step1_ConfigureSignals(componentTypeStr)) {
-            throw std::runtime_error("信号配置失败");
-        }
+        // 发射开始信号以保持向后兼容
+        emit diagnosisStarted(component);
         
-        // 3. 自动配置端口（基于传统ComponentSpec）
-        if (!autoConfigurePortsFromComponentSpec(component)) {
-            throw std::runtime_error("端口配置失败");
-        }
+        // 使用框架进行诊断
+        auto frameworkResult = diagnostic_manager_->diagnoseComponent(component);
         
-        // 4. 执行测试
-        QString testId = QString("component_test_%1_%2")
-                           .arg(component.reference)
-                           .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+        // 转换结果格式
+        auto result = convertFromComponentDiagnosticResult(frameworkResult);
         
-        currentTestId_ = testId;
-        
-        // 执行同步测试（简化版）
-        TestData testData = executeSynchronousTest(component);
-          if (!testData.valid) {
-            throw std::runtime_error(testData.errorMessage.toStdString());
-        }
-        
-        // 5. 分析结果
-        AnalysisResult analysisResult = executeSynchronousAnalysis(testId, testData);
-        
-        // 6. 转换为传统格式
-        DiagnosticResult result = convertFromAnalysisResult(analysisResult);
-          // 补充传统格式的测量数据
-        if (!testData.measurements.isEmpty()) {
-            auto measurement = testData.measurements.first();
-            result.measurementData.primary_value = measurement["primary_value"].toDouble();
-            result.measurementData.voltage = measurement["voltage"].toDouble();
-            result.measurementData.current = measurement["current"].toDouble();
-            result.measurementData.power = measurement["power"].toDouble();
-            result.measurementData.temperature = measurement["temperature"].toDouble();
-            result.measurementData.esr = measurement["esr"].toDouble();
-            result.measurementData.leakage_current = measurement["leakage_current"].toDouble();
-            result.measurementData.valid = measurement["valid"].toBool();
-            result.measurementData.error_message = measurement["error_message"].toString();        }
-        
-        qDebug() << "模块化诊断完成:" << result.componentId << "结果:" << result.result;
-        
-        // 发出诊断完成信号
+        // 发射完成信号以保持向后兼容
         emit diagnosisCompleted(result);
         emit diagnosticCompleted(result);
         
-        return result;
-    }
-    catch (const std::exception& e) {
-        qWarning() << "模块化诊断失败，回退到传统方法:" << e.what();
-        
-        // 回退到传统诊断方法
-        DiagnosticResult result = diagnoseComponentInternal(component);
-        
-        // 发出信号（因为internal方法不发送信号）
-        emit diagnosisCompleted(result);
-        emit diagnosticCompleted(result);
+        qDebug() << "组件诊断完成:" << component.reference << "结果:" << (result.result == DiagnosticResult::PASS ? "PASS" : "FAIL");
         
         return result;
+        
+    } catch (const ComponentDiagnosticFramework::DiagnosticException& e) {
+        QString error = QString("诊断异常: %1").arg(e.message());
+        setError(error);
+        emit errorOccurred(error);
+        return createErrorResult(component.reference, error);
+        
+    } catch (const std::exception& e) {
+        QString error = QString("未知异常: %1").arg(e.what());
+        setError(error);
+        emit errorOccurred(error);
+        return createErrorResult(component.reference, error);
     }
 }
 
-// 自动端口配置方法
-bool FaultDiagnostic::autoConfigurePortsFromComponentSpec(const ComponentSpec& component)
+QString FaultDiagnostic::diagnoseComponentAsync(const ComponentSpec& component)
 {
-    if (!portConfig_) {
+    if (!diagnostic_manager_) {
+        setError("诊断管理器未初始化");
+        return QString();
+    }
+    
+    try {
+        qDebug() << "开始异步诊断组件:" << component.reference;
+        return diagnostic_manager_->diagnoseComponentAsync(component);
+        
+    } catch (const std::exception& e) {
+        setError(QString("异步诊断失败: %1").arg(e.what()));
+        return QString();
+    }
+}
+
+QVector<DiagnosticResult> FaultDiagnostic::diagnoseBatch(const QVector<ComponentSpec>& components)
+{
+    if (!diagnostic_manager_) {
+        setError("诊断管理器未初始化");
+        return QVector<DiagnosticResult>();
+    }
+    
+    try {
+        qDebug() << "开始批量诊断" << components.size() << "个组件";
+        
+        auto frameworkResults = diagnostic_manager_->diagnoseBatch(components);
+        
+        QVector<DiagnosticResult> results;
+        for (const auto& frameworkResult : frameworkResults) {
+            results.append(convertFromComponentDiagnosticResult(frameworkResult));
+        }
+        
+        qDebug() << "批量诊断完成，共" << results.size() << "个结果";
+        return results;
+        
+    } catch (const std::exception& e) {
+        setError(QString("批量诊断失败: %1").arg(e.what()));
+        return QVector<DiagnosticResult>();
+    }
+}
+
+QString FaultDiagnostic::diagnoseBatchAsync(const QVector<ComponentSpec>& components)
+{
+    if (!diagnostic_manager_) {
+        setError("诊断管理器未初始化");
+        return QString();
+    }
+    
+    try {
+        qDebug() << "开始异步批量诊断" << components.size() << "个组件";
+        return diagnostic_manager_->diagnoseBatchAsync(components);
+        
+    } catch (const std::exception& e) {
+        setError(QString("异步批量诊断失败: %1").arg(e.what()));
+        return QString();
+    }
+}
+
+// === 任务管理接口实现 ===
+
+QMap<QString, QVariant> FaultDiagnostic::getTaskStatus(const QString& taskId) const
+{
+    if (!diagnostic_manager_) {
+        return QMap<QString, QVariant>();
+    }
+    
+    return diagnostic_manager_->getTaskStatus(taskId);
+}
+
+QVariant FaultDiagnostic::getTaskResult(const QString& taskId) const
+{
+    if (!diagnostic_manager_) {
+        return QVariant();
+    }
+    
+    return diagnostic_manager_->getTaskResult(taskId);
+}
+
+bool FaultDiagnostic::cancelTask(const QString& taskId)
+{
+    if (!diagnostic_manager_) {
         return false;
     }
     
-    // 创建简化的测试配置
-    TestConfiguration config;
-    config.testId = component.reference;
-    config.timeout = 30000; // 30秒超时
-    config.enableSynchronization = false;
-    
-    // 根据元件规格创建端口映射
-    PortMapping mapping;
-    mapping.deviceName = "默认设备";
-    mapping.channel = component.channel;
-    mapping.signalType = "测试信号";
-    
-    config.portMappings["测试端口"] = mapping;
-    
-    // 设置测试参数
-    config.testParameters["voltage"] = component.test_voltage;
-    config.testParameters["current"] = component.test_current;
-    config.testParameters["nominal_value"] = component.nominal_value;
-    config.testParameters["tolerance"] = component.tolerance;
-    
-    // 应用配置
-    currentTestConfig_ = config;
-    
-    return true;
+    return diagnostic_manager_->cancelTask(taskId);
 }
 
-// 同步测试执行方法
+// === 配置和信息接口实现 ===
+
+QStringList FaultDiagnostic::getSupportedComponentTypes() const
+{
+    if (!diagnostic_manager_) {
+        return QStringList();
+    }
+    
+    QStringList typeStrings;
+    auto types = diagnostic_manager_->getSupportedComponentTypes();
+    for (auto type : types) {
+        typeStrings.append(componentTypeToString(type));
+    }
+    
+    return typeStrings;
+}
+
+bool FaultDiagnostic::isComponentTypeSupported(ComponentType type) const
+{
+    if (!diagnostic_manager_) {
+        return false;
+    }
+    
+    return diagnostic_manager_->isComponentTypeSupported(type);
+}
+
+QMap<QString, QVariant> FaultDiagnostic::getDiagnosticStatistics() const
+{
+    if (!diagnostic_manager_) {
+        return QMap<QString, QVariant>();
+    }
+    
+    return diagnostic_manager_->getDiagnosticStatistics();
+}
+
+void FaultDiagnostic::setGlobalTimeout(int timeout)
+{
+    if (diagnostic_manager_) {
+        diagnostic_manager_->setGlobalTimeout(timeout);
+    }
+}
+
+// === 向后兼容接口实现 ===
+
+DiagnosticResult FaultDiagnostic::diagnoseComponentWithModules(const ComponentSpec& component)
+{
+    // 直接使用新的框架方法
+    return diagnoseComponent(component);
+}
+
 TestData FaultDiagnostic::executeSynchronousTest(const ComponentSpec& component)
 {
-    TestData testData;
-    testData.testId = currentTestId_;
-    testData.timestamp = QDateTime::currentDateTime();
-    testData.metadata = {
-        {"component_reference", component.reference},
-        {"component_type", componentTypeToString(component.type)},
-        {"nominal_value", component.nominal_value},
-        {"tolerance", component.tolerance_percent}
-    };
+    // 为了向后兼容，从诊断结果中提取测试数据
+    auto result = diagnoseComponent(component);
     
-    try {
-        // 根据元件类型执行相应的测量
-        MeasurementResult measurement;
-        
-        switch (component.type) {            
-            case ComponentType::RESISTOR:
-                measurement = measureResistance(component.channel, component.test_voltage, component.nominal_value);
-                break;
-            case ComponentType::CAPACITOR:
-                measurement = measureCapacitance(component.channel, 1000.0);
-                break;
-            case ComponentType::INDUCTOR:
-                measurement = measureInductance(component.channel, 10000.0);
-                break;
-            case ComponentType::DIODE:
-                measurement = measureDiodeCharacteristics(component.channel);
-                break;
-            case ComponentType::IC:
-                measurement = measureICParameters(component.channel, component);
-                break;
-            default:
-                throw std::runtime_error("不支持的元件类型");
-        }
-        
-        // 转换测量结果为TestData格式
-        testData = convertFromMeasurementResult(measurement);
-        testData.metadata = {
-            {"component_reference", component.reference},
-            {"component_type", componentTypeToString(component.type)},
-            {"nominal_value", component.nominal_value},
-            {"tolerance", component.tolerance_percent}
-        };
-        
-        qDebug() << "同步测试完成:" << component.reference << "有效:" << testData.valid;
-    }
-    catch (const std::exception& e) {
-        testData.valid = false;
-        testData.errorMessage = e.what();
-        qWarning() << "同步测试失败:" << e.what();
-    }
+    TestData testData;
+    testData.testId = result.testId;
+    testData.timestamp = result.timestamp;
+    testData.valid = (result.result != DiagnosticResult::ERROR);
+    testData.errorMessage = result.notes;
+    
+    // 转换测量数据
+    QMap<QString, QVariant> measurement;
+    measurement["primary_value"] = result.measurementData.primary_value;
+    measurement["voltage"] = result.measurementData.voltage;
+    measurement["current"] = result.measurementData.current;
+    measurement["power"] = result.measurementData.power;
+    measurement["temperature"] = result.measurementData.temperature;
+    measurement["esr"] = result.measurementData.esr;
+    measurement["leakage_current"] = result.measurementData.leakage_current;
+    measurement["valid"] = result.measurementData.valid;
+    
+    testData.measurements.append(measurement);
     
     return testData;
 }
 
-// 同步分析执行方法
 AnalysisResult FaultDiagnostic::executeSynchronousAnalysis(const QString& testId, const TestData& testData)
 {
-    if (!faultAnalysis_) {
-        throw std::runtime_error("故障分析模块未初始化");
-    }
+    // 为了向后兼容，从测试数据创建分析结果
+    AnalysisResult analysisResult;
+    analysisResult.testId = testId;
+    analysisResult.timestamp = testData.timestamp;
+    analysisResult.result = testData.valid ? AnalysisResult::PASS : AnalysisResult::FAIL;
+    analysisResult.summary = testData.errorMessage;
     
-    // 执行同步分析
-    AnalysisResult result = faultAnalysis_->analyzeSynchronously(testId, testData);
-    
-    qDebug() << "同步分析完成:" << testId << "健康度:" << result.healthScore;
-    
-    return result;
+    return analysisResult;
 }
 
-// Internal diagnosis function that doesn't emit signals (used by async function)
-DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec& component)
-{
-    DiagnosticResult result;
-    result.componentId = component.reference;
-    result.componentType = componentTypeToString(component.type);  // 使用文本而不是数字
-    result.expectedValue = component.nominal_value;               // 设置期望值
-    result.tolerance = component.tolerance_percent;               // 设置容差
-    
-    if (!device_manager_ || !device_manager_->isSystemReady()) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测试系统未就绪";
-        result.confidence = 0.0;
-        return result;
-    }
-    
-    // 首先检查连接性
-    // if (!checkComponentConnection(component.channel)) {
-    //     result.result = DiagnosticResult::FAIL;
-    //     result.faultTypes.append("NO_CONNECTION");
-    //     result.notes = "元件未连接或连接不良";
-    //     result.confidence = 0.95;
-    //     result.healthScore = 0.0;
-    //     return result;
-    // }
-    
-    // 根据元件类型选择诊断方法
-    switch (component.type) {
-        case ComponentType::RESISTOR:
-            result = diagnoseResistor(component);
-            break;
-        case ComponentType::CAPACITOR:
-            result = diagnoseCapacitor(component);
-            break;
-        case ComponentType::INDUCTOR:
-            result = diagnoseInductor(component);
-            break;
-        case ComponentType::DIODE:
-            result = diagnoseDiode(component);
-            break;
-        case ComponentType::IC:
-            result = diagnoseIC(component);
-            break;
-        default:
-            result.result = DiagnosticResult::ERROR;
-            result.faultTypes.append("UNKNOWN_FAULT");
-            result.notes = "不支持的元件类型";
-            result.confidence = 0.0;
-            break;
-    }
-    
-    // 计算健康度和建议
-    result.healthScore = calculateHealthScore(result);
-    result.notes += generateRecommendation(result);
-    result.confidence = calculateConfidence(result);
-    
-    // Note: No signal emission here - that's handled by the caller
-    return result;
-}
+// === 具体组件诊断方法（向后兼容） ===
 
 DiagnosticResult FaultDiagnostic::diagnoseResistor(const ComponentSpec& spec)
 {
-    DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "电阻";  // 使用中文显示
-    result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance_percent;
-    
-    qDebug() << "Diagnosing resistor:" << spec.reference;
-      // 测量电阻值 - 使用动态量 程选择
-    result.measurementData = measureResistance(spec.channel, 1.0, spec.nominal_value);
-    
-    if (!result.measurementData.valid) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测量失败: " + result.measurementData.error_message;
-        return result;
-    }
-    
-    // 温度补偿
-    double compensated_value = applyTemperatureCompensation(
-        result.measurementData.primary_value, 
-        spec.temp_coefficient, 
-        result.measurementData.temperature
-    );
-    
-    // 故障分析
-    FaultType fault_type = analyzeResistorFault(spec, result.measurementData);
-      switch (fault_type) {
-        case FaultType::COMPONENT_OK:
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("电阻正常，测量值: %1Ω").arg(compensated_value, 0, 'f', 2);
-            break;
-        case FaultType::SHORT_CIRCUIT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("SHORT_CIRCUIT");
-            result.notes = QString("电阻短路，测量值: %1Ω (< %2Ω)")
-                .arg(compensated_value, 0, 'f', 2)
-                .arg(spec.nominal_value * 0.1, 0, 'f', 2);
-            break;
-        case FaultType::OPEN_CIRCUIT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OPEN_CIRCUIT");
-            result.notes = QString("电阻开路，测量值: %1Ω (> %2Ω)")
-                .arg(compensated_value, 0, 'f', 2)
-                .arg(spec.nominal_value * 10, 0, 'f', 2);
-            break;
-        case FaultType::OUT_OF_TOLERANCE:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OUT_OF_TOLERANCE");
-            result.notes = QString("电阻超差，测量值: %1Ω，标称值: %2Ω ±%3%")
-                .arg(compensated_value, 0, 'f', 2)                .arg(spec.nominal_value, 0, 'f', 2)
-                .arg(spec.tolerance_percent * 100, 0, 'f', 1);
-            break;
-        default:
-            result.result = DiagnosticResult::ERROR;
-            result.faultTypes.append("UNKNOWN_FAULT");
-            result.notes = "未知故障";
-            break;
-    }
-    
-    return result;
+    ComponentSpec resistorSpec = spec;
+    resistorSpec.type = ComponentType::RESISTOR;
+    return diagnoseComponent(resistorSpec);
 }
 
 DiagnosticResult FaultDiagnostic::diagnoseCapacitor(const ComponentSpec& spec)
 {
-    DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "电容";  // 使用中文显示
-    result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance_percent;
-    
-    qDebug() << "Diagnosing capacitor:" << spec.reference;
-    
-    // 测量电容值和ESR
-    result.measurementData = measureCapacitance(spec.channel, 1000.0);
-    
-    if (!result.measurementData.valid) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测量失败: " + result.measurementData.error_message;
-        return result;
-    }
-    
-    // 故障分析
-    FaultType fault_type = analyzeCapacitorFault(spec, result.measurementData);
-    
-    switch (fault_type) {
-        case FaultType::COMPONENT_OK:
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("电容正常，容值: %1μF，ESR: %2Ω")
-                .arg(result.measurementData.primary_value * 1e6, 0, 'f', 2)
-                .arg(result.measurementData.esr, 0, 'f', 2);
-            break;
-        case FaultType::SHORT_CIRCUIT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("SHORT_CIRCUIT");
-            result.notes = "电容短路";
-            break;
-        case FaultType::OPEN_CIRCUIT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OPEN_CIRCUIT");
-            result.notes = "电容开路";
-            break;
-        case FaultType::OUT_OF_TOLERANCE:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OUT_OF_TOLERANCE");
-            result.notes = QString("电容容值超差，测量值: %1μF，标称值: %2μF")
-                .arg(result.measurementData.primary_value * 1e6, 0, 'f', 2)
-                .arg(spec.nominal_value * 1e6, 0, 'f', 2);
-            break;        
-        case FaultType::HIGH_ESR:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("HIGH_ESR");
-            result.notes = QString("电容ESR过高: %1Ω (最大允许: %2Ω)")
-                .arg(result.measurementData.esr, 0, 'f', 2)
-                .arg(spec.max_esr, 0, 'f', 2);
-            break;
-        case FaultType::HIGH_LEAKAGE:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("HIGH_LEAKAGE");
-            result.notes = QString("电容漏电流过大: %1μA (最大允许: %2μA)")
-                .arg(result.measurementData.leakage_current * 1e6, 0, 'f', 2)
-                .arg(spec.max_leakage * 1e6, 0, 'f', 2);
-            break;        default:
-            result.result = DiagnosticResult::ERROR;
-            result.faultTypes.append("UNKNOWN_FAULT");
-            result.notes = "未知故障";
-            break;
-    }
-    
-    return result;
+    ComponentSpec capacitorSpec = spec;
+    capacitorSpec.type = ComponentType::CAPACITOR;
+    return diagnoseComponent(capacitorSpec);
 }
 
 DiagnosticResult FaultDiagnostic::diagnoseInductor(const ComponentSpec& spec)
 {
-    DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "电感";  // 使用中文显示
-    result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance_percent;
-    
-    qDebug() << "Diagnosing inductor:" << spec.reference;
-    
-    // 测量电感值
-    result.measurementData = measureInductance(spec.channel, 10000.0);
-    
-    if (!result.measurementData.valid) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测量失败: " + result.measurementData.error_message;
-        return result;
-    }
-      // 电感故障判断 - 添加期望值为0的特殊处理
-    if (spec.nominal_value <= 1e-9) {
-        // 期望值接近0时，使用绝对阈值判断
-        if (result.measurementData.primary_value < 1e-9) {
-            result.result = DiagnosticResult::PASS;  // 测量值也接近0，认为正常
-            result.notes = QString("电感值正常，测量值: %1nH")
-                .arg(result.measurementData.primary_value * 1e9, 0, 'f', 2);
-        } else if (result.measurementData.primary_value > 1e-3) {
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OPEN_CIRCUIT");
-            result.notes = "电感开路";
-        } else {
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("电感值正常，测量值: %1μH")
-                .arg(result.measurementData.primary_value * 1e6, 0, 'f', 2);
-        }
-    } else {
-        // 正常的电感故障判断
-        if (result.measurementData.primary_value < spec.nominal_value * 0.1) {
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("SHORT_CIRCUIT");
-            result.notes = "电感短路";
-        } else if (result.measurementData.primary_value > spec.nominal_value * 10) {
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OPEN_CIRCUIT");
-            result.notes = "电感开路";
-        } else if (!isWithinTolerance(spec.nominal_value, result.measurementData.primary_value, spec.tolerance_percent)) {
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("OUT_OF_TOLERANCE");
-            result.notes = QString("电感值超差，测量值: %1mH，标称值: %2mH")
-                .arg(result.measurementData.primary_value * 1000, 0, 'f', 2)
-                .arg(spec.nominal_value * 1000, 0, 'f', 2);
-        } else {
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("电感正常，测量值: %1mH")
-                .arg(result.measurementData.primary_value * 1000, 0, 'f', 2);
-        }
-    }
-    
-    return result;
+    ComponentSpec inductorSpec = spec;
+    inductorSpec.type = ComponentType::INDUCTOR;
+    return diagnoseComponent(inductorSpec);
 }
 
 DiagnosticResult FaultDiagnostic::diagnoseDiode(const ComponentSpec& spec)
 {
-    DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "二极管";  // 使用中文显示
-    result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance_percent;
-    
-    qDebug() << "Diagnosing diode:" << spec.reference;
-    
-    result.measurementData = measureDiodeCharacteristics(spec.channel);
-    
-    if (!result.measurementData.valid) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测量失败: " + result.measurementData.error_message;
-        return result;
-    }
-    
-    FaultType fault_type = analyzeDiodeFault(spec, result.measurementData);
-    
-    switch (fault_type) {
-        case FaultType::COMPONENT_OK:
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("二极管正常，正向压降: %1V，反向漏电流: %2μA")
-                .arg(result.measurementData.voltage, 0, 'f', 2)
-                .arg(result.measurementData.leakage_current * 1e6, 0, 'f', 2);
-            break;        case FaultType::DIODE_SHORT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("DIODE_SHORT");
-            result.notes = "二极管短路";
-            break;
-        case FaultType::DIODE_OPEN:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("DIODE_OPEN");
-            result.notes = "二极管开路";
-            break;
-        case FaultType::DIODE_LEAKAGE:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("DIODE_LEAKAGE");            
-            result.notes = QString("二极管反向漏电流过大: %1μA")
-                .arg(result.measurementData.leakage_current * 1e6, 0, 'f', 2);
-            break;
-        default:
-            result.result = DiagnosticResult::ERROR;
-            result.faultTypes.append("UNKNOWN_FAULT");
-            result.notes = "未知故障";
-            break;
-    }
-    
-    return result;
+    ComponentSpec diodeSpec = spec;
+    diodeSpec.type = ComponentType::DIODE;
+    return diagnoseComponent(diodeSpec);
 }
 
 DiagnosticResult FaultDiagnostic::diagnoseIC(const ComponentSpec& spec)
 {
-    DiagnosticResult result;
-    result.componentId = spec.reference;
-    result.componentType = "集成电路";  // 使用中文显示
-    result.expectedValue = spec.nominal_value;
-    result.tolerance = spec.tolerance_percent;
-    
-    qDebug() << "Diagnosing IC:" << spec.reference;
-    
-    result.measurementData = measureICParameters(spec.channel, spec);
-    
-    if (!result.measurementData.valid) {
-        result.result = DiagnosticResult::ERROR;
-        result.faultTypes.append("UNKNOWN_FAULT");
-        result.notes = "测量失败: " + result.measurementData.error_message;
-        return result;
-    }
-      // IC故障判断主要基于电源电流
-    FaultType fault_type = analyzeICFault(spec, result.measurementData);
-    
-    switch (fault_type) {
-        case FaultType::COMPONENT_OK:
-            result.result = DiagnosticResult::PASS;
-            result.notes = QString("IC工作正常，电源电流: %1mA")
-                .arg(result.measurementData.current * 1000, 0, 'f', 2);
-            break;
-        case FaultType::IC_OVERCURRENT:
-            result.result = DiagnosticResult::FAIL;
-            result.faultTypes.append("IC_OVERCURRENT");
-            result.notes = QString("IC功耗异常，电流: %1mA (最大允许: %2mA)")
-                .arg(result.measurementData.current * 1000, 0, 'f', 2)
-                .arg(spec.max_current * 1000, 0, 'f', 2);
-            break;
-        default:
-            result.result = DiagnosticResult::ERROR;
-            result.faultTypes.append("UNKNOWN_FAULT");
-            result.notes = "未知故障";
-            break;
-    }
-    
-    return result;
+    ComponentSpec icSpec = spec;
+    icSpec.type = ComponentType::IC;
+    return diagnoseComponent(icSpec);
 }
 
-// 带标称值的重载版本，支持动态量程选择
+// === 测量方法（向后兼容） ===
+
 MeasurementResult FaultDiagnostic::measureResistance(int channel, double test_voltage, double nominalValue)
 {
-    MeasurementResult result;
+    // 创建临时组件规格进行测量
+    ComponentSpec tempSpec;
+    tempSpec.type = ComponentType::RESISTOR;
+    tempSpec.channel = channel;
+    tempSpec.test_voltage = test_voltage;
+    tempSpec.nominal_value = nominalValue;
+    tempSpec.reference = QString("TEMP_R_%1").arg(channel);
     
-    qDebug() << "开始2线法电阻测量（带动态量程） - 通道:" << channel 
-             << "标称值:" << nominalValue << "Ω";
-    
-    // 1. 配置DMM 2线电阻测量，采集20个点
-    DeviceOperation configOp;
-    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    
-    // 根据标称值动态选择合适的量程
-    QString range = selectOptimalResistanceRange(nominalValue);
-    configOp.parameters["range"] = range;
-    qDebug() << "根据标称值" << nominalValue << "Ω 选择量程:" << range;
-    
-    configOp.parameters["samplesPerTrigger"] = 20;
-    configOp.parameters["useNPLC"] = true;
-    configOp.parameters["nplcValue"] = 1;
-    configOp.parameters["sampleInterval"] = 0.02;
-    configOp.parameters["triggerDelay"] = 10;
-    configOp.parameters["bufferSize"] = 20;
-    configOp.parameters["timeout"] = 10000;
-    configOp.parameters["measurementFunction"] = "2_Wire_Resistance";
-    configOp.timeout = 10000;
-    
-    if (!device_manager_->submitOperation("JY8902", configOp)) {
-        result.error_message = "DMM 2线电阻测量配置失败";
-        result.valid = false;
-        return result;
-    }
-    
-    DeviceResult configResult = device_manager_->waitForResult("JY8902", 10000);
-    if (!configResult.success) {
-        result.error_message = "DMM配置失败: " + configResult.error;
-        result.valid = false;
-        return result;
-    }
-    
-    // 2. 启动连续测量
-    DeviceOperation startOp;
-    startOp.command = DeviceCommand::START_MEASUREMENT;
-    startOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY8902", startOp)) {
-        result.error_message = "DMM启动失败";
-        result.valid = false;
-        return result;
-    }
-    
-    DeviceResult startResult = device_manager_->waitForResult("JY8902", 5000);
-    if (!startResult.success) {
-        result.error_message = "DMM启动失败: " + startResult.error;
-        result.valid = false;
-        return result;
-    }
-    
-    // 3. 发送软件触发
-    DeviceOperation triggerOp;
-    triggerOp.command = DeviceCommand::SYNC_TRIGGER;
-    triggerOp.timeout = 10000;
-    
-    if (!device_manager_->submitOperation("JY8902", triggerOp)) {
-        result.error_message = "DMM触发失败";
-        result.valid = false;
-        return result;
-    }
-    
-    DeviceResult triggerResult = device_manager_->waitForResult("JY8902", 10000);
-    if (!triggerResult.success) {
-        result.error_message = "DMM触发失败: " + triggerResult.error;
-        result.valid = false;
-        return result;
-    }
-    
-    // 4. 读取数据
-    QVector<QVector<double>> channelData;
-    DeviceManager::WaitResult waitResult = device_manager_->waitForDataWithEventLoop(
-        "JY8902", channelData, 20, 100, 15000);
-    
-    if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty()) {
-        QVector<double> resistanceData = channelData[0];
-        
-        // 验证采集点数是否达到预期
-        if (resistanceData.size() >= 16) {  // 期望20个点，允许20%容差
-            double avgResistance = 0.0;
-            double minResistance = resistanceData[0];
-            double maxResistance = resistanceData[0];
-            
-            // 计算统计信息
-            for (double val : resistanceData) {
-                avgResistance += val;
-                minResistance = qMin(minResistance, val);
-                maxResistance = qMax(maxResistance, val);
-            }
-            avgResistance /= resistanceData.size();
-            
-            // 计算标准差
-            double variance = 0.0;
-            for (double val : resistanceData) {
-                variance += (val - avgResistance) * (val - avgResistance);
-            }
-            double stdDev = qSqrt(variance / resistanceData.size());
-            
-            result.primary_value = avgResistance;
-            result.valid = true;
-            
-            qDebug() << "2线法电阻测量成功（动态量程）:";
-            qDebug() << "  标称值:" << nominalValue << "Ω";
-            qDebug() << "  选择量程:" << range;
-            qDebug() << "  采集点数:" << resistanceData.size();
-            qDebug() << "  平均值:" << avgResistance << "Ω";
-            qDebug() << "  标准差:" << stdDev << "Ω";
-            qDebug() << "  测量精度:" << (stdDev / avgResistance * 100) << "%";
-        } else {
-            result.error_message = QString("采集点数不足: 期望20点，实际%1点").arg(resistanceData.size());
-            result.valid = false;
-        }
-    } else {
-        result.error_message = "DMM 2线法电阻数据读取失败: " + waitResult.errorMessage;
-        result.valid = false;
-    }
-    // 5. 停止连续测量
-    DeviceOperation stopOp;
-    stopOp.command = DeviceCommand::STOP_MEASUREMENT;
-    stopOp.timeout = 5000;
-    device_manager_->submitOperation("JY8902", stopOp);
-    device_manager_->waitForResult("JY8902", 5000);
-    
-    return result;
+    auto result = diagnoseComponent(tempSpec);
+    return result.measurementData;
 }
 
 MeasurementResult FaultDiagnostic::measureCapacitance(int channel, double test_frequency)
 {
-    MeasurementResult result;
+    // 创建临时组件规格进行测量
+    ComponentSpec tempSpec;
+    tempSpec.type = ComponentType::CAPACITOR;
+    tempSpec.channel = channel;
+    tempSpec.reference = QString("TEMP_C_%1").arg(channel);
     
-    // 使用AC分析法测量电容
-    qDebug() << "开始电容测量 - 通道:" << channel << "测试频率:" << test_frequency;
-    
-    // 1. 输出测试信号
-    if (!applyTestVoltage(channel, 1.0)) {
-        result.valid = false;
-        result.error_message = "无法输出测试信号";
-        return result;
-    }
-    
-    // 2. 测量电压 - 使用DAQ设备
-    DeviceOperation voltageReadOp;
-    voltageReadOp.command = DeviceCommand::READ_DATA;
-    voltageReadOp.channel = channel;
-    voltageReadOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
-        result.valid = false;
-        result.error_message = "电压测量操作提交失败";
-        return result;
-    }
-    
-    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
-    if (!voltageResult.success) {
-        result.valid = false;
-        result.error_message = "电压测量失败: " + voltageResult.error;
-        return result;
-    }
-    
-    double voltage = voltageResult.value;
-    
-    // 3. 测量电阻 - 使用DMM设备
-    DeviceOperation resistanceConfigOp;
-    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    resistanceConfigOp.parameters["range"] = "auto";
-    resistanceConfigOp.timeout = 3000;
-    
-    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
-        device_manager_->waitForResult("JY8902", 3000);
-        
-        DeviceOperation resistanceReadOp;
-        resistanceReadOp.command = DeviceCommand::READ_DATA;
-        resistanceReadOp.timeout = 5000;
-        
-        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
-            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
-            if (resistanceResult.success) {
-                double resistance = resistanceResult.value;
-                
-                // 简化的电容计算 (基于电阻值估算)
-                double impedance = resistance; 
-                double capacitance = 1.0 / (2 * M_PI * test_frequency * impedance);
-                
-                result.primary_value = qAbs(capacitance);
-                result.voltage = voltage;
-                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
-                result.esr = impedance * 0.1; // 简化的ESR估算
-                result.valid = true;
-                
-                qDebug() << "电容测量成功:" << result.primary_value << "F";
-            } else {
-                result.valid = false;
-                result.error_message = "电阻测量失败: " + resistanceResult.error;
-            }
-        } else {
-            result.valid = false;
-            result.error_message = "电阻测量操作提交失败";
-        }
-    } else {
-        result.valid = false;
-        result.error_message = "电阻测量配置失败";
-    }
-    
-    return result;
+    auto result = diagnoseComponent(tempSpec);
+    return result.measurementData;
 }
 
 MeasurementResult FaultDiagnostic::measureInductance(int channel, double test_frequency)
 {
-    MeasurementResult result;
+    // 创建临时组件规格进行测量
+    ComponentSpec tempSpec;
+    tempSpec.type = ComponentType::INDUCTOR;
+    tempSpec.channel = channel;
+    tempSpec.reference = QString("TEMP_L_%1").arg(channel);
     
-    // 使用AC分析法测量电感
-    qDebug() << "开始电感测量 - 通道:" << channel << "测试频率:" << test_frequency;
-    
-    if (!applyTestVoltage(channel, 1.0)) {
-        result.valid = false;
-        result.error_message = "无法输出测试信号";
-        return result;
-    }
-    
-    // 测量电压 - 使用DAQ设备
-    DeviceOperation voltageReadOp;
-    voltageReadOp.command = DeviceCommand::READ_DATA;
-    voltageReadOp.channel = channel;
-    voltageReadOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
-        result.valid = false;
-        result.error_message = "电压测量操作提交失败";
-        return result;
-    }
-    
-    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
-    if (!voltageResult.success) {
-        result.valid = false;
-        result.error_message = "电压测量失败: " + voltageResult.error;
-        return result;
-    }
-    
-    double voltage = voltageResult.value;
-    
-    // 测量电阻 - 使用DMM设备
-    DeviceOperation resistanceConfigOp;
-    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    resistanceConfigOp.parameters["range"] = "auto";
-    resistanceConfigOp.timeout = 3000;
-    
-    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
-        device_manager_->waitForResult("JY8902", 3000);
-        
-        DeviceOperation resistanceReadOp;
-        resistanceReadOp.command = DeviceCommand::READ_DATA;
-        resistanceReadOp.timeout = 5000;
-        
-        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
-            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
-            if (resistanceResult.success) {
-                double resistance = resistanceResult.value;
-                double impedance = resistance;
-                double inductance = impedance / (2 * M_PI * test_frequency);
-                
-                result.primary_value = qAbs(inductance);
-                result.voltage = voltage;
-                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
-                result.valid = true;
-                
-                qDebug() << "电感测量成功:" << result.primary_value << "H";
-            } else {
-                result.valid = false;
-                result.error_message = "电阻测量失败: " + resistanceResult.error;
-            }
-        } else {
-            result.valid = false;
-            result.error_message = "电阻测量操作提交失败";
-        }
-    } else {
-        result.valid = false;
-        result.error_message = "电阻测量配置失败";
-    }
-    
-    return result;
+    auto result = diagnoseComponent(tempSpec);
+    return result.measurementData;
 }
 
 MeasurementResult FaultDiagnostic::measureDiodeCharacteristics(int channel)
 {
-    MeasurementResult result;
-
-    qDebug() << "Starting diode characteristics measurement on channel:" << channel;
-
-    // 正向偏置测试 - 使用较低电压以防止过流
-    qDebug() << "Step 1: Forward bias test";
-    if (!applyTestVoltage(channel, 1.5)) {  // 降低测试电压，避免过流
-        result.valid = false;
-        result.error_message = "无法输出正向测试电压";
-        return result;
-    }
-
-    waitForStabilization(50);  // 增加稳定时间
-
-    // 测量正向电压 - 使用DAQ设备
-    qDebug() << "Measuring forward voltage using DAQ device";
-    DeviceOperation forwardVoltageOp;
-    forwardVoltageOp.command = DeviceCommand::READ_DATA;
-    forwardVoltageOp.channel = channel;
-    forwardVoltageOp.timeout = 10000;
+    // 创建临时组件规格进行测量
+    ComponentSpec tempSpec;
+    tempSpec.type = ComponentType::DIODE;
+    tempSpec.channel = channel;
+    tempSpec.reference = QString("TEMP_D_%1").arg(channel);
     
-    if (!device_manager_->submitOperation("JY5322", forwardVoltageOp)) {
-        result.valid = false;
-        result.error_message = "正向电压测量操作提交失败";
-        qDebug() << "Forward voltage operation submit failed";
-        return result;
-    }
-    
-    DeviceResult forwardVoltageResult = device_manager_->waitForResult("JY5322", 10000);
-    if (!forwardVoltageResult.success) {
-        result.valid = false;
-        result.error_message = "正向电压测量失败: " + forwardVoltageResult.error;
-        qDebug() << "Forward voltage measurement failed:" << forwardVoltageResult.error;
-        return result;
-    }
-    
-    double forward_voltage = forwardVoltageResult.value;
-    qDebug() << "Forward voltage measured:" << forward_voltage << "V";
-
-    // 测量正向电阻 - 使用DMM设备
-    qDebug() << "Measuring forward resistance using DMM device";
-    
-    // 配置DMM
-    DeviceOperation forwardResConfigOp;
-    forwardResConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    forwardResConfigOp.parameters["range"] = "auto";
-    forwardResConfigOp.parameters["timeout"] = 10000;
-    forwardResConfigOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY8902", forwardResConfigOp)) {
-        result.valid = false;
-        result.error_message = "正向电阻配置操作提交失败";
-        return result;
-    }
-    
-    device_manager_->waitForResult("JY8902", 5000);
-    
-    // 启动DMM测量
-    DeviceOperation forwardResStartOp;
-    forwardResStartOp.command = DeviceCommand::START_MEASUREMENT;
-    forwardResStartOp.timeout = 5000;
-    
-    if (device_manager_->submitOperation("JY8902", forwardResStartOp)) {
-        device_manager_->waitForResult("JY8902", 5000);
-        
-        // 发送软件触发
-        DeviceOperation forwardResTriggerOp;
-        forwardResTriggerOp.command = DeviceCommand::SYNC_TRIGGER;
-        forwardResTriggerOp.timeout = 5000;
-        
-        if (device_manager_->submitOperation("JY8902", forwardResTriggerOp)) {
-            device_manager_->waitForResult("JY8902", 5000);
-            
-            // 读取电阻值
-            DeviceOperation forwardResReadOp;
-            forwardResReadOp.command = DeviceCommand::READ_DATA;
-            forwardResReadOp.parameters["timeout"] = 10000;
-            forwardResReadOp.timeout = 10000;
-            
-            if (!device_manager_->submitOperation("JY8902", forwardResReadOp)) {
-                result.valid = false;
-                result.error_message = "正向电阻读取操作提交失败";
-                qDebug() << "Forward resistance read operation submit failed";
-                return result;
-            }
-            
-            DeviceResult forwardResResult = device_manager_->waitForResult("JY8902", 10000);
-            if (!forwardResResult.success) {
-                result.valid = false;
-                result.error_message = "正向电阻测量失败: " + forwardResResult.error;
-                qDebug() << "Forward resistance measurement failed:" << forwardResResult.error;
-                return result;
-            }
-            
-            double forward_resistance = forwardResResult.value;
-            qDebug() << "Forward resistance measured:" << forward_resistance << "Ω";
-
-            // 反向偏置测试 - 使用较小的反向电压
-            qDebug() << "Step 2: Reverse bias test";
-            if (!applyTestVoltage(channel, -1.0)) {  // 降低反向电压，避免击穿
-                result.valid = false;
-                result.error_message = "无法输出反向测试电压";
-                return result;
-            }
-
-            waitForStabilization(100);  // 反向测试需要更长稳定时间
-
-            // 反向测试主要测量漏电阻 - 使用DMM设备
-            DeviceOperation reverseResTriggerOp;
-            reverseResTriggerOp.command = DeviceCommand::SYNC_TRIGGER;
-            reverseResTriggerOp.timeout = 5000;
-            
-            if (device_manager_->submitOperation("JY8902", reverseResTriggerOp)) {
-                device_manager_->waitForResult("JY8902", 5000);
-                
-                DeviceOperation reverseResReadOp;
-                reverseResReadOp.command = DeviceCommand::READ_DATA;
-                reverseResReadOp.parameters["timeout"] = 15000;
-                reverseResReadOp.timeout = 15000;
-                
-                double reverse_resistance = 1e6;  // 默认高阻值
-                
-                if (device_manager_->submitOperation("JY8902", reverseResReadOp)) {
-                    DeviceResult reverseResResult = device_manager_->waitForResult("JY8902", 15000);
-                    if (reverseResResult.success) {
-                        reverse_resistance = reverseResResult.value;
-                        qDebug() << "Reverse resistance measured:" << reverse_resistance << "Ω";
-                    } else {
-                        qDebug() << "Warning: Reverse resistance measurement failed, using default value";
-                    }
-                } else {
-                    qDebug() << "Warning: Reverse resistance read operation submit failed, using default value";
-                }
-
-                // 停止DMM测量
-                DeviceOperation stopOp;
-                stopOp.command = DeviceCommand::STOP_MEASUREMENT;
-                stopOp.timeout = 3000;
-                device_manager_->submitOperation("JY8902", stopOp);
-                device_manager_->waitForResult("JY8902", 3000);
-
-                // 恢复到0V
-                applyTestVoltage(channel, 0.0);
-
-                result.voltage = forward_voltage;
-                result.current = forward_voltage / (forward_resistance + 1e-12); // 基于欧姆定律估算正向电流
-                result.leakage_current = qAbs(1.0 / (reverse_resistance + 1e-12)); // 基于反向电阻估算漏电流
-                result.valid = true;
-
-                qDebug() << "Diode measurement completed successfully";
-                qDebug() << "Results: Vf=" << forward_voltage << "V, Rf=" << forward_resistance << "Ω, Rr=" << reverse_resistance << "Ω";
-            } else {
-                result.valid = false;
-                result.error_message = "反向电阻测量触发失败";
-            }
-        } else {
-            result.valid = false;
-            result.error_message = "正向电阻测量触发失败";
-        }
-    } else {
-        result.valid = false;
-        result.error_message = "正向电阻测量启动失败";
-    }
-
-    return result;
+    auto result = diagnoseComponent(tempSpec);
+    return result.measurementData;
 }
 
 MeasurementResult FaultDiagnostic::measureICParameters(int channel, const ComponentSpec& spec)
 {
-    MeasurementResult result;
+    ComponentSpec tempSpec = spec;
+    tempSpec.type = ComponentType::IC;
+    tempSpec.channel = channel;
     
-    qDebug() << "开始IC参数测量 - 通道:" << channel << "最大电压:" << spec.max_voltage;
-    
-    // 给IC上电
-    if (!applyTestVoltage(channel, spec.max_voltage)) {
-        result.valid = false;
-        result.error_message = "无法给IC上电";
-        return result;
-    }
-    
-    waitForStabilization(100); // IC上电稳定时间
-    
-    // 测量电压 - 使用DAQ设备
-    DeviceOperation voltageReadOp;
-    voltageReadOp.command = DeviceCommand::READ_DATA;
-    voltageReadOp.channel = channel;
-    voltageReadOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
-        result.valid = false;
-        result.error_message = "电压测量操作提交失败";
-        return result;
-    }
-    
-    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
-    if (!voltageResult.success) {
-        result.valid = false;
-        result.error_message = "电压测量失败: " + voltageResult.error;
-        return result;
-    }
-    
-    double voltage = voltageResult.value;
-    
-    // 测量电阻 - 使用DMM设备
-    DeviceOperation resistanceConfigOp;
-    resistanceConfigOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    resistanceConfigOp.parameters["range"] = "auto";
-    resistanceConfigOp.timeout = 3000;
-    
-    if (device_manager_->submitOperation("JY8902", resistanceConfigOp)) {
-        device_manager_->waitForResult("JY8902", 3000);
-        
-        DeviceOperation resistanceReadOp;
-        resistanceReadOp.command = DeviceCommand::READ_DATA;
-        resistanceReadOp.timeout = 5000;
-        
-        if (device_manager_->submitOperation("JY8902", resistanceReadOp)) {
-            DeviceResult resistanceResult = device_manager_->waitForResult("JY8902", 5000);
-            if (resistanceResult.success) {
-                double resistance = resistanceResult.value;
-                
-                result.voltage = voltage;
-                result.current = voltage / (resistance + 1e-12); // 基于欧姆定律估算电流
-                result.power = voltage * result.current;
-                result.valid = true;
-                
-                qDebug() << "IC参数测量成功 - 电压:" << voltage << "V, 电阻:" << resistance << "Ω, 功率:" << result.power << "W";
-            } else {
-                result.valid = false;
-                result.error_message = "电阻测量失败: " + resistanceResult.error;
-            }
-        } else {
-            result.valid = false;
-            result.error_message = "电阻测量操作提交失败";
-        }
-    } else {
-        result.valid = false;
-        result.error_message = "电阻测量配置失败";
-    }
-    
-    return result;
+    auto result = diagnoseComponent(tempSpec);
+    return result.measurementData;
 }
+
+// === 辅助方法实现 ===
 
 bool FaultDiagnostic::checkComponentConnection(int channel)
 {
-    qDebug() << "检查元件连接 - 通道:" << channel;
-    
-    // 使用DAQ设备测量电压来检查连接
-    DeviceOperation voltageReadOp;
-    voltageReadOp.command = DeviceCommand::READ_DATA;
-    voltageReadOp.channel = channel;
-    voltageReadOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY5322", voltageReadOp)) {
-        qDebug() << "电压测量操作提交失败";
-        return false;
-    }
-    
-    DeviceResult voltageResult = device_manager_->waitForResult("JY5322", 5000);
-    if (!voltageResult.success) {
-        qDebug() << "电压测量失败:" << voltageResult.error;
-        return false;
-    }
-    
-    double voltage = voltageResult.value;
-    qDebug() << "测量电压:" << voltage << "V";
-    
-    // 简单的连接检查：如果能读取到合理的电压值，认为连接正常
-    bool connected = (qAbs(voltage) < 50.0);  // 电压在合理范围内
-    
-    qDebug() << "元件连接状态:" << (connected ? "已连接" : "未连接");
-    return connected;
+    // 简单的连接性检查
+    auto measurement = measureResistance(channel, 1.0, 0.0);
+    return measurement.valid;
 }
 
 bool FaultDiagnostic::executeSyncMeasurement(const QString& syncGroup, const QStringList& deviceNames, 
                                             const QList<ComponentSpec>& components)
 {
-    if (!device_manager_) {
-        setError("Device manager not available");
-        return false;
+    // 批量诊断所有组件
+    QVector<ComponentSpec> componentVector;
+    for (const auto& component : components) {
+        componentVector.append(component);
     }
     
-    if (deviceNames.size() != components.size()) {
-        setError("Device names and components count mismatch");
-        return false;
+    auto results = diagnoseBatch(componentVector);
+    return !results.isEmpty();
+}
+
+double FaultDiagnostic::calculateHealthScore(const DiagnosticResult& result)
+{
+    return ComponentDiagnosticFramework::calculateDiagnosticConfidence(
+        convertToComponentDiagnosticResult(result)) * 100.0;
+}
+
+QString FaultDiagnostic::generateRecommendation(const DiagnosticResult& result)
+{
+    auto frameworkResult = convertToComponentDiagnosticResult(result);
+    return ComponentDiagnosticFramework::formatDiagnosticResult(frameworkResult, false);
+}
+
+double FaultDiagnostic::calculateConfidence(const DiagnosticResult& result)
+{
+    return ComponentDiagnosticFramework::calculateDiagnosticConfidence(
+        convertToComponentDiagnosticResult(result));
+}
+
+bool FaultDiagnostic::isWithinTolerance(double nominal, double measured, double tolerance_percent)
+{
+    if (nominal == 0.0) {
+        return qAbs(measured) <= tolerance_percent / 100.0;
     }
-      qDebug() << "Executing synchronized measurement for group:" << syncGroup;
     
-    // 创建同步组
-    device_manager_->createSyncGroup(syncGroup, deviceNames);
+    double deviation = qAbs((measured - nominal) / nominal) * 100.0;
+    return deviation <= tolerance_percent;
+}
+
+// === 数据转换方法实现 ===
+
+DiagnosticResult FaultDiagnostic::convertFromComponentDiagnosticResult(const ComponentDiagnosticResult& result)
+{
+    DiagnosticResult diagnosticResult;
     
-    // 准备同步操作列表
-    QList<DeviceOperation> operations;
+    diagnosticResult.componentId = result.componentId;
+    diagnosticResult.componentType = result.componentType;
+    diagnosticResult.timestamp = result.endTime.isValid() ? result.endTime : result.startTime;
     
-    for (int i = 0; i < deviceNames.size(); ++i) {
-        const QString& deviceName = deviceNames[i];
-        const ComponentSpec& component = components[i];
-        
-        DeviceOperation op;
-        op.command = DeviceCommand::READ_DATA;
-        op.deviceName = deviceName;
-        op.channel = component.channel;
-        op.syncGroup = syncGroup;
-        op.timeout = 5000;
-        
-        // 根据组件类型设置特定参数
-        switch (component.type) {
-            case ComponentType::RESISTOR:
-                op.parameters["function"] = static_cast<int>(JY8902_2_Wire_Resistance);
-                break;
-            case ComponentType::CAPACITOR:                
-                op.parameters["function"] = static_cast<int>(JY8902_AC_Volts);
-                op.parameters["frequency"] = 1000.0;
-                break;
-            default:
-                op.parameters["function"] = static_cast<int>(JY8902_DC_Volts);
-                break;
-        }
-        
-        operations.append(op);
-    }
-      // 执行同步测量
-    bool success = device_manager_->executeSync(syncGroup, operations, 10000);
-    
-    // 清理同步组
-    device_manager_->removeSyncGroup(syncGroup);
-    
-    if (success) {
-        qDebug() << "Synchronized measurement completed successfully";
-        emit diagnosticProgress(100);
+    // 转换测试结果
+    if (result.success) {
+        diagnosticResult.result = DiagnosticResult::TestResult::PASS;
     } else {
-        setError(QString("Synchronized measurement failed for group: %1").arg(syncGroup));
+        diagnosticResult.result = DiagnosticResult::TestResult::FAIL;
     }
     
-    return success;
+    // 设置健康分数和置信度
+    diagnosticResult.healthScore = result.healthScore;
+    diagnosticResult.confidence = result.confidence;
+    
+    // 设置故障描述
+    diagnosticResult.notes = result.faultDescription;
+    
+    return diagnosticResult;
+}
+
+ComponentDiagnosticResult FaultDiagnostic::convertToComponentResult(const DiagnosticResult& result) 
+{
+    ComponentDiagnosticResult componentResult;
+    
+    componentResult.componentId = result.componentId;
+    componentResult.componentType = result.componentType;
+    componentResult.isPassed = (result.result == DiagnosticResult::PASS);
+    componentResult.healthScore = result.healthScore;
+    componentResult.confidence = result.confidence / 100.0; // 转换为0-1范围
+    componentResult.faultTypes = result.faultTypes;
+    componentResult.timestamp = result.timestamp;
+    componentResult.notes = result.notes;
+    
+    // 转换测量数据
+    componentResult.measurements["primary_value"] = result.measurementData.primary_value;
+    componentResult.measurements["voltage"] = result.measurementData.voltage;
+    componentResult.measurements["current"] = result.measurementData.current;
+    componentResult.measurements["power"] = result.measurementData.power;
+    componentResult.measurements["temperature"] = result.measurementData.temperature;
+    componentResult.measurements["esr"] = result.measurementData.esr;
+    componentResult.measurements["leakage_current"] = result.measurementData.leakage_current;
+    
+    // 添加分析数据
+    componentResult.analysisData["expected_value"] = result.expectedValue;
+    componentResult.analysisData["tolerance"] = result.tolerance;
+    componentResult.analysisData["test_equipment"] = result.testEquipment;
+    
+    // 生成摘要
+    if (componentResult.isPassed) {
+        componentResult.summary = QString("Component %1 passed diagnostic test with health score %.1f")
+                                .arg(componentResult.componentType)
+                                .arg(componentResult.healthScore);
+    } else {
+        componentResult.summary = QString("Component %1 failed diagnostic test. Faults: %2")
+                                .arg(componentResult.componentType)
+                                .arg(componentResult.faultTypes.join(", "));
+    }
+    
+    return componentResult;
+}
+
+DiagnosticResult FaultDiagnostic::convertFromComponentResult(const ComponentDiagnosticResult& result) 
+{
+    DiagnosticResult diagnosticResult;
+    
+    diagnosticResult.testId = QString("component_%1_%2")
+                            .arg(result.componentType)
+                            .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+    diagnosticResult.componentType = result.componentType;
+    diagnosticResult.componentId = result.componentId;
+    diagnosticResult.result = result.isPassed ? DiagnosticResult::PASS : DiagnosticResult::FAIL;
+    diagnosticResult.healthScore = result.healthScore;
+    diagnosticResult.confidence = result.confidence * 100.0; // 转换为0-100范围
+    diagnosticResult.faultTypes = result.faultTypes;
+    diagnosticResult.timestamp = result.timestamp;
+    diagnosticResult.notes = result.notes;
+    
+    // 转换测量数据
+    if (result.measurements.contains("primary_value")) {
+        diagnosticResult.measurementData.primary_value = result.measurements["primary_value"];
+    }
+    if (result.measurements.contains("voltage")) {
+        diagnosticResult.measurementData.voltage = result.measurements["voltage"];
+    }
+    if (result.measurements.contains("current")) {
+        diagnosticResult.measurementData.current = result.measurements["current"];
+    }
+    if (result.measurements.contains("power")) {
+        diagnosticResult.measurementData.power = result.measurements["power"];
+    }
+    if (result.measurements.contains("temperature")) {
+        diagnosticResult.measurementData.temperature = result.measurements["temperature"];
+    }
+    if (result.measurements.contains("esr")) {
+        diagnosticResult.measurementData.esr = result.measurements["esr"];
+    }
+    if (result.measurements.contains("leakage_current")) {
+        diagnosticResult.measurementData.leakage_current = result.measurements["leakage_current"];
+    }
+    
+    diagnosticResult.measurementData.valid = result.isPassed;
+    if (!result.isPassed && !result.faultTypes.isEmpty()) {
+        diagnosticResult.measurementData.error_message = result.faultTypes.first();
+    }
+    
+    // 从分析数据中提取信息
+    if (result.analysisData.contains("expected_value")) {
+        diagnosticResult.expectedValue = result.analysisData["expected_value"].toDouble();
+    }
+    if (result.analysisData.contains("tolerance")) {
+        diagnosticResult.tolerance = result.analysisData["tolerance"].toDouble();
+    }
+    if (result.analysisData.contains("test_equipment")) {
+        diagnosticResult.testEquipment = result.analysisData["test_equipment"].toString();
+    }
+    
+    return diagnosticResult;
+}
+
+DiagnosticResult FaultDiagnostic::createErrorResult(const QString& componentType, const QString& errorMessage) 
+{
+    DiagnosticResult result;
+    
+    result.testId = QString("error_%1_%2")
+                  .arg(componentType)
+                  .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+    result.componentType = componentType;
+    result.componentId = "unknown";
+    result.result = DiagnosticResult::ERROR;
+    result.healthScore = 0.0;
+    result.confidence = 0.0;
+    result.faultTypes << "ERROR";
+    result.timestamp = QDateTime::currentDateTime();
+    result.notes = errorMessage;
+    result.measurementData.valid = false;
+    result.measurementData.error_message = errorMessage;
+    result.expectedValue = 0.0;
+    result.tolerance = 0.0;
+    result.testEquipment = "Unknown";
+    
+    return result;
+}
+
+// === 框架信号处理槽 ===
+
+void FaultDiagnostic::onFrameworkComponentDiagnosisStarted(const QString& taskId, const QString& componentId)
+{
+    emit componentDiagnosisStarted(taskId, componentId);
+}
+
+void FaultDiagnostic::onFrameworkComponentDiagnosisProgress(const QString& taskId, const QString& componentId, int percentage)
+{
+    emit componentDiagnosisProgress(taskId, componentId, percentage);
+    emit diagnosticProgress(percentage);
+    emit progressUpdated(percentage);
+}
+
+void FaultDiagnostic::onFrameworkComponentDiagnosisCompleted(const QString& taskId, const QString& componentId, const ComponentDiagnosticResult& result)
+{
+    auto diagnosticResult = convertFromComponentDiagnosticResult(result);
+    emit componentDiagnosisCompleted(taskId, componentId, diagnosticResult);
+}
+
+void FaultDiagnostic::onFrameworkComponentDiagnosisError(const QString& taskId, const QString& componentId, const QString& error)
+{
+    emit componentDiagnosisError(taskId, componentId, error);
+    emit errorOccurred(error);
+}
+
+void FaultDiagnostic::onFrameworkBatchDiagnosisStarted(const QString& taskId, int totalComponents)
+{
+    emit batchDiagnosisStarted(taskId, totalComponents);
+}
+
+void FaultDiagnostic::onFrameworkBatchDiagnosisProgress(const QString& taskId, int completedComponents, int totalComponents)
+{
+    emit batchDiagnosisProgress(taskId, completedComponents, totalComponents);
+    int percentage = (completedComponents * 100) / totalComponents;
+    emit diagnosticProgress(percentage);
+    emit progressUpdated(percentage);
+}
+
+void FaultDiagnostic::onFrameworkBatchDiagnosisCompleted(const QString& taskId, const QVector<ComponentDiagnosticResult>& results)
+{
+    QVector<DiagnosticResult> diagnosticResults;
+    for (const auto& result : results) {
+        diagnosticResults.append(convertFromComponentDiagnosticResult(result));
+    }
+    emit batchDiagnosisCompleted(taskId, diagnosticResults);
+}
+
+void FaultDiagnostic::onFrameworkBatchDiagnosisError(const QString& taskId, const QString& error)
+{
+    emit batchDiagnosisError(taskId, error);
+    emit errorOccurred(error);
+}
+
+// === 向后兼容的私有方法（桩实现） ===
+
+DiagnosticResult FaultDiagnostic::diagnoseComponentInternal(const ComponentSpec& component)
+{
+    return diagnoseComponent(component);
 }
 
 FaultType FaultDiagnostic::analyzeResistorFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    double measured_value = measurement.primary_value;
-    
-    // 温度补偿
-    measured_value = applyTemperatureCompensation(measured_value, spec.temp_coefficient, measurement.temperature);
-    
-    // 如果期望值为0或非常小，使用绝对值判断
-    if (spec.nominal_value <= 1e-6) {
-        // 期望值接近0时，使用绝对阈值判断
-        if (measured_value < 0.1) {
-            return FaultType::SHORT_CIRCUIT;  // 很小的阻值，认为短路
-        } else if (measured_value > 1e6) {
-            return FaultType::OPEN_CIRCUIT;   // 很大的阻值，认为开路
-        } else {
-            return FaultType::COMPONENT_OK;   // 在合理范围内
-        }
+    if (!measurement.valid) {
+        return FaultType::UNKNOWN_FAULT;
     }
     
-    // 短路检查
-    if (measured_value < spec.nominal_value * 0.1) {
+    if (measurement.primary_value <= 0.1) {
         return FaultType::SHORT_CIRCUIT;
     }
     
-    // 开路检查
-    if (measured_value > spec.nominal_value * 10) {
+    if (measurement.primary_value > 1e6) {
         return FaultType::OPEN_CIRCUIT;
     }
     
-    // 容差检查
-    if (!isWithinTolerance(spec.nominal_value, measured_value, spec.tolerance_percent)) {
+    if (!isWithinTolerance(spec.nominal_value, measurement.primary_value, spec.tolerance_percent)) {
         return FaultType::OUT_OF_TOLERANCE;
     }
     
@@ -1348,39 +698,18 @@ FaultType FaultDiagnostic::analyzeResistorFault(const ComponentSpec& spec, const
 
 FaultType FaultDiagnostic::analyzeCapacitorFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    // 如果期望值为0或非常小，使用绝对值判断
-    if (spec.nominal_value <= 1e-12) {
-        // 期望值接近0时，使用绝对阈值判断
-        if (measurement.primary_value < 1e-12) {
-            return FaultType::OPEN_CIRCUIT;  // 测量值也接近0，认为开路
-        } else if (measurement.primary_value > 1e-3) {
-            return FaultType::SHORT_CIRCUIT;  // 测量值很大，认为短路
-        } else {
-            return FaultType::COMPONENT_OK;  // 测量值在合理范围内
-        }
+    if (!measurement.valid) {
+        return FaultType::UNKNOWN_FAULT;
     }
     
-    // 短路检查
-    if (measurement.primary_value > spec.nominal_value * 100) {
-        return FaultType::SHORT_CIRCUIT;
-    }
-    
-    // 开路检查  
-    if (measurement.primary_value < spec.nominal_value * 0.01) {
-        return FaultType::OPEN_CIRCUIT;
-    }
-    
-    // ESR检查
-    if (spec.max_esr > 0 && measurement.esr > spec.max_esr) {
+    if (measurement.esr > spec.max_esr) {
         return FaultType::HIGH_ESR;
     }
     
-    // 漏电流检查
-    if (spec.max_leakage > 0 && measurement.leakage_current > spec.max_leakage) {
+    if (measurement.leakage_current > spec.max_leakage) {
         return FaultType::HIGH_LEAKAGE;
     }
     
-    // 容差检查
     if (!isWithinTolerance(spec.nominal_value, measurement.primary_value, spec.tolerance_percent)) {
         return FaultType::OUT_OF_TOLERANCE;
     }
@@ -1390,284 +719,40 @@ FaultType FaultDiagnostic::analyzeCapacitorFault(const ComponentSpec& spec, cons
 
 FaultType FaultDiagnostic::analyzeDiodeFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    // 如果期望正向压降为0或非常小，使用默认范围判断
-    if (spec.nominal_value <= 0.1) {
-        // 期望值接近0时，使用标准二极管范围判断
-        if (measurement.voltage < 0.3 || measurement.voltage > 1.2) {
-            if (measurement.voltage < 0.1) {
-                return FaultType::DIODE_SHORT;
-            } else {
-                return FaultType::DIODE_OPEN;
-            }
-        }
-    } else {
-        // 有具体期望值时，使用期望值进行判断
-        double tolerance = spec.tolerance_percent > 0 ? spec.tolerance_percent : 0.2; // 默认20%容差
-        if (measurement.voltage < spec.nominal_value * (1.0 - tolerance) ||
-            measurement.voltage > spec.nominal_value * (1.0 + tolerance)) {
-            if (measurement.voltage < 0.1) {
-                return FaultType::DIODE_SHORT;
-            } else if (measurement.voltage > 2.0) {
-                return FaultType::DIODE_OPEN;
-            }
-        }
+    Q_UNUSED(spec);
+    
+    if (!measurement.valid) {
+        return FaultType::UNKNOWN_FAULT;
     }
     
-    // 反向漏电流检查
-    if (measurement.leakage_current > 1e-6) // 1μA
+    if (measurement.voltage < 0.3) {
+        return FaultType::DIODE_SHORT;
+    }
+    
+    if (measurement.voltage > 0.9) {
+        return FaultType::DIODE_OPEN;
+    }
+    
+    if (measurement.leakage_current > 1e-6) {
         return FaultType::DIODE_LEAKAGE;
+    }
     
     return FaultType::COMPONENT_OK;
 }
 
 FaultType FaultDiagnostic::analyzeICFault(const ComponentSpec& spec, const MeasurementResult& measurement)
 {
-    // 如果期望供电电压为0或非常小，使用默认判断
-    if (spec.nominal_value <= 0.5) {
-        // 期望值接近0时，使用标准IC供电范围判断 (3.3V或5V)
-        if (measurement.voltage < 2.5 || measurement.voltage > 6.0) {
-            return FaultType::IC_LOGIC_ERROR;
-        }
-        // 电流检查 - 使用默认最大电流或合理阈值
-        double maxCurrent = spec.max_current > 0 ? spec.max_current : 0.1; // 默认100mA
-        if (measurement.current > maxCurrent) {
-            return FaultType::IC_OVERCURRENT;
-        }
-    } else {
-        // 有具体期望值时，使用期望值进行判断
-        // 电压范围检查 (±10%)
-        if (measurement.voltage < spec.nominal_value * 0.9 || 
-            measurement.voltage > spec.nominal_value * 1.1) {
-            return FaultType::IC_LOGIC_ERROR;
-        }
-        
-        // IC故障判断主要基于电源电流
-        if (spec.max_current > 0 && measurement.current > spec.max_current) {
-            return FaultType::IC_OVERCURRENT;
-        }
-        
-        // 功耗检查
-        double power = measurement.voltage * measurement.current;
-        double maxPower = spec.max_voltage > 0 && spec.max_current > 0 ? 
-                         spec.max_voltage * spec.max_current : 
-                         spec.nominal_value * 0.1; // 默认最大功耗
-        if (power > maxPower) {
-            return FaultType::IC_OVERCURRENT;
-        }
+    Q_UNUSED(spec);
+    
+    if (!measurement.valid) {
+        return FaultType::UNKNOWN_FAULT;
+    }
+    
+    if (measurement.current > 1.0) {
+        return FaultType::IC_OVERCURRENT;
     }
     
     return FaultType::COMPONENT_OK;
-}
-
-bool FaultDiagnostic::applyTestVoltage(int channel, double voltage)
-{
-    // 验证通道号有效性 (JY5711支持0-31通道)
-    if (channel < 0 || channel > 31) {
-        qDebug() << "Invalid channel number:" << channel << "Valid range: 0-31";
-        return false;
-    }
-    
-    // 验证电压范围 (JY5711支持±10V)
-    if (voltage < -10.0 || voltage > 10.0) {
-        qDebug() << "Invalid voltage:" << voltage << "V. Valid range: ±10V";
-        return false;
-    }
-    
-    // 使用DeviceOperation方式配置和输出电压
-    DeviceOperation configOp;
-    configOp.command = DeviceCommand::CONFIGURE_CHANNEL;
-    configOp.parameters["channelCount"] = 1;
-    configOp.parameters["sampleRate"] = 1000000.0;
-    
-    QVariantList waveforms;
-    QVariantMap waveform;
-    waveform["channel"] = channel;
-    waveform["type"] = static_cast<int>(PXIe5711_testtype::HighLevelWave); // 直流电压输出
-    waveform["amplitude"] = qAbs(voltage);
-    waveform["frequency"] = 1.0; // 直流，频率设为1Hz
-    waveform["lowRange"] = -10.0;
-    waveform["highRange"] = 10.0;
-    if (voltage < 0) {
-        waveform["amplitude"] = -waveform["amplitude"].toDouble(); // 负电压
-    }
-    waveforms.append(waveform);
-    
-    configOp.parameters["waveforms"] = waveforms;
-    configOp.timeout = 5000;
-    
-    if (!device_manager_->submitOperation("JY5711", configOp)) {
-        qDebug() << "Failed to submit voltage configuration operation for channel" << channel;
-        return false;
-    }
-    
-    DeviceResult configResult = device_manager_->waitForResult("JY5711", 5000);
-    if (!configResult.success) {
-        qDebug() << "Failed to configure voltage output for channel" << channel << ":" << configResult.error;
-        return false;
-    }
-    
-    // 开始输出电压
-    DeviceOperation outputOp;
-    outputOp.command = DeviceCommand::WRITE_DATA;
-    outputOp.parameters["waveforms"] = waveforms;
-    outputOp.parameters["sampleRate"] = 1000000;
-    outputOp.parameters["samplesPerChannel"] = 1000000; // 1秒的数据，用于持续输出
-    outputOp.timeout = 10000;
-    
-    if (!device_manager_->submitOperation("JY5711", outputOp)) {
-        qDebug() << "Failed to submit voltage output operation for channel" << channel;
-        return false;
-    }
-    
-    DeviceResult outputResult = device_manager_->waitForResult("JY5711", 10000);
-    if (!outputResult.success) {
-        qDebug() << "Failed to start voltage output for channel" << channel << ":" << outputResult.error;
-        return false;
-    }
-    
-    // 发送软件触发开始输出
-    DeviceOperation triggerOp;
-    triggerOp.command = DeviceCommand::SYNC_TRIGGER;
-    triggerOp.timeout = 3000;
-    
-    if (!device_manager_->submitOperation("JY5711", triggerOp)) {
-        qDebug() << "Failed to submit trigger operation for channel" << channel;
-        return false;
-    }
-    
-    DeviceResult triggerResult = device_manager_->waitForResult("JY5711", 3000);
-    if (!triggerResult.success) {
-        qDebug() << "Failed to trigger voltage output for channel" << channel << ":" << triggerResult.error;
-        return false;
-    }
-    
-    qDebug() << "Successfully applied" << voltage << "V to channel" << channel;
-    return true;
-}
-
-void FaultDiagnostic::waitForStabilization(int delay_ms)
-{
-    QThread::msleep(delay_ms);
-}
-
-bool FaultDiagnostic::isWithinTolerance(double nominal, double measured, double tolerance_percent)
-{
-    double min_value = nominal * (1.0 - tolerance_percent);
-    double max_value = nominal * (1.0 + tolerance_percent);
-    return (measured >= min_value && measured <= max_value);
-}
-
-double FaultDiagnostic::applyTemperatureCompensation(double value, double temp_coeff, double temperature)
-{
-    double temp_correction = temp_coeff * (temperature - 25.0);
-    return value * (1.0 + temp_correction);
-}
-
-double FaultDiagnostic::calculateHealthScore(const DiagnosticResult& result)
-{
-    // If test passed, return high health score
-    if (result.result == DiagnosticResult::PASS) {
-        return 100.0; // 100%健康
-    }
-    
-    // If test error, return zero
-    if (result.result == DiagnosticResult::ERROR) {
-        return 0.0;
-    }
-    
-    // Check specific fault types for failed tests
-    if (result.faultTypes.contains("SHORT_CIRCUIT") || 
-        result.faultTypes.contains("OPEN_CIRCUIT") ||
-        result.faultTypes.contains("DIODE_SHORT") ||
-        result.faultTypes.contains("DIODE_OPEN") ||
-        result.faultTypes.contains("IC_OVERCURRENT")) {
-        return 0.0; // 完全故障
-    }
-    
-    if (result.faultTypes.contains("OUT_OF_TOLERANCE") ||
-        result.faultTypes.contains("HIGH_ESR")) {
-        return 70.0; // 70%健康，需监控
-    }
-    
-    if (result.faultTypes.contains("HIGH_LEAKAGE") ||
-        result.faultTypes.contains("DIODE_LEAKAGE")) {
-        return 40.0; // 40%健康，建议更换
-    }
-    
-    return 0.0; // 默认返回最低分
-}
-
-QString FaultDiagnostic::generateRecommendation(const DiagnosticResult& result)
-{
-    // If test passed, return positive message
-    if (result.result == DiagnosticResult::PASS) {
-        return "元件工作正常，继续使用";
-    }
-    
-    // If test error, return error message
-    if (result.result == DiagnosticResult::ERROR) {
-        return "测试出现错误，请检查设备连接或重新测试";
-    }
-    
-    // Check specific fault types for failed tests
-    if (result.faultTypes.contains("SHORT_CIRCUIT") || 
-        result.faultTypes.contains("OPEN_CIRCUIT")) {
-        return "元件已损坏，必须立即更换";
-    }
-    
-    if (result.faultTypes.contains("DIODE_SHORT") ||
-        result.faultTypes.contains("DIODE_OPEN")) {
-        return "二极管已损坏，必须立即更换";
-    }
-    
-    if (result.faultTypes.contains("IC_OVERCURRENT")) {
-        return "IC功耗异常，可能已损坏，建议立即更换";
-    }
-    
-    if (result.faultTypes.contains("OUT_OF_TOLERANCE")) {
-        return "元件参数超差，建议在下次维护时更换";
-    }
-    
-    if (result.faultTypes.contains("HIGH_ESR")) {
-        return "电容ESR偏高，建议尽快更换以避免性能下降";
-    }
-    
-    if (result.faultTypes.contains("HIGH_LEAKAGE") ||
-        result.faultTypes.contains("DIODE_LEAKAGE")) {
-        return "漏电流偏高，建议更换以防止系统异常";
-    }
-    
-    if (result.faultTypes.contains("NO_CONNECTION")) {
-        return "检查元件连接，确保接触良好";
-    }
-    
-    return "需要进一步检查分析";
-}
-
-double FaultDiagnostic::calculateConfidence(const DiagnosticResult& result)
-{
-    if (!result.measurementData.valid) {
-        return 0.0;
-    }
-    
-    // 基于测量质量和故障类型计算置信度
-    double base_confidence = 80.0;
-    
-    // 根据故障类型调整置信度
-    if (result.faultTypes.contains("SHORT_CIRCUIT") ||
-        result.faultTypes.contains("OPEN_CIRCUIT")) {
-        return 95.0; // 短路开路比较容易判断
-    }
-    
-    if (result.faultTypes.contains("NO_CONNECTION")) {
-        return 90.0;
-    }
-    
-    if (result.result == DiagnosticResult::PASS) {
-        return base_confidence;
-    }
-    
-    return base_confidence * 0.8;
 }
 
 QString FaultDiagnostic::faultTypeToString(FaultType type) const
@@ -1676,7 +761,7 @@ QString FaultDiagnostic::faultTypeToString(FaultType type) const
         case FaultType::COMPONENT_OK: return "正常";
         case FaultType::SHORT_CIRCUIT: return "短路";
         case FaultType::OPEN_CIRCUIT: return "开路";
-        case FaultType::OUT_OF_TOLERANCE: return "超差";
+        case FaultType::OUT_OF_TOLERANCE: return "参数超差";
         case FaultType::HIGH_ESR: return "ESR过高";
         case FaultType::HIGH_LEAKAGE: return "漏电流过大";
         case FaultType::DIODE_SHORT: return "二极管短路";
@@ -1684,87 +769,55 @@ QString FaultDiagnostic::faultTypeToString(FaultType type) const
         case FaultType::DIODE_LEAKAGE: return "二极管漏电";
         case FaultType::IC_OVERCURRENT: return "IC过流";
         case FaultType::IC_LOGIC_ERROR: return "IC逻辑错误";
-        case FaultType::NO_CONNECTION: return "未连接";
-        default: return "未知故障";
+        case FaultType::NO_CONNECTION: return "无连接";
+        case FaultType::UNKNOWN_FAULT: return "未知故障";
+        default: return "未定义故障";
     }
 }
 
-QStringList FaultDiagnostic::getSupportedComponentTypes() const
+bool FaultDiagnostic::applyTestVoltage(int channel, double voltage)
 {
-    return {"电阻", "电容", "电感", "二极管", "三极管", "集成电路"};
+    // 这个方法在新框架中由具体的诊断器处理
+    Q_UNUSED(channel);
+    Q_UNUSED(voltage);
+    return true;
 }
 
-// === 数据转换方法实现 ===
+void FaultDiagnostic::waitForStabilization(int delay_ms)
+{
+    QApplication::processEvents();
+    QThread::msleep(delay_ms);
+}
+
+double FaultDiagnostic::applyTemperatureCompensation(double value, double temp_coeff, double temperature)
+{
+    // 简单的线性温度补偿
+    double tempDiff = temperature - 25.0;  // 以25°C为基准
+    return value * (1.0 + temp_coeff * tempDiff / 100.0);
+}
+
+// === 数据转换辅助方法 ===
 
 ComponentSpec FaultDiagnostic::convertToLegacyComponentSpec(const TestSchemeSignals& scheme, const TestConfiguration& config)
 {
     ComponentSpec spec;
-    
-    // 基于测试方案确定元件类型
-    if (scheme.name.contains("电阻", Qt::CaseInsensitive)) {
-        spec.type = ComponentType::RESISTOR;
-    } else if (scheme.name.contains("电容", Qt::CaseInsensitive)) {
-        spec.type = ComponentType::CAPACITOR;
-    } else if (scheme.name.contains("电感", Qt::CaseInsensitive)) {
-        spec.type = ComponentType::INDUCTOR;
-    } else if (scheme.name.contains("二极管", Qt::CaseInsensitive)) {
-        spec.type = ComponentType::DIODE;
-    } else if (scheme.name.contains("IC", Qt::CaseInsensitive)) {
-        spec.type = ComponentType::IC;
-    } else {
-        spec.type = ComponentType::UNKNOWN;
-    }
-    
-    // 从配置中提取参数
     spec.reference = config.testId;
-    spec.description = scheme.description;
-    
-    // 从测试配置中获取测试参数
-    if (!config.portMappings.isEmpty()) {
-        auto firstMapping = config.portMappings.first();
-        spec.channel = firstMapping.channel;
-        spec.test_voltage = config.testParameters.value("voltage", 1.0).toDouble();
-        spec.test_current = config.testParameters.value("current", 0.001).toDouble();
-    }    // 设置默认值
-    spec.nominal_value = config.testParameters.value("nominal_value", 1000.0).toDouble();
-    spec.tolerance_percent = config.testParameters.value("tolerance", 0.05).toDouble();
-    spec.max_voltage = config.testParameters.value("max_voltage", 10.0).toDouble();
-    spec.max_current = config.testParameters.value("max_current", 0.1).toDouble();
-    
+    spec.name = config.testName;
+    // 其他字段根据需要填充
     return spec;
 }
 
 DiagnosticResult FaultDiagnostic::convertFromAnalysisResult(const AnalysisResult& analysisResult)
 {
     DiagnosticResult result;
-    
     result.testId = analysisResult.testId;
     result.componentType = analysisResult.componentType;
     result.componentId = analysisResult.componentId;
-    result.timestamp = analysisResult.timestamp;    
-    result.testEquipment = analysisResult.deviceInfo;
-    result.notes = analysisResult.notes.join("; ");  // 使用分号和空格连接
+    result.result = static_cast<DiagnosticResult::TestResult>(analysisResult.result);
     result.healthScore = analysisResult.healthScore;
     result.confidence = analysisResult.confidence;
-    result.expectedValue = analysisResult.expectedValue;
-    
-    // 转换测试结果
-    if (analysisResult.result == AnalysisResult::PASS) {
-        result.result = DiagnosticResult::PASS;
-    } else if (analysisResult.result == AnalysisResult::ERROR) {
-        result.result = DiagnosticResult::ERROR;
-    } else {
-        result.result = DiagnosticResult::FAIL;
-    }
-    
-    // 转换故障类型列表
-    if (result.faultTypes.isEmpty() && !analysisResult.faultTypes.isEmpty()) {
-        result.faultTypes.append(analysisResult.faultTypes);
-    }
-    
-    // 提取测量数据
-    result.expectedValue = analysisResult.expectedValue;
-    result.tolerance = analysisResult.tolerance;
+    result.timestamp = analysisResult.timestamp;
+    result.notes = analysisResult.summary;
     
     return result;
 }
@@ -1772,8 +825,11 @@ DiagnosticResult FaultDiagnostic::convertFromAnalysisResult(const AnalysisResult
 TestData FaultDiagnostic::convertFromMeasurementResult(const MeasurementResult& measurement)
 {
     TestData testData;
+    testData.testId = QUuid::createUuid().toString();
+    testData.timestamp = QDateTime::currentDateTime();
+    testData.valid = measurement.valid;
+    testData.errorMessage = measurement.error_message;
     
-    // 创建基本的测量数据结构
     QMap<QString, QVariant> measurementMap;
     measurementMap["primary_value"] = measurement.primary_value;
     measurementMap["voltage"] = measurement.voltage;
@@ -1782,765 +838,61 @@ TestData FaultDiagnostic::convertFromMeasurementResult(const MeasurementResult& 
     measurementMap["temperature"] = measurement.temperature;
     measurementMap["esr"] = measurement.esr;
     measurementMap["leakage_current"] = measurement.leakage_current;
-    measurementMap["valid"] = measurement.valid;
-    measurementMap["error_message"] = measurement.error_message;
     
     testData.measurements.append(measurementMap);
-    testData.timestamp = QDateTime::currentDateTime();
-    testData.testId = QString("measurement_%1").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
-    testData.valid = measurement.valid;
-    
-    if (!measurement.valid) {
-        testData.errorMessage = measurement.error_message;
-    }
     
     return testData;
+}
+
+ComponentDiagnosticResult FaultDiagnostic::convertToComponentDiagnosticResult(const DiagnosticResult& result)
+{
+    ComponentDiagnosticResult componentResult;
+    
+    componentResult.componentId = result.componentId;
+    componentResult.componentType = result.componentType;
+    componentResult.startTime = result.timestamp;
+    componentResult.endTime = result.timestamp;
+    
+    // 转换测试结果
+    componentResult.success = (result.result == DiagnosticResult::TestResult::PASS);
+    componentResult.isPassed = componentResult.success;
+    
+    // 转换故障信息
+    if (result.result != DiagnosticResult::TestResult::PASS) {
+        QString faultMessage;
+        switch (result.result) {
+            case DiagnosticResult::TestResult::FAIL:
+                faultMessage = "组件诊断失败";
+                break;
+            case DiagnosticResult::TestResult::ERROR:
+                faultMessage = "诊断过程出错";
+                break;
+            default:
+                faultMessage = "未知故障";
+                break;
+        }
+        componentResult.faultDescription = faultMessage + (result.notes.isEmpty() ? "" : ": " + result.notes);
+    }
+    
+    // 设置健康分数和置信度
+    componentResult.healthScore = result.healthScore;
+    componentResult.confidence = result.confidence;
+    
+    // 设置分析数据
+    componentResult.analysisData["health_score"] = result.healthScore;
+    componentResult.analysisData["confidence"] = result.confidence;
+    componentResult.analysisData["test_result"] = static_cast<int>(result.result);
+    
+    if (!result.notes.isEmpty()) {
+        componentResult.analysisData["notes"] = result.notes;
+    }
+    
+    return componentResult;
 }
 
 void FaultDiagnostic::setError(const QString& error)
 {
     last_error_ = error;
-    qWarning() << "FaultDiagnostic Error:" << error;
-}
-
-// === 向后兼容的diagnoseComponent方法增强 ===
-
-// === 高级工作流程方法实现 ===
-
-bool FaultDiagnostic::executeFullDiagnosticWorkflow(const QString& componentType)
-{
-    qDebug() << "开始完整诊断工作流程:" << componentType;
-      setState(WorkflowState::CONFIGURING_SIGNALS);
-    emit workflowStarted(currentWorkflowType_);
-    
-    // 步骤1: 配置信号
-    if (!step1_ConfigureSignals(componentType)) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    // 步骤2: 配置端口
-    if (!step2_ConfigurePorts()) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    // 步骤3: 执行测试
-    if (!step3_ExecuteTests()) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    // 步骤4: 分析结果
-    if (!step4_AnalyzeResults()) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    setState(WorkflowState::COMPLETED);
-    emit workflowCompleted(currentWorkflowType_);
-    
-    return true;
-}
-
-bool FaultDiagnostic::executeCustomWorkflow(const TestSchemeSignals& scheme, const QStringList& portList)
-{
-    qDebug() << "开始自定义工作流程:" << scheme.name;
-      setState(WorkflowState::CONFIGURING_SIGNALS);
-    currentWorkflowType_ = "CustomWorkflow";
-    
-    emit workflowStarted(currentWorkflowType_);
-    
-    // 使用自定义方案和端口列表
-    // 这里可以直接跳过信号配置和端口配置步骤
-    
-    // 直接执行测试
-    if (!step3_ExecuteTests()) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    // 分析结果
-    if (!step4_AnalyzeResults()) {
-        setState(WorkflowState::ERROR);
-        emit workflowError(currentWorkflowType_, last_error_);
-        return false;
-    }
-    
-    setState(WorkflowState::COMPLETED);
-    emit workflowCompleted(currentWorkflowType_);
-    
-    return true;
-}
-
-// === 分步骤工作流程实现 ===
-
-bool FaultDiagnostic::step1_ConfigureSignals(const QString& componentType)
-{
-    setState(WorkflowState::CONFIGURING_SIGNALS);
-    emit workflowStepCompleted(1, "配置信号");
-    
-    // 根据元件类型选择合适的测试方案
-    QString schemeName;
-    if (componentType == "resistor") {
-        schemeName = "电阻测试(标准)";
-    } else if (componentType == "capacitor") {
-        schemeName = "电容测试";
-    } else if (componentType == "inductor") {
-        schemeName = "电感测试";
-    } else if (componentType == "diode") {
-        schemeName = "二极管测试";
-    } else if (componentType == "ic") {
-        schemeName = "IC测试";
-    } else {
-        setError(QString("不支持的元件类型: %1").arg(componentType));
-        return false;
-    }
-    
-    return setActiveTestScheme(schemeName);
-}
-
-bool FaultDiagnostic::step2_ConfigurePorts()
-{
-    setState(WorkflowState::CONFIGURING_PORTS);
-    emit workflowStepCompleted(2, "配置端口");
-    
-    bool result = showPortConfigurationDialog();
-    
-    if (result && shouldShowWiringGuide(currentTestConfig_)) {
-        setState(WorkflowState::SHOWING_WIRING_GUIDE);
-        return startWiringGuide(currentTestConfig_);
-    }
-    
-    return result;
-}
-
-bool FaultDiagnostic::step3_ExecuteTests()
-{
-    setState(WorkflowState::EXECUTING_TESTS);
-    emit workflowStepCompleted(3, "执行测试");
-    
-    if (!portConfig_ || !portConfig_->getTestExecutor()) {
-        setError("测试执行器未初始化");
-        return false;
-    }
-    
-    QString testId = QString("test_%1_%2")
-                        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"))
-                        .arg(currentWorkflowType_);
-    
-    currentTestId_ = testId;
-    
-    emit testExecutionStarted(testId);
-    
-    // 执行测试
-    TestExecutor* executor = portConfig_->getTestExecutor();
-    bool result = executor->executeTest(testId, currentTestConfig_);
-    
-    if (result) {
-        // 等待测试完成 - 这里应该是异步的
-        // 实际实现中，测试完成会通过信号通知
-        qDebug() << "测试执行启动成功:" << testId;
-    } else {
-        setError("测试执行失败");
-        emit testExecutionFailed(testId, last_error_);
-    }
-    
-    return result;
-}
-
-// 内部测试执行方法（简化版）
-bool FaultDiagnostic::step3_ExecuteTest()
-{
-    setState(WorkflowState::EXECUTING_TESTS);
-    emit workflowStepCompleted(3, "执行测试");
-    
-    if (!portConfig_) {
-        setError("端口配置模块未初始化");
-        return false;
-    }
-    
-    QString testId = QString("test_%1_%2")
-                        .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"))
-                        .arg(currentWorkflowType_);
-    
-    currentTestId_ = testId;
-    
-    emit testExecutionStarted(testId);
-    
-    // 简化的测试执行：直接模拟测试完成
-    QTimer::singleShot(1000, [this, testId]() {
-        TestData testData;
-        testData.testId = testId;
-        testData.timestamp = QDateTime::currentDateTime();
-        testData.valid = true;
-        
-        // 模拟一些测量数据
-        QMap<QString, QVariant> measurement;
-        measurement["primary_value"] = 1000.0; // 1kΩ
-        measurement["voltage"] = 1.0;
-        measurement["current"] = 0.001;
-        measurement["valid"] = true;
-        testData.measurements.append(measurement);
-        
-        onTestExecutionCompleted(testId, testData);
-    });
-    
-    return true;
-}
-
-bool FaultDiagnostic::step4_AnalyzeResults()
-{
-    setState(WorkflowState::ANALYZING_RESULTS);
-    emit workflowStepCompleted(4, "分析结果");
-    
-    if (currentTestData_.measurements.isEmpty()) {
-        setError("没有测试数据可供分析");
-        return false;
-    }
-    
-    // 启动异步分析
-    startFaultAnalysisAsync(currentTestId_, currentTestData_);
-    
-    // 异步分析，返回true表示分析已启动
-    return true;
-}
-
-//=============================================================================
-// 缺失方法的实现
-//=============================================================================
-
-void FaultDiagnostic::diagnoseComponentAsync(const QString& componentId, 
-                                           const QString& testScheme, 
-                                           const ComponentSpec& component)
-{
-    qDebug() << "开始异步诊断组件:" << componentId << "测试方案:" << testScheme;
-    
-    currentTestId_ = QString("async_test_%1_%2")
-                     .arg(componentId)
-                     .arg(QDateTime::currentMSecsSinceEpoch());
-    
-    // 设置当前组件规格
-    currentComponentSpecs_ = component;
-    
-    setState(WorkflowState::CONFIGURING_SIGNALS);
-    
-    // 设置测试方案
-    if (!setActiveTestScheme(testScheme)) {
-        emit diagnosisCompleted(createErrorResult(currentTestId_, "设置测试方案失败"));
-        return;
-    }
-    
-    // 启动完整工作流程
-    QTimer::singleShot(100, [this, componentId]() {
-        bool success = executeFullDiagnosticWorkflow(componentId);
-        if (!success) {
-            emit diagnosisCompleted(createErrorResult(currentTestId_, "诊断工作流程执行失败"));
-        }
-    });
-}
-
-bool FaultDiagnostic::setActiveTestScheme(const QString& schemeName)
-{    if (!signalConfig_) {
-        setError("信号配置模块未初始化");
-        return false;
-    }
-    
-    // 从信号配置模块获取测试方案
-    QStringList availableSchemes = signalConfig_->getAvailableTestSchemes();
-    if (availableSchemes.isEmpty()) {
-        return false;
-    }
-    
-    activeTestScheme_ = schemeName;
-}
-
-bool FaultDiagnostic::showPortConfigurationDialog()
-{
-    if (!portConfig_) {
-        setError("端口配置模块未初始化");
-        return false;
-    }
-    
-    if (activeTestScheme_.isEmpty()) {
-        setError("请先选择测试方案");
-        return false;
-    }
-    
-    // 创建测试方案信号对象（简化版）
-    TestSchemeSignals scheme;
-    scheme.name = activeTestScheme_;
-    scheme.description = "自动生成的测试方案";    // 创建端口配置对话框
-    PortConfigurationDialog dialog(scheme, device_manager_, nullptr);
-    
-    // 模拟对话框信号连接（实际实现中需要根据具体信号名称）
-    // connect(&dialog, &PortConfigurationDialog::configurationCompleted,
-    //         this, &FaultDiagnostic::onPortConfigurationCompleted);
-    // connect(&dialog, &PortConfigurationDialog::configurationFailed,
-    //         this, &FaultDiagnostic::onPortValidationFailed);
-    
-    int result = dialog.exec();
-    
-    if (result == QDialog::Accepted) {
-        currentTestConfig_ = dialog.getConfiguration();
-        setState(WorkflowState::CONFIGURING_PORTS);
-        return true;
-    }
-    
-    return false;
-}
-
-void FaultDiagnostic::startFaultAnalysisAsync(const QString& testId, const TestData& testData)
-{    if (!faultAnalysis_) {
-        setError("故障分析模块未初始化");
-        emit analysisCompleted(testId, createErrorAnalysisResult(testId, "故障分析模块未初始化"));
-        return;
-    }
-    
-    qDebug() << "启动异步故障分析:" << testId;
-    setState(WorkflowState::ANALYZING_RESULTS);
-    
-    // 启动异步分析
-    faultAnalysis_->startAnalysisAsync(testId, testData);
-}
-
-bool FaultDiagnostic::startWiringGuide(const TestConfiguration& config)
-{
-    setState(WorkflowState::SHOWING_WIRING_GUIDE);
-    
-    // 这里应该启动接线指导
-    // 由于WiringGuide模块还没有实现，我们暂时模拟
-    qDebug() << "启动接线指导，配置:" << config.testName;
-    
-    // 模拟接线指导完成
-    QTimer::singleShot(2000, [this, config]() {
-        onWiringGuideCompleted(config.testId);
-    });
-    
-    return true;
-}
-
-bool FaultDiagnostic::initializeModules()
-{
-    qDebug() << "初始化模块...";
-    
-    // 检查设备管理器
-    if (!device_manager_) {
-        setError("设备管理器未初始化");
-        return false;
-    }
-      // 初始化信号配置模块
-    if (!signalConfig_) {
-        signalConfig_ = std::make_unique<SignalConfiguration>(this);
-    }
-    
-    // 初始化端口配置模块
-    if (!portConfig_) {
-        portConfig_ = std::make_unique<PortConfiguration>(device_manager_, this);
-    }
-    
-    // 初始化故障分析模块
-    if (!faultAnalysis_) {
-        faultAnalysis_ = std::make_unique<FaultAnalysis>(this);
-    }
-    
-    qDebug() << "模块初始化完成";
-    return true;
-}
-
-void FaultDiagnostic::connectModuleSignals()
-{
-    if (!signalConfig_ || !portConfig_ || !faultAnalysis_) {
-        qWarning() << "模块未完全初始化，无法连接信号";
-        return;
-    }
-    
-    // 连接信号配置模块信号 (暂时注释掉，等待实际信号实现)
-    // connect(signalConfig_.get(), &SignalConfiguration::configurationChanged,
-    //         this, &FaultDiagnostic::onSignalConfigurationChanged);
-    
-    // 连接端口配置模块信号 (暂时注释掉，等待实际信号实现)
-    // connect(portConfig_.get(), &PortConfiguration::portAllocated,
-    //         this, [this](const QString& device, int channel) {
-    //             emit portConfigurationChanged(QString("端口已分配: %1 通道 %2").arg(device).arg(channel));
-    //         });
-    
-    // 连接故障分析模块信号 (暂时注释掉，等待实际信号实现)
-    // connect(faultAnalysis_.get(), &FaultAnalysis::analysisCompleted,
-    //         this, &FaultDiagnostic::onAnalysisCompleted);
-    
-    qDebug() << "模块信号连接完成（部分信号暂时禁用）";
-}
-
-void FaultDiagnostic::setState(WorkflowState newState)
-{
-    if (currentState_ != newState) {
-        WorkflowState oldState = currentState_;
-        currentState_ = newState;
-        
-        qDebug() << "工作流状态变更:" << static_cast<int>(oldState) 
-                 << "->" << static_cast<int>(newState);
-        
-        emit workflowStateChanged(newState);
-    }
-}
-
-bool FaultDiagnostic::shouldShowWiringGuide(const TestConfiguration& config)
-{
-    // 检查是否需要显示接线指导
-    // 1. 如果有输出端口，需要接线指导
-    if (!config.outputPorts.isEmpty()) {
-        return true;
-    }
-    
-    // 2. 如果有多个输入端口，需要接线指导
-    if (config.inputPorts.size() > 1) {
-        return true;
-    }
-    
-    // 3. 如果需要同步，需要接线指导
-    if (config.requiresSynchronization) {
-        return true;
-    }
-    
-    return false;
-}
-
-//=============================================================================
-// 私有槽方法实现
-//=============================================================================
-
-void FaultDiagnostic::onSignalConfigurationChanged()
-{
-    qDebug() << "信号配置已更改";
-    emit signalConfigurationChanged();
-}
-
-void FaultDiagnostic::onPortConfigurationCompleted(const TestConfiguration& config)
-{
-    qDebug() << "端口配置完成:" << config.testName;
-    currentTestConfig_ = config;
-    
-    setState(WorkflowState::CONFIGURING_PORTS);
-    emit portConfigurationCompleted(config);
-    
-    // 自动进入下一步
-    if (shouldShowWiringGuide(config)) {
-        startWiringGuide(config);
-    } else {
-        // 直接进行测试执行
-        step3_ExecuteTest();
-    }
-}
-
-void FaultDiagnostic::onPortValidationFailed(const QString& error)
-{
-    qWarning() << "端口验证失败:" << error;
-    setError(error);
-    emit portValidationFailed(error);
-}
-
-void FaultDiagnostic::onTestExecutionCompleted(const QString& testId, const TestData& testData)
-{
-    qDebug() << "测试执行完成:" << testId;
-    currentTestData_ = testData;
-    
-    setState(WorkflowState::TEST_COMPLETED);
-    emit testExecutionCompleted(testId, testData);
-    
-    // 自动启动故障分析
-    step4_AnalyzeResults();
-}
-
-void FaultDiagnostic::onTestExecutionFailed(const QString& testId, const QString& error)
-{
-    qWarning() << "测试执行失败:" << testId << error;
-    setError(error);
-    setState(WorkflowState::ERROR);
-    emit testExecutionFailed(testId, error);
-}
-
-void FaultDiagnostic::onTestExecutionProgress(const QString& testId, int percentage)
-{
-    emit testExecutionProgress(testId, percentage);
-}
-
-void FaultDiagnostic::onAnalysisCompleted(const QString& testId, const AnalysisResult& result)
-{
-    qDebug() << "分析完成:" << testId << "结果:" << static_cast<int>(result.result);
-    currentAnalysisResult_ = result;
-    
-    setState(WorkflowState::ANALYSIS_COMPLETED);
-    emit analysisCompleted(testId, result);
-      // 如果是通过 diagnoseComponentAsync 启动的，发射完成信号
-    if (testId.startsWith("async_test_")) {
-        QString componentId = testId.section('_', 2, 2);
-        DiagnosticResult diagnosticResult = convertFromAnalysisResult(result);
-        emit diagnosisCompleted(diagnosticResult);
-    }
-}
-
-void FaultDiagnostic::onAnalysisProgress(const QString& testId, int percentage)
-{
-    emit analysisProgress(testId, percentage);
-}
-
-void FaultDiagnostic::onWiringGuideCompleted(const QString& testId)
-{
-    qDebug() << "接线指导完成:" << testId;
-    setState(WorkflowState::WIRING_COMPLETED);
-    emit wiringGuideCompleted(testId);
-    
-    // 自动进入测试执行步骤
-    step3_ExecuteTest();
-}
-
-void FaultDiagnostic::onWiringVerificationCompleted(bool success, const QString& message)
-{
-    qDebug() << "接线验证完成:" << success << message;
-    
-    if (success) {
-        setState(WorkflowState::WIRING_VERIFIED);
-        emit wiringVerificationCompleted(true, message);
-        
-        // 验证成功，继续测试
-        step3_ExecuteTest();
-    } else {
-        setError(message);
-        setState(WorkflowState::ERROR);
-        emit wiringVerificationCompleted(false, message);
-    }
-}
-
-//=============================================================================
-// 缺失的槽函数实现
-//=============================================================================
-
-void FaultDiagnostic::onTestCompleted()
-{
-    qDebug() << "测试完成回调";
-    
-    // 处理测试完成逻辑
-    setState(WorkflowState::TEST_COMPLETED);
-    
-    // 发射测试完成信号
-    emit progressUpdated(100);
-    
-    // 如果有待处理的测试数据，启动分析
-    if (!currentTestData_.measurements.isEmpty()) {
-        // 启动故障分析
-        step4_AnalyzeResults();
-    }
-}
-
-//=============================================================================
-// 辅助方法
-//=============================================================================
-
-DiagnosticResult FaultDiagnostic::createErrorResult(const QString& testId, const QString& error)
-{
-    DiagnosticResult result;
-    result.testId = testId;
-    result.componentType = "UNKNOWN";
-    result.componentId = "UNKNOWN";
-    result.result = DiagnosticResult::ERROR;
-    result.healthScore = 0.0;
-    result.confidence = 0.0;
-    result.timestamp = QDateTime::currentDateTime();
-    result.notes = error;
-    result.faultTypes.append("UNKNOWN_FAULT");
-    
-    return result;
-}
-
-AnalysisResult FaultDiagnostic::createErrorAnalysisResult(const QString& testId, const QString& error)
-{
-    AnalysisResult result;
-    result.testId = testId;
-    result.componentType = "UNKNOWN";
-    result.componentId = "UNKNOWN";
-    result.healthScore = 0.0;
-    result.confidence = 0.0;
-    result.timestamp = QDateTime::currentDateTime();
-    result.summary = error;
-    result.notes.append(error);
-    result.faultType = "ERROR";
-    
-    return result;
-}
-
-// === ComponentSpecs 到 ComponentSpec 的转换函数 ===
-
-ComponentSpec FaultDiagnostic::convertFromComponentSpecs(const ComponentSpecs& specs, const QString& componentType, const QString& reference)
-{
-    ComponentSpec spec;
-    
-    // 设置基本信息
-    spec.reference = reference;
-    spec.description = QString("从ComponentSpecs转换的%1").arg(componentType);
-    spec.channel = 0; // 默认通道，需要后续设置
-      // 根据组件类型设置参数
-    if (componentType == "resistor" || componentType == "电阻") {
-        spec.type = ComponentType::RESISTOR;
-        spec.nominal_value = specs.resistance.nominal;
-        spec.tolerance_percent = specs.resistance.tolerance;
-        spec.temp_coefficient = specs.resistance.tempCoefficient;
-        spec.test_voltage = 1.0; // 默认测试电压
-        spec.test_current = 0.001; // 默认测试电流
-        spec.max_voltage = 50.0; // 默认最大电压
-        spec.max_current = 0.1; // 默认最大电流
-    }    else if (componentType == "capacitor" || componentType == "电容") {
-        spec.type = ComponentType::CAPACITOR;
-        spec.nominal_value = specs.capacitance.nominal;
-        spec.tolerance_percent = specs.capacitance.tolerance;
-        spec.max_esr = specs.capacitance.esr;
-        spec.max_leakage = specs.capacitance.leakageCurrent;
-        spec.test_voltage = 1.0;
-        spec.test_current = 0.001;
-        spec.max_voltage = 25.0;
-        spec.max_current = 0.05;
-    }    else if (componentType == "inductor" || componentType == "电感") {
-        spec.type = ComponentType::INDUCTOR;        
-        spec.nominal_value = specs.inductance.nominal;
-        spec.tolerance_percent = specs.inductance.tolerance;
-        spec.test_voltage = 1.0;
-        spec.test_current = 0.001;
-        spec.max_voltage = 10.0;
-        spec.max_current = 0.1;
-    }    else if (componentType == "diode" || componentType == "二极管") {
-        spec.type = ComponentType::DIODE;        
-        spec.nominal_value = specs.diode.forwardVoltage;
-        spec.tolerance_percent = 0.1; // 10% 默认容差
-        spec.max_leakage = specs.diode.reverseLeakage;
-        spec.max_voltage = specs.diode.breakdownVoltage;
-        spec.test_voltage = 1.5;
-        spec.test_current = 0.01;
-        spec.max_current = 0.1;    }    else if (componentType == "ic" || componentType == "IC" || componentType == "集成电路") {
-        spec.type = ComponentType::IC;
-        spec.nominal_value = specs.ic.supplyVoltage;
-        spec.tolerance_percent = 0.05; // 5% 默认容差
-        spec.max_voltage = specs.ic.supplyVoltage;
-        spec.max_current = specs.ic.supplyCurrent;
-        spec.test_voltage = specs.ic.supplyVoltage;
-        spec.test_current = specs.ic.supplyCurrent;
-    }    else {
-        spec.type = ComponentType::UNKNOWN;
-        spec.nominal_value = 0.0;
-        spec.tolerance_percent = 0.05;
-        spec.test_voltage = 1.0;
-        spec.test_current = 0.001;
-        spec.max_voltage = 10.0;
-        spec.max_current = 0.1;
-    }
-    
-    return spec;
-}
-
-// === 信号配置接口方法实现 ===
-
-QStringList FaultDiagnostic::getAvailableTestSchemes()
-{
-    if (!signalConfig_) {
-        qWarning() << "信号配置模块未初始化";
-        return QStringList();
-    }
-    
-    // 从信号配置模块获取可用的测试方案
-    return signalConfig_->getAvailableTestSchemes();
-}
-
-QString FaultDiagnostic::getActiveTestScheme() const
-{
-    return activeTestScheme_;
-}
-
-// === 端口配置接口方法实现 ===
-
-bool FaultDiagnostic::isPortConfigured() const
-{
-    if (!portConfig_) {
-        return false;
-    }
-    
-    // 检查是否有有效的测试配置
-    return !currentTestConfig_.testId.isEmpty();
-}
-
-TestConfiguration FaultDiagnostic::getCurrentTestConfiguration() const
-{
-    return currentTestConfig_;
-}
-
-// === 故障分析接口方法实现 ===
-
-AnalysisResult FaultDiagnostic::getLastAnalysisResult() const
-{
-    return lastAnalysisResult_;
-}
-
-QString FaultDiagnostic::selectOptimalResistanceRange(double nominalValue)
-{
-    // 根据标称值选择最适合的量程，确保测量精度
-    // JY8902 DMM 2线电阻量程定义：
-    // 100Ω, 1KΩ, 10KΩ, 100KΩ, 1MΩ, 10MΩ, 100MΩ
-    
-    qDebug() << "开始动态量程选择，标称值:" << nominalValue << "Ω";
-    
-    // 选择量程的策略：
-    // 1. 量程应该大于标称值，但不要过大（避免精度损失）
-    // 2. 一般选择比标称值大1-2个数量级的量程
-    // 3. 考虑元件容差，留有余量
-    
-    QString selectedRange;
-    
-    if (nominalValue <= 0) {
-        // 无效标称值，使用自动量程
-        selectedRange = "auto";
-        qDebug() << "标称值无效，使用自动量程";
-    }
-    else if (nominalValue <= 10.0) {
-        // 10Ω以下 -> 使用100Ω量程
-        selectedRange = "100";
-        qDebug() << "选择100Ω量程（适用于小阻值元件）";
-    }
-    else if (nominalValue <= 100.0) {
-        // 10Ω-100Ω -> 使用1KΩ量程
-        selectedRange = "1K";
-        qDebug() << "选择1KΩ量程（适用于低阻值元件）";
-    }
-    else if (nominalValue <= 1000.0) {
-        // 100Ω-1KΩ -> 使用10KΩ量程
-        selectedRange = "10K";
-        qDebug() << "选择10KΩ量程（适用于中等阻值元件）";
-    }
-    else if (nominalValue <= 10000.0) {
-        // 1KΩ-10KΩ -> 使用100KΩ量程
-        selectedRange = "100K";
-        qDebug() << "选择100KΩ量程（适用于中高阻值元件）";
-    }
-    else if (nominalValue <= 100000.0) {
-        // 10KΩ-100KΩ -> 使用1MΩ量程
-        selectedRange = "1M";
-        qDebug() << "选择1MΩ量程（适用于高阻值元件）";
-    }
-    else if (nominalValue <= 1000000.0) {
-        // 100KΩ-1MΩ -> 使用10MΩ量程
-        selectedRange = "10M";
-        qDebug() << "选择10MΩ量程（适用于很高阻值元件）";
-    }
-    else {
-        // 大于1MΩ -> 使用100MΩ量程
-        selectedRange = "100M";
-        qDebug() << "选择100MΩ量程（适用于超高阻值元件）";
-    }
-    
-    qDebug() << "动态量程选择完成:" << selectedRange 
-             << "（标称值:" << nominalValue << "Ω）";
-    
-    return selectedRange;
+    emit errorOccurred(error);
+    qWarning() << "FaultDiagnostic error:" << error;
 }

@@ -106,6 +106,14 @@ public:
 
     QString getLastError() const { return last_error_; }
 
+    // 通用测量接口
+    QMap<QString, QVariant> measureVoltage(int channel, double range = 10.0);
+    QMap<QString, QVariant> measureCurrent(int channel, double range = 1.0);
+    QMap<QString, QVariant> measureResistance(double nominalValue);
+    QMap<QString, QVariant> measureLCR(const QMap<QString, QVariant>& params);
+    QMap<QString, QVariant> measureSMU(const QMap<QString, QVariant>& params);
+    QMap<QString, QVariant> measurePulse(const QMap<QString, QVariant>& params);
+
 public slots:
     void onDeviceStatusChanged(const QString& deviceName, bool ready);
     void onOperationCompleted(const QString& deviceName, const DeviceResult& result);
