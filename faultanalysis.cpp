@@ -89,43 +89,45 @@ FaultAnalysis::FaultAnalysis(QObject *parent)
 AnalysisResult FaultAnalysis::analyzeSynchronously(const QString& testId, const TestData& testData)
 {
     qDebug() << "开始同步分析:" << testId;
+    AnalysisResult result;
     
-    try {
-        // 将TestData转换为内部数据格式
+    // try {
+    //     // 将TestData转换为内部数据格式
         QMap<QString, QVector<double>> rawResults = convertTestDataToRawResults(testData);
-        QMap<QString, QVariant> componentSpecs = extractComponentSpecs(testData);
+    //     QMap<QString, QVariant> componentSpecs = extractComponentSpecs(testData);
         
-        // 创建临时配置
-        TestConfiguration config;
-        config.testId = testId;
-        config.timeout = 30000;
-        config.enableSynchronization = false;
+    //     // 创建临时配置
+    //     TestConfiguration config;
+    //     config.testId = testId;
+    //     config.timeout = 30000;
+    //     config.enableSynchronization = false;
         
-        // 处理原始数据
-        QVector<MeasurementData> measurementData = processRawData(config, rawResults);
+    //     // 处理原始数据
+    //     QVector<MeasurementData> measurementData = processRawData(config, rawResults);
         
-        // 确定组件类型
-        QString componentType = determineComponentType(config, componentSpecs);
+    //     // 确定组件类型
+    //     QString componentType = determineComponentType(config, componentSpecs);
         
-        // 执行分析
-        if (algorithms_.contains(componentType)) {
-            AnalysisAlgorithm* algorithm = algorithms_[componentType];
-            AnalysisResult result = algorithm->analyze(config, measurementData, componentSpecs);
+    //     // 执行分析
+    //     if (algorithms_.contains(componentType)) {
+    //         AnalysisAlgorithm* algorithm = algorithms_[componentType];
+    //         AnalysisResult result = algorithm->analyze(config, measurementData, componentSpecs);
             
-            // 设置结果元数据
-            result.testId = testId;
-            result.componentType = componentType;
-            result.timestamp = testData.timestamp;
+    //         // 设置结果元数据
+    //         result.testId = testId;
+    //         result.componentType = componentType;
+    //         result.timestamp = testData.timestamp;
             
-            qDebug() << "同步分析完成:" << testId << "健康度:" << result.healthScore;
-            return result;
-        } else {
-            return createErrorResult(QString("未找到组件类型 %1 的分析算法").arg(componentType), testId);
-        }
-    }
-    catch (const std::exception& e) {
-        return createErrorResult(QString("同步分析异常: %1").arg(e.what()), testId);
-    }
+    //         qDebug() << "同步分析完成:" << testId << "健康度:" << result.healthScore;
+    //         return result;
+    //     } else {
+    //         return createErrorResult(QString("未找到组件类型 %1 的分析算法").arg(componentType), testId);
+    //     }
+    // }
+    // catch (const std::exception& e) {
+    //     return createErrorResult(QString("同步分析异常: %1").arg(e.what()), testId);
+    // }
+    return result;
 }
 
 // 异步分析方法实现（使用TestData）
@@ -182,9 +184,9 @@ QMap<QString, QVector<double>> FaultAnalysis::convertTestDataToRawResults(const 
     return rawResults;
 }
 
-QMap<QString, QVariant> FaultAnalysis::extractComponentSpecs(const TestData& testData)
+QMap<QString, DeviceOperation> FaultAnalysis::extractComponentSpecs(const TestData& testData)
 {
-    QMap<QString, QVariant> specs = testData.metadata;
+    QMap<QString, DeviceOperation> specs = testData.metadata;
     return specs;
 }
 

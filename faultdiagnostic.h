@@ -61,8 +61,9 @@ struct DiagnosticResult {
     double expectedValue;       // 期望值
     double tolerance;           // 容差
     QString notes;              // 备注信息
+    QString diagnosticSummary; // 诊断摘要
     MeasurementResult measurementData; // 测量数据
-    
+    QMap<QString, QVariant> metameasurementData; // 元测量数据
     DiagnosticResult() : result(ERROR), healthScore(0), confidence(0),
                         timestamp(QDateTime::currentDateTime()), expectedValue(0), tolerance(0) {}
 };
@@ -103,7 +104,7 @@ class FaultDiagnostic : public QObject
     Q_OBJECT
 
 public:
-    explicit FaultDiagnostic(DeviceManager* deviceManager, QObject *parent = nullptr);
+    explicit FaultDiagnostic(DeviceManager* deviceManager, ComponentDiagnosticManager* diagnosticManager, QObject *parent = nullptr);
     virtual ~FaultDiagnostic();
 
     // === 主要诊断接口 ===
@@ -186,49 +187,8 @@ public:
      */
     void setGlobalTimeout(int timeout);
     
-    // === 向后兼容接口 ===
-    
-    /**
-     * @brief 兼容旧版本的模块化诊断方法
-     */
-    DiagnosticResult diagnoseComponentWithModules(const ComponentSpec& component);
-    
-    /**
-     * @brief 兼容旧版本的同步测试执行
-     */
-    TestData executeSynchronousTest(const ComponentSpec& component);
-    
-    /**
-     * @brief 兼容旧版本的同步分析执行
-     */
-    AnalysisResult executeSynchronousAnalysis(const QString& testId, const TestData& testData);
-    
-    // === 具体组件诊断方法（向后兼容） ===
-    DiagnosticResult diagnoseResistor(const ComponentSpec& spec);
-    DiagnosticResult diagnoseCapacitor(const ComponentSpec& spec);
-    DiagnosticResult diagnoseInductor(const ComponentSpec& spec);
-    DiagnosticResult diagnoseDiode(const ComponentSpec& spec);
-    DiagnosticResult diagnoseIC(const ComponentSpec& spec);
-    
-    // === 测量方法（向后兼容） ===
-    MeasurementResult measureResistance(int channel, double test_voltage, double nominalValue = 0.0);
-    MeasurementResult measureCapacitance(int channel, double test_frequency);
-    MeasurementResult measureInductance(int channel, double test_frequency);
-    MeasurementResult measureDiodeCharacteristics(int channel);
-    MeasurementResult measureICParameters(int channel, const ComponentSpec& spec);
-    
-    // === 辅助方法 ===
-    bool checkComponentConnection(int channel);
-    bool executeSyncMeasurement(const QString& syncGroup, const QStringList& deviceNames, 
-                               const QList<ComponentSpec>& components);
-    double calculateHealthScore(const DiagnosticResult& result);
-    QString generateRecommendation(const DiagnosticResult& result);
-    double calculateConfidence(const DiagnosticResult& result);
-    bool isWithinTolerance(double nominal, double measured, double tolerance_percent);
-    
     // === 数据转换方法（保持兼容性） ===
     ComponentSpec convertToLegacyComponentSpec(const TestSchemeSignals& scheme, const TestConfiguration& config);
-    DiagnosticResult convertFromAnalysisResult(const AnalysisResult& analysisResult);
     TestData convertFromMeasurementResult(const MeasurementResult& measurement);
     DiagnosticResult convertFromComponentDiagnosticResult(const ComponentDiagnosticResult& result);
     ComponentDiagnosticResult convertToComponentDiagnosticResult(const DiagnosticResult& result);
@@ -270,7 +230,6 @@ private:
     ComponentDiagnosticManager* diagnostic_manager_;
     
     // 初始化方法
-    bool initializeDiagnosticFramework();
     void connectFrameworkSignals();
     
     // 错误处理
@@ -279,21 +238,9 @@ private:
     
     // 向后兼容的内部方法
     DiagnosticResult diagnoseComponentInternal(const ComponentSpec& component);
-    
-    // 旧版本的故障分析方法（保持兼容）
-    FaultType analyzeResistorFault(const ComponentSpec& spec, const MeasurementResult& measurement);
-    FaultType analyzeCapacitorFault(const ComponentSpec& spec, const MeasurementResult& measurement);
-    FaultType analyzeDiodeFault(const ComponentSpec& spec, const MeasurementResult& measurement);
-    FaultType analyzeICFault(const ComponentSpec& spec, const MeasurementResult& measurement);
       // 工具方法
     QString faultTypeToString(FaultType type) const;
-    bool applyTestVoltage(int channel, double voltage);
-    void waitForStabilization(int delay_ms = 10);
-    double applyTemperatureCompensation(double value, double temp_coeff, double temperature);
     
-    // 数据转换方法
-    static ComponentDiagnosticResult convertToComponentResult(const DiagnosticResult& result);
-    static DiagnosticResult convertFromComponentResult(const ComponentDiagnosticResult& result);
     
     // 错误结果创建方法
     static DiagnosticResult createErrorResult(const QString& componentType, const QString& errorMessage);

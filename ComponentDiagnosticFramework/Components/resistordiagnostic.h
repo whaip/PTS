@@ -33,7 +33,13 @@ protected:
      * 需要：1个电流输出端口 + 1个电压测量端口（或2个端口用于4线法测量）
      */
     QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const override;
-    
+
+    /**
+     * @brief 获取电阻器测试所需的标准参数
+     * 包括标称值、容差数等
+     */
+    QMap<QString, QVariant> getRequiredParameters() const override;
+
     /**
      * @brief 生成电阻器接线方案
      * 支持2线法和4线法测量
@@ -71,18 +77,21 @@ private:
     // 电阻器特有的分析方法
     double calculateResistance(const QVector<double>& voltages, const QVector<double>& currents) const;
     bool isOpenCircuit(double resistance, double expectedResistance) const;
-    bool isShortCircuit(double resistance) const;
+    bool isShortCircuit(double voltage, double current) const;
     bool isOutOfTolerance(double measured, double expected, double tolerancePercent) const;
     double calculateStability(const QVector<double>& measurements) const;
     double calculateTemperatureCoefficient(const QMap<double, double>& tempResistanceMap) const;
+    double calculateMean(const QVector<double> &values);
     
     // 测试配置参数
     struct ResistorTestParams {
         double testCurrent;        // 测试电流 (A)
-        double maxVoltage;         // 最大电压 (V)
+        double testVoltage;        // 最大电压 (V)
         int measurementPoints;     // 测量点数
         bool use4WireMethod;       // 是否使用4线法
         double settlingTime;       // 稳定时间 (ms)
+        double maxVoltage;
+        QString range;
         
         ResistorTestParams() : testCurrent(0.001), maxVoltage(10.0), 
                               measurementPoints(10), use4WireMethod(false), settlingTime(100) {}

@@ -1,6 +1,5 @@
 #include "basecomponentdiagnostic.h"
 #include "../devicemanager.h"
-#include "../WiringGuide/portmanager.h"
 #include "../commontypes.h"
 #include <QDebug>
 #include <QElapsedTimer>
@@ -199,12 +198,12 @@ QString BaseComponentDiagnostic::generateTestReport(const ComponentDiagnosticRes
         stream << "故障类型: " << result.faultTypes.join(", ") << Qt::endl;
     }
     
-    if (!result.measurements.isEmpty()) {
-        stream << Qt::endl << "=== 测量数据 ===" << Qt::endl;
-        for (auto it = result.measurements.begin(); it != result.measurements.end(); ++it) {
-            stream << it.key() << ": " << formatValue(it.value()) << Qt::endl;
-        }
-    }
+    // if (!result.measurements.isEmpty()) {
+    //     stream << Qt::endl << "=== 测量数据 ===" << Qt::endl;
+    //     for (auto it = result.measurements.begin(); it != result.measurements.end(); ++it) {
+    //         stream << it.key() << ": " << formatValue(it.value()) << Qt::endl;
+    //     }
+    // }
     
     if (!result.summary.isEmpty()) {
         stream << Qt::endl << "=== 分析总结 ===" << Qt::endl;

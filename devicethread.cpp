@@ -443,12 +443,16 @@ DeviceResult AODeviceThread::executeOperation(const DeviceOperation& operation)
             break;
             
         case DeviceCommand::START_MEASUREMENT:
+            result.success = initializeChannel();
+            if(!result.success) {
+                result.error = "Failed to initialize AO device for measurement";
+            }
             apiResult = JY5710_AO_Start(deviceHandle_);
             if (apiResult == Success) {
                 result.success = true;
                 qDebug() << "AO started";
             } else {
-                result.error = QString("Failed to start AO, error: %1").arg(apiResult);
+                result.error += QString("Failed to start AO, error: %1").arg(apiResult);
             }
             break;
             
@@ -2371,9 +2375,9 @@ JY8902_DMM_2_Wire_ResistanceRange DMMDeviceThread::parseResistanceRange(const QS
     if (range == "1k" || range == "1000") return JY8902_2_Wire_Resistance_1K;
     if (range == "10k" || range == "10000") return JY8902_2_Wire_Resistance_10K;
     if (range == "100k" || range == "100000") return JY8902_2_Wire_Resistance_100K;
-    if (range == "1m" || range == "1000000") return JY8902_2_Wire_Resistance_1M;
-    if (range == "10m" || range == "10000000") return JY8902_2_Wire_Resistance_10M;
-    if (range == "100m" || range == "100000000") return JY8902_2_Wire_Resistance_100M;
-    
+    if (range == "1M" || range == "1000000") return JY8902_2_Wire_Resistance_1M;
+    if (range == "10M" || range == "10000000") return JY8902_2_Wire_Resistance_10M;
+    if (range == "100M" || range == "100000000") return JY8902_2_Wire_Resistance_100M;
+
     return JY8902_2_Wire_Resistance_Auto;  // 默认自动量程
 }

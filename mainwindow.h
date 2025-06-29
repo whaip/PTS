@@ -50,6 +50,8 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+class ComponentDiagnosticManager;
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -63,7 +65,7 @@ private slots:
     void shutdownSystem();
     void startSingleTest();
     void startBatchTest();
-    void onDeviceStatusChanged(const QString& device, DeviceStatus status);    
+    void onDeviceStatusChanged(const QString& device, DeviceStatus status);
     void onDiagnosticCompleted(const DiagnosticResult& result);
     void onErrorOccurred(const QString& error);
     void addComponent();
@@ -72,26 +74,27 @@ private slots:
     void saveTestSequence();
     void exportResults();
     void clearResults();
-    void updateSystemStatus();    
+    void updateSystemStatus();
     void runNextTest();
     void finishBatchTest();
     void stopBatchTest();               // 停止批量测试
     void openPCBIdentification();  // 新增：打开PCB识别界面
     void openCameraControl();      // 新增：打开相机控制界面
-    void openPCBAnalyzer();         // 新增：打开PCB综合分析器    
-    void openDetectionHistory();    // 新增：打开检测历史管理    
+    void openPCBAnalyzer();         // 新增：打开PCB综合分析器
+    void openDetectionHistory();    // 新增：打开检测历史管理
     void openBoardManagement();
     void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
     void startWiringGuide();        // 开始接线引导
     void onWiringCompleted(const WiringScheme& scheme);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
-    void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
-    void executeTestWithWiringGuide(const ComponentSpec& component);  // 使用接线引导执行测试（批量测试用）
+    // void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
+    // void executeTestWithWiringGuide(const ComponentSpec& component);  // 使用接线引导执行测试（批量测试用）
     void proceedToNextBatchTest();  // 继续下一个批量测试
 
 private:
     Ui::MainWindow *ui;    // 核心组件
     DeviceManager* device_manager_;
+    ComponentDiagnosticManager* diagnostic_manager;
     FaultDiagnostic* fault_diagnostic_;
     TestSequenceManager* sequence_manager_;
     ResultExporter* result_exporter_;
@@ -100,7 +103,7 @@ private:
     CameraControlWidget* camera_control_;     // 新增：相机控制组件
     RealtimePCBAnalyzerWidget* pcb_analyzer_; // 新增：PCB综合分析器
     PCBDetectionHistoryWidget* history_widget_; // 新增：检测历史管理窗口
-    PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器    
+    PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器
     PCBBoardManagementWidget* board_management_widget_; // 新增：PCB板卡管理窗口
     PCBBoardManager* board_manager_;            // 新增：PCB板卡管理器
     DeviceManagerTestWindow* device_test_window_;  // 新增：设备管理器测试窗口
@@ -111,7 +114,7 @@ private:
     WiringTaskGenerator* task_generator_;
     QString current_task_id_;  // 保存当前执行的任务ID
     QString main_batch_task_id_;  // 保存批量测试的主任务ID
-    
+
     // UI组件
     QTabWidget* main_tabs_;
       // 设备状态页面
@@ -122,7 +125,7 @@ private:
     QLabel* dmm_status_label_;
     QPushButton* init_button_;
     QPushButton* shutdown_button_;
-    
+
     // 单个测试页面
     QWidget* single_test_page_;
     QComboBox* component_type_combo_;
@@ -132,7 +135,7 @@ private:
     QSpinBox* channel_spin_;
     QPushButton* single_test_button_;
     QTextEdit* single_result_text_;
-    
+
     // 批量测试页面
     QWidget* batch_test_page_;
     QTableWidget* component_table_;
@@ -142,14 +145,14 @@ private:
     QPushButton* save_sequence_button_;
     QPushButton* batch_test_button_;
     QProgressBar* test_progress_;
-    
+
     // 结果页面
     QWidget* results_page_;
     QTableWidget* results_table_;
     QPushButton* export_button_;
     QPushButton* clear_button_;
     QTextEdit* detail_text_;
-    
+
     // 状态栏
     QLabel* system_status_label_;
     QLabel* test_count_label_;
@@ -159,7 +162,7 @@ private:
     TestSequence current_sequence_;
     int current_test_index_;
     bool batch_testing_active_;
-    
+
     // 批量测试的统一接线方案管理
     bool unified_wiring_prepared_;                      // 是否已准备统一接线
 
@@ -177,7 +180,6 @@ private:
     ComponentSpec createComponentFromUI();
     TestStep createTestStepFromComponent(const ComponentSpec& component);
     void populateComponentTable();
-    QString formatResult(const DiagnosticResult& result);
     QString getStatusIcon(DeviceStatus status);
       // 批量测试的统一接线方案管理方法
     ComponentSpec createBatchComponentSpec();

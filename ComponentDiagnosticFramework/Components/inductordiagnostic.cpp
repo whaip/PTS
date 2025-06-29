@@ -106,31 +106,31 @@ ComponentTestConfig InductorDiagnostic::configureDataAcquisition(const Component
     Q_UNUSED(ports)
     
     ComponentTestConfig config;
-    config.testName = QString("Inductor Test - %1").arg(component.reference);
-    config.timeout = 30000;
+    // config.testName = QString("Inductor Test - %1").arg(component.reference);
+    // config.timeout = 30000;
     
-    // 根据电感器规格设置测量参数
-    config.parameters["frequency_start"] = startFrequency_;
-    config.parameters["frequency_end"] = endFrequency_;
-    config.parameters["frequency_points"] = frequencyPoints_;
-    config.parameters["test_current"] = minTestCurrent_;
-    config.parameters["measurement_mode"] = "INDUCTANCE";
-    config.parameters["measurement_speed"] = "MEDIUM";
-    config.parameters["averaging"] = 4;
+    // // 根据电感器规格设置测量参数
+    // config.parameters["frequency_start"] = startFrequency_;
+    // config.parameters["frequency_end"] = endFrequency_;
+    // config.parameters["frequency_points"] = frequencyPoints_;
+    // config.parameters["test_current"] = minTestCurrent_;
+    // config.parameters["measurement_mode"] = "INDUCTANCE";
+    // config.parameters["measurement_speed"] = "MEDIUM";
+    // config.parameters["averaging"] = 4;
     
-    // 根据电感器规格调整测量参数
-    if (component.parameters.contains("nominal_value")) {
-        double nominalL = component.parameters["nominal_value"].toDouble();
+    // // 根据电感器规格调整测量参数
+    // if (component.parameters.contains("nominal_value")) {
+    //     double nominalL = component.parameters["nominal_value"].toDouble();
         
-        // 根据电感量调整测试频率范围
-        if (nominalL > 1e-3) {
-            // 大电感：降低测试频率
-            config.parameters["frequency_end"] = qMin(endFrequency_, 100000.0);
-        } else if (nominalL < 1e-6) {
-            // 小电感：提高测试频率
-            config.parameters["frequency_start"] = qMax(startFrequency_, 1000.0);
-        }
-    }
+    //     // 根据电感量调整测试频率范围
+    //     if (nominalL > 1e-3) {
+    //         // 大电感：降低测试频率
+    //         config.parameters["frequency_end"] = qMin(endFrequency_, 100000.0);
+    //     } else if (nominalL < 1e-6) {
+    //         // 小电感：提高测试频率
+    //         config.parameters["frequency_start"] = qMax(startFrequency_, 1000.0);
+    //     }
+    // }
     
     return config;
 }

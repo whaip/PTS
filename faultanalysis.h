@@ -276,7 +276,7 @@ private:
     
     // 新增：数据转换辅助方法
     QMap<QString, QVector<double>> convertTestDataToRawResults(const TestData& testData);
-    QMap<QString, QVariant> extractComponentSpecs(const TestData& testData);
+    QMap<QString, DeviceOperation> extractComponentSpecs(const TestData& testData);
       // 数据处理辅助方法
     MeasurementData processSignalData(const QString& signalName,
                                      SignalType signalType,

@@ -27,6 +27,7 @@
 #include "portmanager.h"
 #include "portdefinitions.h"
 #include "commontypes.h"
+#include "componentdiagnosticmanager.h"
 
 using namespace PortDefinitions;
 
@@ -35,11 +36,12 @@ class WiringGuideDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit WiringGuideDialog(const ComponentSpec& component, 
-                              PortManager* portManager,
-                              QWidget *parent = nullptr);
+    explicit WiringGuideDialog(const ComponentSpec& component,
+                            PortManager* portManager,
+                            ComponentDiagnosticManager* diagnostic_manager_,
+                            QWidget *parent = nullptr);
     ~WiringGuideDialog();
-    
+
     // 获取配置结果
     WiringScheme getWiringScheme() const;
     bool isWiringCompleted() const { return wiringCompleted_; }
@@ -73,13 +75,13 @@ private:
     void setupPortSelectionPage();
     void setupWiringInstructionPage();
     void setupValidationPage();
-    
+
     void updateAvailablePorts();
     void updatePortTable();
     void updateWiringInstructions();
     void updateConnectionDiagram();
     void updateValidationResults();
-      void generateWiringSteps();
+    void generateWiringSteps(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts);
     void createConnectionInstructions();
       // Add missing helper function declarations
     QString generateTestParametersDescription() const;
@@ -92,29 +94,32 @@ private:
     QString componentTypeToString(ComponentType type) const;
     double getTestVoltage() const;  // Removed parameter
     double getTestFrequency() const;  // Removed parameter
-      // Missing connection generation functions  
+      // Missing connection generation functions
     QVector<ConnectionInfo> generateConnectionsForComponent(ComponentType type, const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> generateResistorConnections(const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> generateCapacitorConnections(const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> generateInductorConnections(const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> generateDiodeConnections(const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> generateICConnections(const QVector<PortInfo>& ports);  // Match implementation
-    
+    QVector<ConnectionInfo> convertToConnectionInfo(const QVector<WiringConnection>& connections) const;
+
     // Missing UI update functions
     void updateWiringStepsList();
     bool validateCurrentConfiguration() const;
-    
+
     ComponentSpec component_;
     PortManager* portManager_;
     WiringScheme currentScheme_;
-    
+    ComponentDiagnosticManager* diagnostic_manager_;
+
     bool wiringCompleted_;
+    bool isBatchWiring_;
     int currentStepIndex_;
     QVector<ConnectionInfo> wiringSteps_;
-    
+
     // UI组件
     QTabWidget* tabWidget_;
-    
+
     // 元件配置页面
     QWidget* componentConfigPage_;
     QLabel* componentTypeLabel_;
@@ -123,7 +128,7 @@ private:
     QDoubleSpinBox* nominalValueSpin_;
     QDoubleSpinBox* toleranceSpin_;
     QTextEdit* testParametersEdit_;
-    
+
     // 端口选择页面
     QWidget* portSelectionPage_;
     QTableWidget* availablePortsTable_;

@@ -23,57 +23,7 @@
 #include "include/JY5710.h"
 #include "include/JY8902.h"
 #include "5711waveformconfig.h"
-
-// 设备操作命令枚举
-enum class DeviceCommand {
-    INITIALIZE,
-    SHUTDOWN,
-    CONFIGURE_CHANNEL,
-    START_MEASUREMENT,
-    STOP_MEASUREMENT,
-    READ_DATA,
-    WRITE_DATA,
-    SYNC_TRIGGER,
-    CALIBRATE
-};
-
-// 设备操作参数结构
-struct DeviceOperation {
-    DeviceCommand command;
-    int channel = -1;
-    double value = 0.0;
-    double sampleRate = 0.0;
-    int timeout = 5000;
-    bool blocking = true;
-    QString deviceName;
-    QVariantMap parameters;
-    
-    // 同步相关
-    QString syncGroup;
-    int syncDelay = 0;  // 微秒级延迟
-    
-    // 数据采集相关参数
-    int samplesPerChannel = 1000;       // 每通道采样点数
-    QVector<int> channels;              // 多通道采集的通道列表
-    QString acquisitionMode = "single"; // "single", "multi", "continuous"
-    double inputRangeMin = -10.0;       // 输入范围最小值
-    double inputRangeMax = 10.0;        // 输入范围最大值
-    bool useCallback = false;           // 是否使用回调方式获取数据
-    
-    DeviceOperation(DeviceCommand cmd = DeviceCommand::INITIALIZE) : command(cmd) {}
-};
-
-// 设备操作结果
-struct DeviceResult {
-    bool success = false;
-    double value = 0.0;
-    QString error;
-    QVariantMap data;
-    QDateTime timestamp;
-    DeviceCommand command = DeviceCommand::INITIALIZE;  // 添加command成员
-    
-    DeviceResult(bool ok = false) : success(ok), timestamp(QDateTime::currentDateTime()) {}
-};
+#include "commontypes.h"
 
 // 设备同步控制器
 class DeviceSyncController : public QObject

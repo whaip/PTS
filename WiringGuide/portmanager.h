@@ -8,6 +8,7 @@
 #include <QTimer>
 #include "portdefinitions.h"
 #include "devicemanager.h"
+#include "commontypes.h"
 
 using namespace PortDefinitions;
 
@@ -42,7 +43,7 @@ public:
     QString getPortAllocatedTo(const QString& deviceName, int portNumber) const;
     
     // 自动端口分配
-    QVector<PortInfo> autoAllocatePorts(ComponentType componentType, const QString& allocatedTo);
+    QVector<PortInfo> autoAllocatePorts(QVector<PortRequirement> &requirements, QString &allocatedTo);
     
     // 端口验证
     bool validatePortConfiguration(const QVector<ConnectionInfo>& connections, QStringList& errors) const;

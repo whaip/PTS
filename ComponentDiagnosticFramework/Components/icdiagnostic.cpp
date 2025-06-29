@@ -173,83 +173,83 @@ ComponentTestConfig ICDiagnostic::configureDataAcquisition(const ComponentSpec& 
 {
     ComponentTestConfig config;
     
-    logInfo(QString("配置IC数据采集: %1").arg(component.reference));
+    // logInfo(QString("配置IC数据采集: %1").arg(component.reference));
     
-    try {
-        config.testName = QString("IC测试 - %1").arg(component.reference);
-        config.timeout = 60000; // 60秒超时
+    // try {
+    //     config.testName = QString("IC测试 - %1").arg(component.reference);
+    //     config.timeout = 60000; // 60秒超时
         
-        // 设置端口配置
-        for (const auto& port : ports) {
-            PortConfig portConfig;
-            portConfig.deviceName = port.deviceName;
-            portConfig.channel = port.portNumber;
-            config.portConfigs.append(portConfig);
-        }
+    //     // 设置端口配置
+    //     for (const auto& port : ports) {
+    //         PortConfig portConfig;
+    //         portConfig.deviceName = port.deviceName;
+    //         portConfig.channel = port.portNumber;
+    //         config.portConfigs.append(portConfig);
+    //     }
         
-        // 根据IC类型选择配置方法
-        if (icType_ == ICType::DIGITAL_LOGIC) {
-            // 数字逻辑IC配置
-            config.parameters["test_type"] = "digital_logic";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["input_levels"] = logicTestVoltages_;
-            config.parameters["output_loads"] = QVariantList{1000, 10000}; // 1kΩ, 10kΩ
-        } else if (icType_ == ICType::ANALOG_LINEAR) {
-            // 模拟IC配置
-            config.parameters["test_type"] = "analog";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["input_ranges"] = QVariantList{-10.0, 10.0};
-            config.parameters["output_ranges"] = QVariantList{-10.0, 10.0};
-        } else if (icType_ == ICType::MICROCONTROLLER) {
-            // 微控制器配置
-            config.parameters["test_type"] = "microcontroller";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["communication_protocol"] = communicationProtocol_;
-            config.parameters["baud_rate"] = baudRate_;
-        } else if (icType_ == ICType::MEMORY) {
-            // 存储器配置
-            config.parameters["test_type"] = "memory";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["address_lines"] = pinCount_ > 8 ? pinCount_/2 : 4;
-            config.parameters["data_lines"] = pinCount_ > 8 ? pinCount_/4 : 4;
-        } else if (icType_ == ICType::POWER_MANAGEMENT) {
-            // 电源管理IC配置
-            config.parameters["test_type"] = "power_management";
-            config.parameters["input_voltage"] = nominalVoltage_;
-            config.parameters["output_voltage"] = nominalVoltage_ / 2; // 假设降压
-            config.parameters["load_current"] = QVariantList{0.1, 0.5, 1.0}; // A
-        } else if (icType_ == ICType::INTERFACE) {
-            // 通信接口IC配置
-            config.parameters["test_type"] = "communication";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["protocol"] = communicationProtocol_;
-            config.parameters["data_rate"] = baudRate_;
-        } else {
-            // 通用IC配置
-            config.parameters["test_type"] = "generic";
-            config.parameters["supply_voltage"] = nominalVoltage_;
-            config.parameters["pin_count"] = pinCount_;
-        }
+    //     // 根据IC类型选择配置方法
+    //     if (icType_ == ICType::DIGITAL_LOGIC) {
+    //         // 数字逻辑IC配置
+    //         config.parameters["test_type"] = "digital_logic";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["input_levels"] = logicTestVoltages_;
+    //         config.parameters["output_loads"] = QVariantList{1000, 10000}; // 1kΩ, 10kΩ
+    //     } else if (icType_ == ICType::ANALOG_LINEAR) {
+    //         // 模拟IC配置
+    //         config.parameters["test_type"] = "analog";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["input_ranges"] = QVariantList{-10.0, 10.0};
+    //         config.parameters["output_ranges"] = QVariantList{-10.0, 10.0};
+    //     } else if (icType_ == ICType::MICROCONTROLLER) {
+    //         // 微控制器配置
+    //         config.parameters["test_type"] = "microcontroller";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["communication_protocol"] = communicationProtocol_;
+    //         config.parameters["baud_rate"] = baudRate_;
+    //     } else if (icType_ == ICType::MEMORY) {
+    //         // 存储器配置
+    //         config.parameters["test_type"] = "memory";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["address_lines"] = pinCount_ > 8 ? pinCount_/2 : 4;
+    //         config.parameters["data_lines"] = pinCount_ > 8 ? pinCount_/4 : 4;
+    //     } else if (icType_ == ICType::POWER_MANAGEMENT) {
+    //         // 电源管理IC配置
+    //         config.parameters["test_type"] = "power_management";
+    //         config.parameters["input_voltage"] = nominalVoltage_;
+    //         config.parameters["output_voltage"] = nominalVoltage_ / 2; // 假设降压
+    //         config.parameters["load_current"] = QVariantList{0.1, 0.5, 1.0}; // A
+    //     } else if (icType_ == ICType::INTERFACE) {
+    //         // 通信接口IC配置
+    //         config.parameters["test_type"] = "communication";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["protocol"] = communicationProtocol_;
+    //         config.parameters["data_rate"] = baudRate_;
+    //     } else {
+    //         // 通用IC配置
+    //         config.parameters["test_type"] = "generic";
+    //         config.parameters["supply_voltage"] = nominalVoltage_;
+    //         config.parameters["pin_count"] = pinCount_;
+    //     }
         
-        // 设置通用测试参数
-        config.parameters["package_type"] = packageType_;
+    //     // 设置通用测试参数
+    //     config.parameters["package_type"] = packageType_;
         
-        // 启用的测试项目
-        QStringList enabledTests;
-        if (pinContinuityTestEnabled_) enabledTests.append("continuity");
-        if (powerConsumptionTestEnabled_) enabledTests.append("power_consumption");
-        if (functionalTestEnabled_) enabledTests.append("functional");
-        if (parametricTestEnabled_) enabledTests.append("parametric");
-        if (timingTestEnabled_) enabledTests.append("timing");
+    //     // 启用的测试项目
+    //     QStringList enabledTests;
+    //     if (pinContinuityTestEnabled_) enabledTests.append("continuity");
+    //     if (powerConsumptionTestEnabled_) enabledTests.append("power_consumption");
+    //     if (functionalTestEnabled_) enabledTests.append("functional");
+    //     if (parametricTestEnabled_) enabledTests.append("parametric");
+    //     if (timingTestEnabled_) enabledTests.append("timing");
         
-        config.parameters["enabled_tests"] = enabledTests;
+    //     config.parameters["enabled_tests"] = enabledTests;
         
-        logInfo("IC数据采集配置完成");
+    //     logInfo("IC数据采集配置完成");
         
-    } catch (const std::exception& e) {
-        logError(QString("IC配置失败: %1").arg(e.what()));
-        config.parameters.clear();
-    }
+    // } catch (const std::exception& e) {
+    //     logError(QString("IC配置失败: %1").arg(e.what()));
+    //     config.parameters.clear();
+    // }
     
     return config;
 }

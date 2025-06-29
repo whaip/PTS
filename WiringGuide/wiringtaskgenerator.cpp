@@ -10,8 +10,6 @@ WiringTaskGenerator::WiringTaskGenerator(WiringResourceManager* resourceManager,
 {
     // 连接资源管理器信号
     if (resourceManager_) {
-        connect(resourceManager_, &WiringResourceManager::schemeCreated,
-                this, &WiringTaskGenerator::onSchemeCreated);
         connect(resourceManager_, &WiringResourceManager::resourcesAllocated,
                 this, &WiringTaskGenerator::onResourcesAllocated);
         connect(resourceManager_, &WiringResourceManager::resourcesReleased,
@@ -25,45 +23,6 @@ WiringTaskGenerator::WiringTaskGenerator(WiringResourceManager* resourceManager,
 
 WiringTaskGenerator::~WiringTaskGenerator()
 {
-}
-
-QString WiringTaskGenerator::generateTask(const ComponentSpec& component)
-{
-    qDebug() << "生成测试任务:" << component.reference;
-    
-    try {
-        // 生成最优接线方案
-        WiringScheme optimalScheme = resourceManager_->generateOptimalScheme(component);
-        if (optimalScheme.schemeId.isEmpty()) {
-            QString error = QString("无法为元件 %1 生成接线方案").arg(component.reference);
-            emit errorOccurred(error);
-            return QString();
-        }
-        
-        // 创建测试任务
-        TestTask task = createTaskFromScheme(optimalScheme, component);
-        
-        // 验证任务
-        QStringList errors;
-        if (!validateTaskConfiguration(task, errors)) {
-            QString error = QString("任务验证失败: %1").arg(errors.join("; "));
-            emit errorOccurred(error);
-            return QString();
-        }
-        
-        // 保存任务
-        tasks_[task.taskId] = task;
-        
-        qDebug() << "测试任务生成成功:" << task.taskName;
-        emit taskGenerated(task);
-        
-        return task.taskId;
-        
-    } catch (const std::exception& e) {
-        QString error = QString("生成任务时发生异常: %1").arg(e.what());
-        emit errorOccurred(error);
-        return QString();
-    }
 }
 
 QString WiringTaskGenerator::generateTaskFromScheme(const WiringScheme& scheme, const ComponentSpec& component)
@@ -87,15 +46,15 @@ QString WiringTaskGenerator::generateTaskFromScheme(const WiringScheme& scheme, 
     return task.taskId;
 }
 
-QString WiringTaskGenerator::generateBatchTasks(const QVector<ComponentSpec>& components)
+QString WiringTaskGenerator::generateBatchTasks(const QVector<WiringScheme>& schemes, const QVector<ComponentSpec>& components)
 {
-    qDebug() << "生成批量测试任务，数量:" << components.size();
+    qDebug() << "生成批量测试任务，数量:" << schemes.size();
     
     QStringList taskIds;
     QString batchId = QUuid::createUuid().toString();
     
-    for (const ComponentSpec& component : components) {
-        QString taskId = generateTask(component);
+    for (int i = 0; i < schemes.size(); ++i) {
+        QString taskId = generateTaskFromScheme(schemes[i], components[i]);
         if (!taskId.isEmpty()) {
             taskIds.append(taskId);
             
@@ -261,7 +220,7 @@ bool WiringTaskGenerator::isTaskReady(const QString& taskId) const
     // 检查资源是否可用
     if (resourceManager_) {
         QStringList conflicts;
-        if (!resourceManager_->checkPortConflicts(task.wiringScheme, conflicts)) {
+        if (!resourceManager_->checkPortConflicts(task.wiringScheme, conflicts, task.component.reference)) {
             return false;
         }
     }
@@ -279,13 +238,13 @@ bool WiringTaskGenerator::prepareTaskExecution(const QString& taskId)
     TestTask& task = tasks_[taskId];
     
     // 分配资源
-    if (resourceManager_) {
-        if (!resourceManager_->allocateResourcesForScheme(task.wiringScheme)) {
-            qWarning() << "资源分配失败:" << taskId;
-            emit taskFailed(taskId, "资源分配失败");
-            return false;
-        }
-    }
+    // if (resourceManager_) {
+    //     if (!resourceManager_->allocateResourcesForScheme(task.wiringScheme)) {
+    //         qWarning() << "资源分配失败:" << taskId;
+    //         emit taskFailed(taskId, "资源分配失败");
+    //         return false;
+    //     }
+    // }
     
     // 更新任务状态
     task.status = "ready";
@@ -329,34 +288,34 @@ bool WiringTaskGenerator::finalizeTaskExecution(const QString& taskId, bool succ
 QStringList WiringTaskGenerator::generateTasksFromTemplate(ComponentType componentType, int count)
 {
     QStringList taskIds;
-    
-    if (!resourceManager_) {
-        emit errorOccurred("资源管理器未初始化");
-        return taskIds;
-    }
-    
-    QVector<WiringScheme> templates = resourceManager_->getTemplatesForComponent(componentType);
-    if (templates.isEmpty()) {
-        emit errorOccurred(QString("没有找到 %1 的模板").arg(componentTypeToString(componentType)));
-        return taskIds;
-    }
-    
-    WiringScheme templateScheme = templates.first();
-    
-    for (int i = 0; i < count; ++i) {
-        // 创建虚拟元件规格
-        ComponentSpec component;
-        component.reference = QString("%1_%2").arg(componentTypeToString(componentType)).arg(i + 1);
-        component.type = componentType;
-        component.nominal_value = 1000; // 默认值
-        component.tolerance_percent = 5.0;
-        
-        QString taskId = generateTaskFromScheme(templateScheme, component);
-        if (!taskId.isEmpty()) {
-            taskIds.append(taskId);
-        }
-    }
-    
+
+    // if (!resourceManager_) {
+    //     emit errorOccurred("资源管理器未初始化");
+    //     return taskIds;
+    // }
+
+    // QVector<WiringScheme> templates = resourceManager_->getTemplatesForComponent(componentType);
+    // if (templates.isEmpty()) {
+    //     emit errorOccurred(QString("没有找到 %1 的模板").arg(componentTypeToString(componentType)));
+    //     return taskIds;
+    // }
+
+    // WiringScheme templateScheme = templates.first();
+
+    // for (int i = 0; i < count; ++i) {
+    //     // 创建虚拟元件规格
+    //     ComponentSpec component;
+    //     component.reference = QString("%1_%2").arg(componentTypeToString(componentType)).arg(i + 1);
+    //     component.type = componentType;
+    //     component.nominal_value = 1000; // 默认值
+    //     component.tolerance_percent = 5.0;
+
+    //     QString taskId = generateTaskFromScheme(templateScheme, component);
+    //     if (!taskId.isEmpty()) {
+    //         taskIds.append(taskId);
+    //     }
+    // }
+
     return taskIds;
 }
 
@@ -410,7 +369,6 @@ TestTask WiringTaskGenerator::createTaskFromComponent(const ComponentSpec& compo
     task.taskId = generateUniqueTaskId();
     task.taskName = generateTaskName(component);
     task.component = component;
-    task.testParameters = generateTestParameters(component);
     task.status = "pending";
     task.notes = QString("为元件 %1 自动生成的测试任务").arg(component.reference);
     
@@ -556,32 +514,7 @@ bool WiringTaskGenerator::validateTaskConfiguration(const TestTask& task, QStrin
         isValid = false;
     }
     
-    // 验证测试参数
-    if (!validateTestParameters(task.testParameters, task.component.type, errors)) {
-        isValid = false;
-    }
-    
     return isValid;
-}
-
-bool WiringTaskGenerator::validateWiringScheme(const WiringScheme& scheme, QStringList& errors) const
-{
-    if (scheme.schemeId.isEmpty()) {
-        errors.append("接线方案ID不能为空");
-        return false;
-    }
-    
-    if (scheme.connections.isEmpty()) {
-        errors.append("接线连接不能为空");
-        return false;
-    }
-    
-    // 使用资源管理器验证
-    if (resourceManager_) {
-        return resourceManager_->validateWiringScheme(scheme, errors);
-    }
-    
-    return true;
 }
 
 bool WiringTaskGenerator::validateWiringScheme(const WiringScheme& scheme, QStringList& errors, const QString& currentUser) const

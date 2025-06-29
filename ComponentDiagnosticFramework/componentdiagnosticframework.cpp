@@ -57,14 +57,14 @@ int registerBuiltinDiagnostics(ComponentDiagnosticManager* manager, DeviceManage
     }
     
     // 注册电容器诊断器
-    try {
-        auto capacitorDiagnostic = new CapacitorDiagnostic(deviceManager);
-        manager->registerDiagnostic(ComponentType::CAPACITOR, capacitorDiagnostic);
-        count++;
-        qInfo() << "已注册电容器诊断器";
-    } catch (const std::exception& e) {
-        qWarning() << "注册电容器诊断器失败:" << e.what();
-    }
+    // try {
+    //     auto capacitorDiagnostic = new CapacitorDiagnostic(deviceManager);
+    //     manager->registerDiagnostic(ComponentType::CAPACITOR, capacitorDiagnostic);
+    //     count++;
+    //     qInfo() << "已注册电容器诊断器";
+    // } catch (const std::exception& e) {
+    //     qWarning() << "注册电容器诊断器失败:" << e.what();
+    // }
     
     // 未来可以添加更多诊断器
     /*
@@ -100,8 +100,8 @@ BaseComponentDiagnostic* createComponentDiagnostic(ComponentType type, DeviceMan
         case ComponentType::RESISTOR:
             return new ResistorDiagnostic(deviceManager, parent);
             
-        case ComponentType::CAPACITOR:
-            return new CapacitorDiagnostic(deviceManager, parent);
+        // case ComponentType::CAPACITOR:
+        //     return new CapacitorDiagnostic(deviceManager, parent);
             
         // 未来添加更多组件类型
         /*
@@ -175,8 +175,8 @@ bool validateComponentSpec(const ComponentSpec& component, QStringList& errors)
     // 根据组件类型进行特定验证
     switch (component.type) {
         case ComponentType::RESISTOR:
-            if (component.nominal_value > 1e12) {
-                errors.append("电阻值不能超过1TΩ");
+            if (component.nominal_value > 1e8) {
+                errors.append("电阻值不能超过100MΩ");
             }
             break;
             
@@ -411,13 +411,8 @@ QMap<QString, QVariant> getRecommendedTestConfig(const ComponentSpec& component)
     // 根据组件类型设置特定配置
     switch (component.type) {
         case ComponentType::RESISTOR:
-            if (component.nominal_value < 100.0) {
-                config["use_4wire_method"] = true;
-                config["test_current"] = 0.01; // 10mA
-            } else {
-                config["use_4wire_method"] = false;
-                config["test_current"] = 0.001; // 1mA
-            }
+            config["use_4wire_method"] = false;
+            config["test_current"] = 0.001; // 1mA
             config["max_voltage"] = 10.0;
             break;
             

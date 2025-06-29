@@ -814,7 +814,7 @@ void TestExecutor::processTestResult(const QMap<QString, QVariant>& result)
     }
     
     // 添加元数据
-    testData.metadata = result.value("metadata").toMap();
+    // testData.metadata = result.value("metadata").toMap();
     
     qDebug() << "测试执行完成:" << currentTestId_ << "数据点数:" << testData.measurements.size();
     emit testCompleted(currentTestId_, testData);

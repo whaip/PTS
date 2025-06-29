@@ -104,78 +104,78 @@ ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const Componen
                                                                  const QVector<PortInfo>& ports) const
 {
     ComponentTestConfig config;
-    config.testName = QString("电容器测试_%1").arg(component.reference);
+    // config.testName = QString("电容器测试_%1").arg(component.reference);
     
-    // 计算最优测试参数
-    CapacitorTestParams testParams = calculateOptimalTestParams(component);
+    // // 计算最优测试参数
+    // CapacitorTestParams testParams = calculateOptimalTestParams(component);
     
-    // 配置输出端口（交流激励）
-    if (!ports.isEmpty()) {
-        PortConfig outputPort;
-        outputPort.deviceName = ports[0].deviceName;
-        outputPort.channel = ports[0].portNumber;
-        outputPort.signalType = SignalType::VOLTAGE_AC;
-        outputPort.signalName = "交流激励";
-        outputPort.amplitude = testParams.testVoltage;
-        outputPort.frequency = testParams.testFrequencies.first();
-        outputPort.isOutput = true;
-        outputPort.rangeMin = -testParams.testVoltage * 1.5;
-        outputPort.rangeMax = testParams.testVoltage * 1.5;
+    // // 配置输出端口（交流激励）
+    // if (!ports.isEmpty()) {
+    //     PortConfig outputPort;
+    //     outputPort.deviceName = ports[0].deviceName;
+    //     outputPort.channel = ports[0].portNumber;
+    //     outputPort.signalType = SignalType::VOLTAGE_AC;
+    //     outputPort.signalName = "交流激励";
+    //     outputPort.amplitude = testParams.testVoltage;
+    //     outputPort.frequency = testParams.testFrequencies.first();
+    //     outputPort.isOutput = true;
+    //     outputPort.rangeMin = -testParams.testVoltage * 1.5;
+    //     outputPort.rangeMax = testParams.testVoltage * 1.5;
         
-        config.portConfigs.append(outputPort);
-    }
+    //     config.portConfigs.append(outputPort);
+    // }
     
-    // 配置电压测量端口
-    if (ports.size() > 1) {
-        PortConfig voltagePort;
-        voltagePort.deviceName = ports[1].deviceName;
-        voltagePort.channel = ports[1].portNumber;
-        voltagePort.signalType = SignalType::VOLTAGE_AC;
-        voltagePort.signalName = "电压测量";
-        voltagePort.isOutput = false;
-        voltagePort.rangeMin = -testParams.testVoltage * 2;
-        voltagePort.rangeMax = testParams.testVoltage * 2;
-        voltagePort.samplesPerChannel = testParams.measurementPoints;
-        voltagePort.sampleRate = 10000.0; // 10kHz采样率
+    // // 配置电压测量端口
+    // if (ports.size() > 1) {
+    //     PortConfig voltagePort;
+    //     voltagePort.deviceName = ports[1].deviceName;
+    //     voltagePort.channel = ports[1].portNumber;
+    //     voltagePort.signalType = SignalType::VOLTAGE_AC;
+    //     voltagePort.signalName = "电压测量";
+    //     voltagePort.isOutput = false;
+    //     voltagePort.rangeMin = -testParams.testVoltage * 2;
+    //     voltagePort.rangeMax = testParams.testVoltage * 2;
+    //     voltagePort.samplesPerChannel = testParams.measurementPoints;
+    //     voltagePort.sampleRate = 10000.0; // 10kHz采样率
         
-        config.portConfigs.append(voltagePort);
-    }
+    //     config.portConfigs.append(voltagePort);
+    // }
     
-    // 配置电流测量端口
-    if (ports.size() > 2) {
-        PortConfig currentPort;
-        currentPort.deviceName = ports[2].deviceName;
-        currentPort.channel = ports[2].portNumber;
-        currentPort.signalType = SignalType::CURRENT_AC;
-        currentPort.signalName = "电流测量";
-        currentPort.isOutput = false;
-        // 根据容值估算电流范围
-        double expectedCurrent = 2 * M_PI * testParams.testFrequencies.first() * 
-                                component.nominal_value * testParams.testVoltage;
-        currentPort.rangeMin = -expectedCurrent * 10;
-        currentPort.rangeMax = expectedCurrent * 10;
-        currentPort.samplesPerChannel = testParams.measurementPoints;
-        currentPort.sampleRate = 10000.0;
+    // // 配置电流测量端口
+    // if (ports.size() > 2) {
+    //     PortConfig currentPort;
+    //     currentPort.deviceName = ports[2].deviceName;
+    //     currentPort.channel = ports[2].portNumber;
+    //     currentPort.signalType = SignalType::CURRENT_AC;
+    //     currentPort.signalName = "电流测量";
+    //     currentPort.isOutput = false;
+    //     // 根据容值估算电流范围
+    //     double expectedCurrent = 2 * M_PI * testParams.testFrequencies.first() *
+    //                             component.nominal_value * testParams.testVoltage;
+    //     currentPort.rangeMin = -expectedCurrent * 10;
+    //     currentPort.rangeMax = expectedCurrent * 10;
+    //     currentPort.samplesPerChannel = testParams.measurementPoints;
+    //     currentPort.sampleRate = 10000.0;
         
-        config.portConfigs.append(currentPort);
-    }
+    //     config.portConfigs.append(currentPort);
+    // }
     
-    // 设置测试参数
-    config.parameters["test_frequencies"] = QVariant::fromValue(testParams.testFrequencies);
-    config.parameters["test_voltage"] = testParams.testVoltage;
-    config.parameters["dc_bias_voltage"] = testParams.dcBiasVoltage;
-    config.parameters["measurement_points"] = testParams.measurementPoints;
-    config.parameters["settling_time"] = testParams.settlingTime;
-    config.parameters["measure_leakage"] = testParams.measureLeakage;
-    config.parameters["leakage_test_voltage"] = testParams.leakageTestVoltage;
-    config.parameters["expected_capacitance"] = component.nominal_value;
-    config.parameters["tolerance"] = component.tolerance_percent;
-    config.parameters["max_esr"] = component.max_esr;
-    config.parameters["max_leakage"] = component.max_leakage;
+    // // 设置测试参数
+    // config.parameters["test_frequencies"] = QVariant::fromValue(testParams.testFrequencies);
+    // config.parameters["test_voltage"] = testParams.testVoltage;
+    // config.parameters["dc_bias_voltage"] = testParams.dcBiasVoltage;
+    // config.parameters["measurement_points"] = testParams.measurementPoints;
+    // config.parameters["settling_time"] = testParams.settlingTime;
+    // config.parameters["measure_leakage"] = testParams.measureLeakage;
+    // config.parameters["leakage_test_voltage"] = testParams.leakageTestVoltage;
+    // config.parameters["expected_capacitance"] = component.nominal_value;
+    // config.parameters["tolerance"] = component.tolerance_percent;
+    // config.parameters["max_esr"] = component.max_esr;
+    // config.parameters["max_leakage"] = component.max_leakage;
     
-    config.requiresSynchronization = true;
-    config.syncGroup = "capacitor_measurement";
-    config.timeout = 60000; // 60秒超时
+    // config.requiresSynchronization = true;
+    // config.syncGroup = "capacitor_measurement";
+    // config.timeout = 60000; // 60秒超时
     
     return config;
 }
@@ -192,138 +192,138 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
         return testData;
     }
     
-    try {
-        logInfo("开始执行电容器数据采集");
+    // try {
+    //     logInfo("开始执行电容器数据采集");
         
         // 获取测试参数
-        QVector<double> testFrequencies = config.parameters.value("test_frequencies").value<QVector<double>>();
-        double testVoltage = config.parameters.value("test_voltage", 1.0).toDouble();
-        int measurementPoints = config.parameters.value("measurement_points", 10).toInt();
-        double settlingTime = config.parameters.value("settling_time", 500).toDouble();
-        bool measureLeakage = config.parameters.value("measure_leakage", true).toBool();
-        double leakageTestVoltage = config.parameters.value("leakage_test_voltage", 10.0).toDouble();
+        // QVector<double> testFrequencies = config.parameters.value("test_frequencies").value<QVector<double>>();
+        // double testVoltage = config.parameters.value("test_voltage", 1.0).toDouble();
+        // int measurementPoints = config.parameters.value("measurement_points", 10).toInt();
+        // double settlingTime = config.parameters.value("settling_time", 500).toDouble();
+        // bool measureLeakage = config.parameters.value("measure_leakage", true).toBool();
+        // double leakageTestVoltage = config.parameters.value("leakage_test_voltage", 10.0).toDouble();
         
-        QVector<FrequencyResponse> frequencyResponses;
+        // QVector<FrequencyResponse> frequencyResponses;
         
         // 对每个频率进行测量
-        for (double frequency : testFrequencies) {
-            logInfo(QString("测量频率: %1Hz").arg(frequency));
+    //     for (double frequency : testFrequencies) {
+    //         logInfo(QString("测量频率: %1Hz").arg(frequency));
             
-            // 设置激励频率
-            // 这里应该调用实际的设备配置函数
-            // 简化实现，假设设备配置成功
+    //         // 设置激励频率
+    //         // 这里应该调用实际的设备配置函数
+    //         // 简化实现，假设设备配置成功
             
-            // 等待稳定
-            QThread::msleep(settlingTime);
+    //         // 等待稳定
+    //         QThread::msleep(settlingTime);
             
-            QVector<double> voltages, currents, voltagePhases, currentPhases;
+    //         QVector<double> voltages, currents, voltagePhases, currentPhases;
             
-            // 进行多点测量以提高精度
-            for (int i = 0; i < measurementPoints; ++i) {
-                // 模拟测量数据（实际应该从设备获取）
-                double freq = frequency;
+    //         // 进行多点测量以提高精度
+    //         for (int i = 0; i < measurementPoints; ++i) {
+    //             // 模拟测量数据（实际应该从设备获取）
+    //             double freq = frequency;
                 
-                // 从配置中获取预期电容值
-                double expectedCapacitance = config.parameters.value("expected_capacitance", 1e-6).toDouble();
+    //             // 从配置中获取预期电容值
+    //             double expectedCapacitance = config.parameters.value("expected_capacitance", 1e-6).toDouble();
                 
-                // 模拟容抗计算：Xc = 1/(2πfC)
-                double Xc = 1.0 / (2.0 * M_PI * freq * expectedCapacitance);
+    //             // 模拟容抗计算：Xc = 1/(2πfC)
+    //             double Xc = 1.0 / (2.0 * M_PI * freq * expectedCapacitance);
                 
-                // 添加一些随机噪声模拟真实测量
-                double noise = (QRandomGenerator::global()->bounded(100) - 50) / 1000.0;
-                double impedance = Xc * (1.0 + noise);
+    //             // 添加一些随机噪声模拟真实测量
+    //             double noise = (QRandomGenerator::global()->bounded(100) - 50) / 1000.0;
+    //             double impedance = Xc * (1.0 + noise);
                 
-                // 计算相位（理想电容为-90度）
-                double phase = -90.0 + (QRandomGenerator::global()->bounded(100) - 50) / 10.0;
+    //             // 计算相位（理想电容为-90度）
+    //             double phase = -90.0 + (QRandomGenerator::global()->bounded(100) - 50) / 10.0;
                 
-                voltages.append(impedance * qCos(phase * M_PI / 180.0));
-                currents.append(impedance * qSin(phase * M_PI / 180.0));
-                voltagePhases.append(phase);
-                currentPhases.append(phase);
-            }
+    //             voltages.append(impedance * qCos(phase * M_PI / 180.0));
+    //             currents.append(impedance * qSin(phase * M_PI / 180.0));
+    //             voltagePhases.append(phase);
+    //             currentPhases.append(phase);
+    //         }
             
-            // 计算平均值
-            double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
-            double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-            double avgVoltagePhase = std::accumulate(voltagePhases.begin(), voltagePhases.end(), 0.0) / voltagePhases.size();
-            double avgCurrentPhase = std::accumulate(currentPhases.begin(), currentPhases.end(), 0.0) / currentPhases.size();
+    //         // 计算平均值
+    //         double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
+    //         double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
+    //         double avgVoltagePhase = std::accumulate(voltagePhases.begin(), voltagePhases.end(), 0.0) / voltagePhases.size();
+    //         double avgCurrentPhase = std::accumulate(currentPhases.begin(), currentPhases.end(), 0.0) / currentPhases.size();
             
-            // 计算频率响应
-            FrequencyResponse response;
-            response.frequency = frequency;
-            response.impedance = avgVoltage / avgCurrent;
-            response.phase = avgCurrentPhase - avgVoltagePhase;
-            response.capacitance = calculateCapacitance(frequency, avgVoltage, avgCurrent, response.phase);
-            response.esr = calculateESR(avgVoltage, avgCurrent, response.phase);
+    //         // 计算频率响应
+    //         FrequencyResponse response;
+    //         response.frequency = frequency;
+    //         response.impedance = avgVoltage / avgCurrent;
+    //         response.phase = avgCurrentPhase - avgVoltagePhase;
+    //         response.capacitance = calculateCapacitance(frequency, avgVoltage, avgCurrent, response.phase);
+    //         response.esr = calculateESR(avgVoltage, avgCurrent, response.phase);
             
-            frequencyResponses.append(response);
+    //         frequencyResponses.append(response);
             
-            logInfo(QString("频率 %1Hz: Z=%2Ω, φ=%3°, C=%4F, ESR=%5Ω")
-                   .arg(frequency)
-                   .arg(response.impedance)
-                   .arg(response.phase)
-                   .arg(response.capacitance)
-                   .arg(response.esr));
-        }
+    //         logInfo(QString("频率 %1Hz: Z=%2Ω, φ=%3°, C=%4F, ESR=%5Ω")
+    //                .arg(frequency)
+    //                .arg(response.impedance)
+    //                .arg(response.phase)
+    //                .arg(response.capacitance)
+    //                .arg(response.esr));
+    //     }
         
-        // 存储频率响应数据
-        QVector<double> frequencies, impedances, phases, capacitances, esrValues;
-        for (const FrequencyResponse& resp : frequencyResponses) {
-            frequencies.append(resp.frequency);
-            impedances.append(resp.impedance);
-            phases.append(resp.phase);
-            capacitances.append(resp.capacitance);
-            esrValues.append(resp.esr);
-        }
+    //     // 存储频率响应数据
+    //     QVector<double> frequencies, impedances, phases, capacitances, esrValues;
+    //     for (const FrequencyResponse& resp : frequencyResponses) {
+    //         frequencies.append(resp.frequency);
+    //         impedances.append(resp.impedance);
+    //         phases.append(resp.phase);
+    //         capacitances.append(resp.capacitance);
+    //         esrValues.append(resp.esr);
+    //     }
         
-        testData.measurements.clear(); // 确保清空列表
+    //     testData.measurements.clear(); // 确保清空列表
         
-        // 存储测量数据 - 修复数据结构访问
-        QMap<QString, QVariant> measurement;
-        measurement["frequencies"] = QVariant::fromValue(frequencies);
-        measurement["impedances"] = QVariant::fromValue(impedances);
-        measurement["phases"] = QVariant::fromValue(phases);
-        measurement["capacitances"] = QVariant::fromValue(capacitances);
-        measurement["esr_values"] = QVariant::fromValue(esrValues);
+    //     // 存储测量数据 - 修复数据结构访问
+    //     QMap<QString, QVariant> measurement;
+    //     measurement["frequencies"] = QVariant::fromValue(frequencies);
+    //     measurement["impedances"] = QVariant::fromValue(impedances);
+    //     measurement["phases"] = QVariant::fromValue(phases);
+    //     measurement["capacitances"] = QVariant::fromValue(capacitances);
+    //     measurement["esr_values"] = QVariant::fromValue(esrValues);
         
-        // 计算平均容值和ESR
-        double avgCapacitance = std::accumulate(capacitances.begin(), capacitances.end(), 0.0) / capacitances.size();
-        double avgESR = std::accumulate(esrValues.begin(), esrValues.end(), 0.0) / esrValues.size();
+    //     // 计算平均容值和ESR
+    //     double avgCapacitance = std::accumulate(capacitances.begin(), capacitances.end(), 0.0) / capacitances.size();
+    //     double avgESR = std::accumulate(esrValues.begin(), esrValues.end(), 0.0) / esrValues.size();
         
-        measurement["avg_capacitance"] = avgCapacitance;
-        measurement["avg_esr"] = avgESR;
+    //     measurement["avg_capacitance"] = avgCapacitance;
+    //     measurement["avg_esr"] = avgESR;
         
-        // 漏电流测量
-        if (measureLeakage) {
-            logInfo("开始漏电流测量");
+    //     // 漏电流测量
+    //     if (measureLeakage) {
+    //         logInfo("开始漏电流测量");
             
-            // 施加直流电压并测量漏电流
-            // 这里应该调用实际的设备操作
-            // 简化实现，模拟漏电流测量
+    //         // 施加直流电压并测量漏电流
+    //         // 这里应该调用实际的设备操作
+    //         // 简化实现，模拟漏电流测量
             
-            QThread::msleep(1000); // 等待稳定
+    //         QThread::msleep(1000); // 等待稳定
             
-            double leakageCurrent = 1e-9 + (QRandomGenerator::global()->bounded(100) / 1e12); // 模拟1nA级别的漏电流
-            measurement["leakage_current"] = leakageCurrent;
+    //         double leakageCurrent = 1e-9 + (QRandomGenerator::global()->bounded(100) / 1e12); // 模拟1nA级别的漏电流
+    //         measurement["leakage_current"] = leakageCurrent;
             
-            logInfo(QString("漏电流: %1A").arg(leakageCurrent));
-        }
+    //         logInfo(QString("漏电流: %1A").arg(leakageCurrent));
+    //     }
         
-        // 将测量数据添加到列表中
-        testData.measurements.append(measurement);
+    //     // 将测量数据添加到列表中
+    //     testData.measurements.append(measurement);
         
-        // 设置元数据
-        testData.metadata = config.parameters;
-        testData.metadata["measurement_method"] = "AC_impedance";
+    //     // 设置元数据
+    //     testData.metadata = config.parameters;
+    //     testData.metadata["measurement_method"] = "AC_impedance";
         
-        testData.valid = true;
-        logInfo(QString("电容器数据采集完成，平均容值: %1F, 平均ESR: %2Ω")
-               .arg(avgCapacitance).arg(avgESR));
+    //     testData.valid = true;
+    //     logInfo(QString("电容器数据采集完成，平均容值: %1F, 平均ESR: %2Ω")
+    //            .arg(avgCapacitance).arg(avgESR));
         
-    } catch (const std::exception& e) {
-        testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
-        logError(testData.errorMessage);
-    }
+    // } catch (const std::exception& e) {
+    //     testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
+    //     logError(testData.errorMessage);
+    // }
     
     return testData;
 }

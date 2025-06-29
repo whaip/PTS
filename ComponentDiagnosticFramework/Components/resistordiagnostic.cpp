@@ -24,36 +24,61 @@ QString ResistorDiagnostic::getComponentTypeName() const
 
 QStringList ResistorDiagnostic::getSupportedModels() const
 {
-    return QStringList() << "通用电阻" << "精密电阻" << "功率电阻" << "热敏电阻" << "光敏电阻";
+    return QStringList() << "通用电阻" << "精密电阻";
 }
 
 QVector<PortRequirement> ResistorDiagnostic::getPortRequirements(const ComponentSpec& component) const
 {
     QVector<PortRequirement> requirements;
     
-    // 根据电阻值选择测试方法
-    bool use4WireMethod = false; // 不使用4线法测量
+    // 电阻测量需要以下端口配置
     
-    if (use4WireMethod) {
-        // 4线法测量需要4个端口
-        requirements.append(PortRequirement(PortType::ANALOG_OUTPUT, 1, "电流源输出+"));
-        requirements.append(PortRequirement(PortType::ANALOG_OUTPUT, 1, "电流源输出-"));
-        requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "电压测量+"));
-        requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "电压测量-"));
-    } else {
-        // 2线法测量需要2个端口
-        requirements.append(PortRequirement(PortType::ANALOG_OUTPUT, 1, "电流源输出"));
-        requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "电压测量"));
-    }
+    // 1. 电源输出端口 - 提供测试电流
+    PortRequirement powerPort;
+    powerPort.portType = PortType::POWER_OUTPUT;
+    powerPort.count = 1;
+    powerPort.description = "电源输出端口 - 提供测试电流";
+    requirements.append(powerPort);
     
-    // 如果需要高精度测量，添加万用表端口
-    if (component.nominal_value > 1e6) { // 高阻值使用万用表
-        requirements.append(PortRequirement(PortType::DMM_MEASUREMENT, 2, "万用表测量"));
-    }
+    // 2. 电压测量端口 - 测量电阻两端电压
+    PortRequirement voltagePort;
+    voltagePort.portType = PortType::DIGITAL_INPUT;
+    voltagePort.count = 1;
+    voltagePort.description = "电压测量端口 - 测量电阻两端电压";
+    requirements.append(voltagePort);
     
+    // 3. 万用表端口 - 2个端口用于精确电阻测量
+    PortRequirement dmmPorts;
+    dmmPorts.portType = PortType::DMM_MEASUREMENT;
+    dmmPorts.count = 1;
+    dmmPorts.description = "万用表测量端口 - 精确电阻测量";
+    requirements.append(dmmPorts);
+    
+    logInfo(QString("电阻器 %1 端口需求：电源输出(1个) + 电压测量(1个) + 万用表(2个) = 总共4个端口")
+           .arg(component.reference));
+    
+    // 4. 电流测试端口 - 测量电流
+    PortRequirement currentPort;
+    currentPort.portType = PortType::ANALOG_INPUT;
+    currentPort.count = 1;
+    currentPort.description = "电流测量端口 - 测量电流";
+    requirements.append(currentPort);
+
     return requirements;
 }
 
+QMap<QString, QVariant> ResistorDiagnostic::getRequiredParameters() const
+{
+    QMap<QString, QVariant> params;
+    
+    // 电阻测试的标准参数
+    params["标称值"] = 100.0; // 默认标称值为100欧姆
+    params["容差/%"] = 5.0;     // 默认容差为5%
+
+    logInfo("电阻器测试所需标准参数已配置");
+    
+    return params;
+}
 QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const ComponentSpec& component, 
                                                                   const QVector<PortInfo>& allocatedPorts) const
 {
@@ -63,60 +88,57 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
         logError("分配的端口数量不足");
         return connections;
     }
-    
-    bool use4WireMethod = component.nominal_value < 100.0;
-    
-    if (use4WireMethod && allocatedPorts.size() >= 4) {
-        // 4线法接线
-        WiringConnection conn1;
-        conn1.componentPin = "引脚1";
-        conn1.targetPort = allocatedPorts[0]; // 电流源+
-        conn1.wireColor = "红色";
-        conn1.instruction = "将红色导线连接电阻引脚1到电流源正输出";
-        conn1.isRequired = true;
-        connections.append(conn1);
-        
-        WiringConnection conn2;
-        conn2.componentPin = "引脚1";
-        conn2.targetPort = allocatedPorts[2]; // 电压测量+
-        conn2.wireColor = "黄色";
-        conn2.instruction = "将黄色导线连接电阻引脚1到电压测量正输入";
-        conn2.isRequired = true;
-        connections.append(conn2);
-        
-        WiringConnection conn3;
-        conn3.componentPin = "引脚2";
-        conn3.targetPort = allocatedPorts[1]; // 电流源-
-        conn3.wireColor = "黑色";
-        conn3.instruction = "将黑色导线连接电阻引脚2到电流源负输出";
-        conn3.isRequired = true;
-        connections.append(conn3);
-        
-        WiringConnection conn4;
-        conn4.componentPin = "引脚2";
-        conn4.targetPort = allocatedPorts[3]; // 电压测量-
-        conn4.wireColor = "蓝色";
-        conn4.instruction = "将蓝色导线连接电阻引脚2到电压测量负输入";
-        conn4.isRequired = true;
-        connections.append(conn4);
-        
-    } else {
-        // 2线法接线
-        WiringConnection conn1;
-        conn1.componentPin = "引脚1";
-        conn1.targetPort = allocatedPorts[0]; // 电流源输出
-        conn1.wireColor = "红色";
-        conn1.instruction = "将红色导线连接电阻引脚1到信号输出";
-        conn1.isRequired = true;
-        connections.append(conn1);
-        
-        WiringConnection conn2;
-        conn2.componentPin = "引脚2";
-        conn2.targetPort = allocatedPorts[1]; // 电压测量
-        conn2.wireColor = "黑色";
-        conn2.instruction = "将黑色导线连接电阻引脚2到信号测量输入";
-        conn2.isRequired = true;
-        connections.append(conn2);
+
+    for(auto& port : allocatedPorts) {
+        switch (port.portType)
+        {
+            case PortType::POWER_OUTPUT:
+                {
+                    WiringConnection conn1;
+                    conn1.componentPin = "引脚1";
+                    conn1.targetPort = port; // 电流源输出
+                    conn1.wireColor = "红色";
+                    conn1.instruction = "将红色导线连接电阻引脚1到信号输出";
+                    conn1.isRequired = true;
+                    connections.append(conn1);
+                }
+                break;
+            case PortType::DIGITAL_INPUT:
+                {
+                    WiringConnection conn2;
+                    conn2.componentPin = "引脚2";
+                    conn2.targetPort = port; // 电压测量
+                    conn2.wireColor = "黑色";
+                    conn2.instruction = "将黑色导线连接电阻引脚2到信号测量输入";
+                    conn2.isRequired = true;
+                    connections.append(conn2);
+                }
+                break;
+            case PortType::DMM_MEASUREMENT:
+                {
+                    WiringConnection conn3;
+                    conn3.componentPin = "引脚1";
+                    conn3.targetPort = port; // 电阻测量
+                    conn3.wireColor = "蓝色";
+                    conn3.instruction = "将蓝色导线连接电阻引脚1到电阻测量";
+                    conn3.isRequired = true;
+                    connections.append(conn3);
+                }
+                break;
+            case PortType::ANALOG_INPUT:
+                {
+                    WiringConnection conn4;
+                    conn4.componentPin = "引脚1";
+                    conn4.targetPort = port; // 电流测量
+                    conn4.wireColor = "绿色";
+                    conn4.instruction = "将测量导线串联到电阻电路中";
+                    conn4.isRequired = true;
+                    connections.append(conn4);
+                }
+                break;
+            default:
+                break;
+        }
     }
     
     return connections;
@@ -131,49 +153,80 @@ ComponentTestConfig ResistorDiagnostic::configureDataAcquisition(const Component
     // 计算最优测试参数
     ResistorTestParams testParams = calculateOptimalTestParams(component);
     
-    // 配置端口 - 使用 PortConfig 结构
-    if (!ports.isEmpty()) {
-        PortConfig outputPort;
-        outputPort.deviceName = ports[0].deviceName;
-        outputPort.channel = ports[0].portNumber;
-        outputPort.signalType = SignalType::CURRENT_DC;
-        outputPort.signalName = "测试电流";
-        outputPort.amplitude = testParams.testCurrent;
-        outputPort.isOutput = true;
-        outputPort.rangeMin = -testParams.testCurrent * 2;
-        outputPort.rangeMax = testParams.testCurrent * 2;
-        
-        config.portConfigs.append(outputPort);
+    for(auto& port : ports) {
+        switch (port.portType)
+        {
+        case PortType::POWER_OUTPUT:
+            {
+                DeviceOperation operation;
+                operation.command = DeviceCommand::CONFIGURE_CHANNEL;
+                operation.parameters["channelCount"] = 1;
+                operation.parameters["sampleRate"] = 1000000.0;
+                operation.parameters["samplesPerChannel"] = 1000000.0;
+                
+                QVariantList waveformConfigs;
+
+                QVariantMap channelConfig;
+                channelConfig["channel"] = 1;
+                channelConfig["type"] = static_cast<int>(PXIe5711_testtype::HighLevelWave);
+                channelConfig["amplitude"] = 5;
+                channelConfig["frequency"] = 1000;
+                channelConfig["lowRange"] = -10.0;
+                channelConfig["highRange"] = 10.0;
+                waveformConfigs.append(channelConfig);
+                
+                operation.parameters["waveforms"] = waveformConfigs;
+                config.parameters["JY5711"] = operation;
+
+            }
+            break;
+        case PortType::DIGITAL_INPUT:
+            {
+                DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+                configOp.parameters["mode"] = "multi";
+                configOp.channels = {port.portNumber};
+                configOp.sampleRate = 1000000.0;               // 采样率1MHz
+                configOp.samplesPerChannel = 1000000;          // 缓冲区大小
+                configOp.inputRangeMin = -10.0;
+                configOp.inputRangeMax = 10.0;
+                configOp.timeout = 10000;
+
+                config.parameters["JY5322"] = configOp;
+            }
+            break;
+        case PortType::DMM_MEASUREMENT:
+            {
+                DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+                configOp.parameters["range"] = testParams.range;
+                configOp.parameters["samplesPerTrigger"] = 20;
+                configOp.parameters["sampleInterval"] = 0.02; 
+                configOp.parameters["useNPLC"] = false;
+                configOp.parameters["nplcValue"] = 3;
+                configOp.parameters["apertureTime"] = 0.02;
+                configOp.parameters["triggerDelay"] = 10;
+                configOp.parameters["bufferSize"] = 1000;
+                configOp.timeout = 10000;
+
+                config.parameters["JY8902"] = configOp;
+            }
+            break;
+        case PortType::ANALOG_INPUT:
+            {
+                DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+                configOp.parameters["mode"] = "multi";
+                configOp.channels = {port.portNumber};
+                configOp.sampleRate = 200000.0;               // 采样率200KHz
+                configOp.samplesPerChannel = 200000;          // 缓冲区大小
+                configOp.inputRangeMin = -10.0;
+                configOp.inputRangeMax = 10.0;
+                configOp.timeout = 10000;
+
+                config.parameters["JY5323"] = configOp;
+            }
+        default:
+            break;
+        }
     }
-    
-    // 配置输入端口（电压测量）
-    if (ports.size() > 1) {
-        PortConfig inputPort;
-        inputPort.deviceName = ports[1].deviceName;
-        inputPort.channel = ports[1].portNumber;
-        inputPort.signalType = SignalType::VOLTAGE_DC;
-        inputPort.signalName = "测量电压";
-        inputPort.isOutput = false;
-        inputPort.rangeMin = -testParams.maxVoltage;
-        inputPort.rangeMax = testParams.maxVoltage;
-        inputPort.samplesPerChannel = testParams.measurementPoints;
-        inputPort.sampleRate = 1000.0; // 1kHz采样率
-        
-        config.portConfigs.append(inputPort);
-    }
-    
-    // 设置测试参数
-    config.parameters["test_current"] = testParams.testCurrent;
-    config.parameters["max_voltage"] = testParams.maxVoltage;
-    config.parameters["measurement_points"] = testParams.measurementPoints;
-    config.parameters["use_4wire_method"] = testParams.use4WireMethod;
-    config.parameters["settling_time"] = testParams.settlingTime;
-    config.parameters["expected_resistance"] = component.nominal_value;
-    config.parameters["tolerance"] = component.tolerance_percent;
-    
-    config.requiresSynchronization = testParams.use4WireMethod;
-    config.syncGroup = "resistor_measurement";
-    config.timeout = 30000; // 30秒超时
     
     return config;
 }
@@ -184,6 +237,7 @@ TestData ResistorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
     testData.testId = config.testName;
     testData.timestamp = QDateTime::currentDateTime();
     testData.valid = false;
+    QMap<QString, QVariant> measurement;
     
     if (!getDeviceManager() || !getDeviceManager()->isSystemReady()) {
         testData.errorMessage = "设备管理器未就绪";
@@ -193,78 +247,181 @@ TestData ResistorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
     try {
         logInfo("开始执行电阻器数据采集");
         
-        // 获取测试参数
-        double testCurrent = config.parameters.value("test_current", 0.001).toDouble();
-        int measurementPoints = config.parameters.value("measurement_points", 10).toInt();
-        double settlingTime = config.parameters.value("settling_time", 100).toDouble();
-        bool use4WireMethod = config.parameters.value("use_4wire_method", false).toBool();
-        
-        QVector<double> voltages;
-        QVector<double> currents;
-        QVector<double> timestamps;
         
         // 配置设备
-        for (const PortConfig& portConfig : config.portConfigs) {
-            if (portConfig.isOutput) {
-                // 配置电流源输出
-                logInfo(QString("配置电流源: %1, 通道: %2, 电流: %3A")
-                       .arg(portConfig.deviceName)
-                       .arg(portConfig.channel)
-                       .arg(portConfig.amplitude));
-                       
-                // 这里应该调用实际的设备配置函数
-                // 简化实现，假设配置成功
-            } else {
-                // 配置电压测量
-                logInfo(QString("配置电压测量: %1, 通道: %2, 量程: ±%3V")
-                       .arg(portConfig.deviceName)
-                       .arg(portConfig.channel)
-                       .arg(portConfig.rangeMax));
+        for (auto it = config.parameters.begin(); it != config.parameters.end(); ++it) {
+            if(!getDeviceManager()->submitOperation(it.key(), it.value())) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), getDeviceManager()->getLastError()).toStdString());
+            }
+            DeviceResult configResult = getDeviceManager()->waitForResult(it.key(), 10000);
+            if (!configResult.success) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), configResult.error).toStdString());
             }
         }
-        
-        // 执行测量序列
-        for (int i = 0; i < measurementPoints; ++i) {
-            // 等待稳定
-            QThread::msleep(settlingTime);
-            
-            // 记录时间戳
-            timestamps.append(QDateTime::currentMSecsSinceEpoch());
-              // 测量电压（模拟数据，实际应该从设备读取）
-            double measuredVoltage = testCurrent * config.parameters.value("expected_resistance", 1000).toDouble();
-            measuredVoltage += (QRandomGenerator::global()->bounded(100) - 50) / 1000.0; // 添加小量噪声
-            
-            voltages.append(measuredVoltage);
-            currents.append(testCurrent);
-            
-            logInfo(QString("测量点 %1: U=%2V, I=%3A").arg(i+1).arg(measuredVoltage).arg(testCurrent));
+
+        // 先用万用表测量
+        DeviceOperation startOp;
+        startOp.command = DeviceCommand::START_MEASUREMENT;
+        startOp.timeout = 10000;
+        if(!getDeviceManager()->submitOperation("JY8902", startOp)) {
+            throw std::runtime_error(QString("设备 %1 启动失败: %2").arg("JY8902", getDeviceManager()->getLastError()).toStdString());
         }
-        
-        // 存储测量数据 - 修复数据结构访问
-        QMap<QString, QVariant> measurement;
-        measurement["voltages"] = QVariant::fromValue(voltages);
-        measurement["currents"] = QVariant::fromValue(currents);
-        measurement["timestamps"] = QVariant::fromValue(timestamps);
-        measurement["measurement_count"] = measurementPoints;
-        
-        // 计算基本统计数据
-        double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
-        double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-        double measuredResistance = avgCurrent != 0 ? avgVoltage / avgCurrent : 0;
-        
-        measurement["avg_voltage"] = avgVoltage;
-        measurement["avg_current"] = avgCurrent;
-        measurement["calculated_resistance"] = measuredResistance;
-        
+        DeviceResult startResult = getDeviceManager()->waitForResult("JY8902", 10000);
+        if(!startResult.success) {
+            throw std::runtime_error(QString("设备 %1 启动失败: %2").arg("JY8902", startResult.error).toStdString());
+        }
+        DeviceOperation triggerOp;
+        triggerOp.command = DeviceCommand::SYNC_TRIGGER;
+        triggerOp.timeout = 10000;
+        if (!getDeviceManager()->submitOperation("JY8902", triggerOp)) {
+            throw std::runtime_error(QString("设备 %1 同步触发失败: %2").arg("JY8902", getDeviceManager()->getLastError()).toStdString());
+        }
+        DeviceResult triggerResult = getDeviceManager()->waitForResult("JY8902", 10000);
+        if (!triggerResult.success) {
+            throw std::runtime_error(QString("设备 %1 同步触发失败: %2").arg("JY8902", triggerResult.error).toStdString());
+        }
+        QVector<QVector<double>> channelData;
+        DeviceManager::WaitResult waitResult = getDeviceManager()->waitForDataWithEventLoop(
+            "JY8902", channelData, 50, 100, 15000);
+        if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty())
+        {
+            for(double value : channelData[0]) {
+                logInfo(QString("万用表测量电阻值: %1 Ω").arg(value));
+            }
+            measurement["resistance"] = QVariant::fromValue(channelData[0]);
+        }else{
+            throw std::runtime_error("万用表测量数据为空或读取失败");
+        }
+        DeviceOperation stopOp(DeviceCommand::STOP_MEASUREMENT);
+        stopOp.timeout = 5000;
+        if (!getDeviceManager()->submitOperation("JY8902", stopOp)) {
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY8902", getDeviceManager()->getLastError()).toStdString());
+        }
+        DeviceResult stopResult = getDeviceManager()->waitForResult("JY8902", 5000);
+        if (!stopResult.success) {
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY8902", stopResult.error).toStdString());
+        }
+        // 写入数据
+        DeviceOperation outputOp;
+        outputOp.command = DeviceCommand::WRITE_DATA;
+        outputOp.parameters["waveforms"] = config.parameters["JY5711"].parameters["waveforms"];
+        outputOp.parameters["sampleRate"] = config.parameters["JY5711"].parameters["sampleRate"];
+        outputOp.parameters["samplesPerChannel"] = config.parameters["JY5711"].parameters["samplesPerChannel"];
+
+        getDeviceManager()->submitOperation("JY5711", outputOp);
+        DeviceResult outputResult = getDeviceManager()->waitForResult("JY5711", 15000);
+        if(!outputResult.success) {
+            throw std::runtime_error(QString("设备 %1 写入数据失败: %2").arg("JY5711", getDeviceManager()->getLastError()).toStdString());
+        }
+        // 创建同步组
+        const QString syncGroupName = "resistor_test_group";
+        const QStringList deviceNames = {"JY5711", "JY5323", "JY5322"};
+        getDeviceManager()->createSyncGroup(syncGroupName, deviceNames);
+
+        QList<DeviceOperation> syncOperations;
+        DeviceOperation triggerOp5711;
+        triggerOp5711.deviceName = "JY5711";
+        triggerOp5711.command = DeviceCommand::SYNC_TRIGGER;
+        triggerOp5711.syncGroup = syncGroupName;
+        syncOperations.append(triggerOp5711);
+
+        DeviceOperation daqStartOp;
+        daqStartOp.command = DeviceCommand::START_MEASUREMENT;
+        daqStartOp.deviceName = "JY5323";
+        daqStartOp.syncGroup = syncGroupName;
+        daqStartOp.syncDelay = 0;
+        daqStartOp.timeout = 5000;
+        syncOperations.append(daqStartOp);
+
+        daqStartOp.command = DeviceCommand::START_MEASUREMENT;
+        daqStartOp.deviceName = "JY5322";
+        daqStartOp.syncGroup = syncGroupName;
+        daqStartOp.syncDelay = 0;
+        daqStartOp.timeout = 5000;
+        syncOperations.append(daqStartOp);
+
+        if (!getDeviceManager()->executeSync(syncGroupName, syncOperations, 5000))
+        {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备同步执行失败");
+        }
+        DeviceResult aoResult = getDeviceManager()->waitForResult("JY5711", 5000);
+        if (!aoResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5711 输出失败: " + aoResult.error.toStdString());
+        }
+        DeviceResult daqStartResult = getDeviceManager()->waitForResult("JY5323", 5000);
+        if (!daqStartResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5323 启动失败: " + daqStartResult.error.toStdString());
+        }
+
+        daqStartResult = getDeviceManager()->waitForResult("JY5322", 5000);
+        if (!daqStartResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5322 启动失败: " + daqStartResult.error.toStdString());
+        }
+        QVector<QVector<double>> currentsChannelData;
+        waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5323", currentsChannelData, 30, 200, 8000);
+        if (waitResult.success && !currentsChannelData.isEmpty() && !currentsChannelData[0].isEmpty())
+        {
+            for(double value : currentsChannelData[config.parameters["JY5323"].channels.first()]) {
+                logInfo(QString("电流测量值: %1 A").arg(value));
+            }
+            measurement["currents"] = QVariant::fromValue(currentsChannelData[config.parameters["JY5323"].channels.first()]);
+        } else {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("电流测量数据为空或读取失败");
+        }
+
+        QVector<QVector<double>> voltageChannelData;
+        waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5322", voltageChannelData, 30, 200, 8000);
+        if( waitResult.success && !voltageChannelData.isEmpty() && !voltageChannelData[0].isEmpty())
+        {
+            for(double value : voltageChannelData[config.parameters["JY5322"].channels.first()]) {
+                logInfo(QString("电压测量值: %1 V").arg(value));
+            }
+            measurement["voltages"] = QVariant::fromValue(voltageChannelData[config.parameters["JY5322"].channels.first()]);
+        } else {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("电压测量数据为空或读取失败");
+        }
         // 将测量数据添加到列表中
         testData.measurements.append(measurement);
-        
+
         // 设置元数据
         testData.metadata = config.parameters;
-        testData.metadata["test_method"] = use4WireMethod ? "4-wire" : "2-wire";
-        
+
+        if (!getDeviceManager()->submitOperation("JY5711", stopOp)) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5711", getDeviceManager()->getLastError()).toStdString());
+        }
+
+        stopResult = getDeviceManager()->waitForResult("JY5711", 5000);
+        if (!stopResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5711", stopResult.error).toStdString());
+        }
+        if (!getDeviceManager()->submitOperation("JY5323", stopOp)) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5323", getDeviceManager()->getLastError()).toStdString());
+        }
+        DeviceResult stopResult2 = getDeviceManager()->waitForResult("JY5323", 5000);
+        if (!stopResult2.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5323", stopResult2.error).toStdString());
+        }
+        if (!getDeviceManager()->submitOperation("JY5322", stopOp)) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5322", getDeviceManager()->getLastError()).toStdString());
+        }
+        stopResult2 = getDeviceManager()->waitForResult("JY5322", 5000);
+        if (!stopResult2.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error(QString("设备 %1 停止失败: %2").arg("JY5322", stopResult2.error).toStdString());
+        }
+        getDeviceManager()->removeSyncGroup(syncGroupName);
         testData.valid = true;
-        logInfo(QString("数据采集完成，测量电阻: %1Ω").arg(measuredResistance));
         
     } catch (const std::exception& e) {
         testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
@@ -281,6 +438,7 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
     result.componentId = component.reference;
     result.componentType = getComponentTypeName();
     result.timestamp = QDateTime::currentDateTime();
+    result.metameasurements = testData.measurements.first();
     
     if (!testData.valid) {
         result.isPassed = false;
@@ -299,20 +457,21 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
         }
         
         QVector<double> voltages = measurementData.value("voltages").value<QVector<double>>();
+        QVector<double> resistance = measurementData.value("resistance").value<QVector<double>>();
         QVector<double> currents = measurementData.value("currents").value<QVector<double>>();
-        double measuredResistance = measurementData.value("calculated_resistance", 0.0).toDouble();
-        
-        if (voltages.isEmpty() || currents.isEmpty()) {
+
+        if (voltages.isEmpty() || resistance.isEmpty() || currents.isEmpty()) {
             throw std::runtime_error("测量数据为空");
         }
-        
+
         // 重新计算电阻值以确保准确性
         double calculatedResistance = calculateResistance(voltages, currents);
-        
+        double measuredResistance = resistance.isEmpty() ? 0.0 : calculateMean(resistance);
         // 存储测量结果
-        result.measurements["measured_resistance"] = calculatedResistance;
-        result.measurements["expected_resistance"] = component.nominal_value;
-        result.measurements["deviation_percent"] = calculateDeviation(calculatedResistance, component.nominal_value);
+        result.measurements["measured_resistance"] = measuredResistance;
+        result.measurements["calculated_resistance"] = calculatedResistance;
+        result.measurements["expected_resistance"] = component.params["标称值"].toDouble();
+        result.measurements["deviation_percent"] = (abs(calculatedResistance - measuredResistance) < component.nominal_value * 0.1) ? calculateDeviation(measuredResistance, component.nominal_value) : 0.0;
         result.measurements["tolerance_percent"] = component.tolerance_percent;
         
         // 故障分析
@@ -327,7 +486,7 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
         }
         
         // 2. 检查短路
-        if (isShortCircuit(calculatedResistance)) {
+        if (isShortCircuit(calculateMean(voltages), calculateMean(currents))) {
             result.faultTypes.append("SHORT_CIRCUIT");
             result.recommendations.append("检查是否有导线短路");
             result.recommendations.append("检查元件是否被导体物质污染");
@@ -335,7 +494,7 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
         }
         
         // 3. 检查阻值偏差
-        if (!hasFault && isOutOfTolerance(calculatedResistance, component.nominal_value, component.tolerance_percent)) {
+        if (!hasFault && isOutOfTolerance(measuredResistance, component.nominal_value, component.tolerance_percent)) {
             result.faultTypes.append("OUT_OF_TOLERANCE");
             result.recommendations.append("元件阻值超出规定容差范围");
             result.recommendations.append("建议更换元件");
@@ -426,7 +585,7 @@ void ResistorDiagnostic::postTestCleanup()
 
 double ResistorDiagnostic::calculateResistance(const QVector<double>& voltages, const QVector<double>& currents) const
 {
-    if (voltages.size() != currents.size() || voltages.isEmpty()) {
+    if (voltages.isEmpty() || currents.isEmpty() || voltages.size() != currents.size()) {
         return 0.0;
     }
     
@@ -445,14 +604,14 @@ double ResistorDiagnostic::calculateResistance(const QVector<double>& voltages, 
 
 bool ResistorDiagnostic::isOpenCircuit(double resistance, double expectedResistance) const
 {
-    // 如果测量电阻超过期望值的1000倍，认为是开路
-    return resistance > expectedResistance * 1000 || resistance > 1e9;
+    // 如果测量电阻小于期望值的10%，认为是开路
+    return resistance <= 1e-6;
 }
 
-bool ResistorDiagnostic::isShortCircuit(double resistance) const
+bool ResistorDiagnostic::isShortCircuit(double voltage, double current) const
 {
     // 如果电阻小于1mΩ，认为是短路
-    return resistance < 1e-3;
+    return voltage <= 1e-3 && current >= 1e-3;
 }
 
 bool ResistorDiagnostic::isOutOfTolerance(double measured, double expected, double tolerancePercent) const
@@ -502,36 +661,36 @@ ResistorDiagnostic::ResistorTestParams ResistorDiagnostic::calculateOptimalTestP
 {
     ResistorTestParams params;
     
-    // 根据电阻值选择最优测试电流
+    // 根据电阻值选择最优测试配置
     double resistance = component.nominal_value;
     
     if (resistance < 1.0) {
-        params.testCurrent = 0.1;  // 100mA for very low resistance
-        params.use4WireMethod = true;
+        params.testCurrent = 10;  // 10A for very low resistance
+        params.range = "100Ω"; // 100Ω范围
     } else if (resistance < 100.0) {
-        params.testCurrent = 0.01; // 10mA for low resistance
-        params.use4WireMethod = true;
+        params.testCurrent = 0.1; // 10mA for low resistance
+        params.range = "1k"; // 1kΩ范围
     } else if (resistance < 10000.0) {
         params.testCurrent = 0.001; // 1mA for medium resistance
+        params.range = "10k"; // 10kΩ范围
     } else if (resistance < 1e6) {
-        params.testCurrent = 1e-6; // 1µA for high resistance
+        params.testCurrent = 1e-5; // 10µA for high resistance
+        params.range = "1M"; // 1MΩ范围
+    } else if (resistance < 1e7) {
+        params.testCurrent = 1e-6; // 1µA for very high resistance
+        params.range = "10M"; // 10MΩ范围
+    } else if (resistance < 1e8) {
+        params.testCurrent = 1e-7; // 100nA for ultra high resistance
+        params.range = "100M"; // 100MΩ范围
     } else {
-        params.testCurrent = 1e-9; // 1nA for very high resistance
+        params.testCurrent = 1e-7; // 100nA for ultra high resistance
+        params.range = "100M"; // 100MΩ范围
     }
     
     // 计算最大预期电压
     params.maxVoltage = params.testCurrent * resistance * 1.5; // 1.5倍安全系数
     params.maxVoltage = qMin(params.maxVoltage, 10.0); // 限制在10V以内
-    
-    // 根据容差要求调整测量点数
-    if (component.tolerance_percent < 1.0) {
-        params.measurementPoints = 20; // 高精度测量
-    } else if (component.tolerance_percent < 5.0) {
-        params.measurementPoints = 10; // 中等精度
-    } else {
-        params.measurementPoints = 5;  // 标准测量
-    }
-    
+
     return params;
 }
 
@@ -557,4 +716,16 @@ QString ResistorDiagnostic::generateDiagnosticSummary(const ComponentSpec& compo
     }
     
     return summary;
+}
+
+double ResistorDiagnostic::calculateMean(const QVector<double> &values)
+{
+    if(values.empty()) return 0;
+
+    double sum = 0;
+    for(auto &val : values)
+    {
+        sum += val;
+    }
+    return sum / values.size();
 }

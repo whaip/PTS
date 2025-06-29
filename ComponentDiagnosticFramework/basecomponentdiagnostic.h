@@ -8,26 +8,11 @@
 #include <QVariant>
 #include <QDateTime>
 #include "../commontypes.h"
-#include "../WiringGuide/portdefinitions.h"
-
-using namespace PortDefinitions;
 
 // 前向声明
 class DeviceManager;
 struct TestData;
 struct AnalysisResult;
-
-// 端口配置需求结构
-struct PortRequirement {
-    PortType portType;              // 端口类型
-    int count;                      // 需要的端口数量
-    QString description;            // 描述
-    QMap<QString, QVariant> specs;  // 技术规格要求
-    
-    PortRequirement() : portType(PortType::ANALOG_INPUT), count(1) {}
-    PortRequirement(PortType type, int cnt, const QString& desc = "")
-        : portType(type), count(cnt), description(desc) {}
-};
 
 // 接线连接定义
 struct WiringConnection {
@@ -43,13 +28,10 @@ struct WiringConnection {
 // 测试配置参数
 struct ComponentTestConfig {
     QString testName;              // 测试名称
-    QVector<PortConfig> portConfigs; // 端口配置
-    QMap<QString, QVariant> parameters; // 测试参数
-    bool requiresSynchronization;   // 是否需要同步
-    QString syncGroup;             // 同步组
+    QMap<QString, DeviceOperation> parameters; // 测试参数
     int timeout;                   // 超时时间(ms)
     
-    ComponentTestConfig() : requiresSynchronization(false), timeout(30000) {}
+    ComponentTestConfig() : timeout(30000) {}
 };
 
 // 故障诊断结果
@@ -62,6 +44,7 @@ struct ComponentDiagnosticResult {
     double confidence;             // 置信度 (0-1)
     QStringList faultTypes;        // 故障类型列表
     QMap<QString, double> measurements; // 测量值
+    QMap<QString, QVariant> metameasurements; // 元测量值
     QMap<QString, QVariant> analysisData; // 分析数据
     QString summary;               // 总结
     QStringList recommendations;   // 建议
@@ -124,16 +107,18 @@ public:
     // 静态工厂方法
     static BaseComponentDiagnostic* createDiagnostic(ComponentType type, DeviceManager* deviceManager, QObject* parent = nullptr);
     
-protected:
-    // === 需要子类实现的虚函数 ===
-    
     /**
      * @brief 获取端口配置需求
      * @param component 组件规格
      * @return 端口需求列表
      */
     virtual QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const = 0;
-    
+
+    /**
+     * @brief 需要的标准参数和类型
+     */
+    virtual QMap<QString, QVariant> getRequiredParameters() const = 0;
+
     /**
      * @brief 生成接线方案
      * @param component 组件规格
@@ -241,6 +226,7 @@ private:
     
     // 诊断流程的私有方法
     bool allocatePorts(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);
+    bool allocatePortsByComponentType(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);
     bool setupWiring(const ComponentSpec& component, const QVector<PortInfo>& ports);
     void releasePorts(const QVector<PortInfo>& ports);
 };

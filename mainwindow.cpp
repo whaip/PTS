@@ -13,6 +13,8 @@
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QDialogButtonBox>
+#include "ComponentDiagnosticFramework/componentdiagnosticframework.h"
+#include "ComponentDiagnosticFramework/componentdiagnosticmanager.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -20,30 +22,32 @@ MainWindow::MainWindow(QWidget *parent)
     , device_manager_(nullptr)
     , fault_diagnostic_(nullptr)
     , sequence_manager_(nullptr)
-    , result_exporter_(nullptr)      
+    , result_exporter_(nullptr)
     , pcb_identifier_(nullptr)
     , current_task_id_(QString())  // 初始化任务ID为空
     , pcb_dialog_(nullptr)
     , camera_control_(nullptr)
     , pcb_analyzer_(nullptr)
     , history_widget_(nullptr)
-    , detection_manager_(nullptr)    
+    , detection_manager_(nullptr)
     , board_management_widget_(nullptr)
-    , board_manager_(nullptr)    
+    , board_manager_(nullptr)
     , device_test_window_(nullptr)  // 新增：设备管理器测试窗口
     , status_timer_(new QTimer(this))
     , port_manager_(nullptr)
     , wiring_resource_manager_(nullptr)
-    , current_wiring_dialog_(nullptr)    , task_generator_(nullptr)
+    , current_wiring_dialog_(nullptr)
+    , task_generator_(nullptr)
     , current_test_index_(0)
     , batch_testing_active_(false)
     , unified_wiring_prepared_(false)
 {
     ui->setupUi(this);
-    
+
     // 初始化核心组件
     device_manager_ = new DeviceManager(this);
-    fault_diagnostic_ = new FaultDiagnostic(device_manager_, this);
+    diagnostic_manager = ComponentDiagnosticFramework::createDiagnosticManager(device_manager_, this);
+    fault_diagnostic_ = new FaultDiagnostic(device_manager_, diagnostic_manager, this);
     sequence_manager_ = new TestSequenceManager(this);
     result_exporter_ = new ResultExporter(this);
     pcb_identifier_ = new PCBIdentifier(this);
@@ -60,13 +64,10 @@ MainWindow::MainWindow(QWidget *parent)
     if (!port_manager_->initializePorts()) {
         QMessageBox::warning(this, "警告", "端口系统初始化失败");
     }
-    
+
     // 新增：初始化接线引导资源管理器
     wiring_resource_manager_ = new WiringResourceManager(port_manager_, this);
-    if (!wiring_resource_manager_->initializeResources()) {
-        QMessageBox::warning(this, "警告", "接线引导资源初始化失败");
-    }
-    
+
     // 初始化任务生成器
     task_generator_ = new WiringTaskGenerator(wiring_resource_manager_, this);
     connect(task_generator_, &WiringTaskGenerator::taskGenerated,
@@ -76,33 +77,33 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(task_generator_, &WiringTaskGenerator::errorOccurred,
             this, &MainWindow::onErrorOccurred);
-    
+
     // 初始化检测数据管理器
     detection_manager_ = new PCBDetectionManager(this);
     if (!detection_manager_->initializeDatabase()) {
         qWarning() << "PCB检测数据库初始化失败";
     }
-    
+
     // 初始化PCB板卡管理器
     board_manager_ = new PCBBoardManager(this);
     if (!board_manager_->initializeDatabase()) {
         qWarning() << "PCB板卡数据库初始化失败";
     }
-    
+
     // 初始化PCB板卡管理窗口 - 作为独立窗口
     board_management_widget_ = new PCBBoardManagementWidget();
     board_management_widget_->setBoardManager(board_manager_);
     board_management_widget_->setCameraManager(camera_control_->getCameraManager());
-    
+
     // 设置UI
     setupUI();
-    
+
     // 连接信号槽
     connect(device_manager_, &DeviceManager::deviceStatusChanged,
             this, &MainWindow::onDeviceStatusChanged);
     connect(device_manager_, &DeviceManager::errorOccurred,
             this, &MainWindow::onErrorOccurred);
-    
+
     connect(fault_diagnostic_, &FaultDiagnostic::diagnosticCompleted,
             this, &MainWindow::onDiagnosticCompleted);
     connect(fault_diagnostic_, &FaultDiagnostic::errorOccurred,
@@ -110,7 +111,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 注释掉不存在的wiringRequired信号连接
     // connect(fault_diagnostic_, &FaultDiagnostic::wiringRequired,
     //        this, &MainWindow::showWiringGuideForComponent);
-    
+
     // 测试序列管理器信号
     connect(sequence_manager_, &TestSequenceManager::sequenceLoaded,
             this, [this](const TestSequence& sequence) {
@@ -120,20 +121,20 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(sequence_manager_, &TestSequenceManager::errorOccurred,
             this, &MainWindow::onErrorOccurred);
-    
+
     // 结果导出器信号
     connect(result_exporter_, &ResultExporter::exportCompleted,
             this, [this](const QString& filePath) {
-                QMessageBox::information(this, "Export Complete", 
+                QMessageBox::information(this, "Export Complete",
                     QString("Results exported successfully to:\n%1").arg(filePath));
             });
     connect(result_exporter_, &ResultExporter::exportFailed,
             this, &MainWindow::onErrorOccurred);
-    
+
     // 状态更新定时器
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateSystemStatus);
     status_timer_->start(1000); // 每秒更新一次状态
-    
+
     setWindowTitle("PCB元件故障诊断系统 v1.0");
     resize(1200, 800);
 
@@ -154,7 +155,7 @@ MainWindow::~MainWindow()
     if (status_timer_) {
         status_timer_->stop();
     }
-    
+
     // 停止批量测试
     if (batch_testing_active_) {
         batch_testing_active_ = false;
@@ -169,16 +170,30 @@ MainWindow::~MainWindow()
 
     if (fault_diagnostic_) {
         disconnect(fault_diagnostic_, nullptr, nullptr, nullptr);
-        
+
         // 强制删除，触发其析构函数
         delete fault_diagnostic_;
         fault_diagnostic_ = nullptr;
-        
+
         qDebug() << "故障诊断模块清理完成";
-        
+
         // 处理事件，确保所有析构操作完成
         QApplication::processEvents();
         QThread::msleep(200);
+    }
+
+    if (diagnostic_manager) {
+        // 取消所有活动任务
+        auto activeTasks = diagnostic_manager->getActiveTasks();
+        for (const QString& taskId : activeTasks) {
+            diagnostic_manager->cancelTask(taskId);
+        }
+
+        // 清理已完成的任务
+        diagnostic_manager->cleanupCompletedTasks();
+
+        delete diagnostic_manager;
+        diagnostic_manager = nullptr;
     }
 
     // 清理PCB分析器 - 需要先断开信号连接
@@ -195,7 +210,7 @@ MainWindow::~MainWindow()
         camera_control_->deleteLater();
         camera_control_ = nullptr;
     }
-    
+
     // 清理PCB板卡管理窗口
     if (board_management_widget_) {
         disconnect(board_management_widget_, nullptr, this, nullptr);
@@ -210,7 +225,7 @@ MainWindow::~MainWindow()
         pcb_dialog_->deleteLater();
         pcb_dialog_ = nullptr;
     }
-    
+
     // 清理检测历史管理窗口
     if (history_widget_) {
         disconnect(history_widget_, nullptr, this, nullptr);
@@ -229,14 +244,14 @@ MainWindow::~MainWindow()
         task_generator_->deleteLater();
         task_generator_ = nullptr;
     }
-    
+
     // 先清理wiring_resource_manager_，它会调用releaseAllResources()
     if (wiring_resource_manager_) {
         disconnect(wiring_resource_manager_, nullptr, this, nullptr);
         wiring_resource_manager_->deleteLater();  // 不再手动调用releaseAllResources，让析构函数处理
         wiring_resource_manager_ = nullptr;
     }
-    
+
     // 最后清理port_manager_，避免双重释放端口
     if (port_manager_) {
         disconnect(port_manager_, nullptr, this, nullptr);
@@ -247,12 +262,12 @@ MainWindow::~MainWindow()
         disconnect(device_manager_, nullptr, this, nullptr);
         device_manager_->shutdownDeviceThreads();
     }
-    
+
     // 强制处理所有待处理的事件
     QApplication::processEvents();
-    
+
     delete ui;
-    
+
     qDebug() << "MainWindow 析构完成";
 }
 
@@ -261,7 +276,7 @@ void MainWindow::setupUI()
     // 创建主标签页
     main_tabs_ = new QTabWidget(this);
     setCentralWidget(main_tabs_);
-    
+
     setupDeviceStatusPage();
     setupSingleTestPage();
     setupBatchTestPage();
@@ -274,44 +289,44 @@ void MainWindow::setupDeviceStatusPage()
 {
     device_status_page_ = new QWidget();
     main_tabs_->addTab(device_status_page_, "设备状态");
-    
+
     QVBoxLayout* layout = new QVBoxLayout(device_status_page_);
-    
+
     // 设备状态显示
     QGroupBox* status_group = new QGroupBox("设备状态");
     QGridLayout* status_layout = new QGridLayout(status_group);
       status_layout->addWidget(new QLabel("JY5711 (AO):"), 0, 0);
     ao_status_label_ = new QLabel("❌ 未连接");
     status_layout->addWidget(ao_status_label_, 0, 1);
-    
+
     status_layout->addWidget(new QLabel("JY5322 (DAQ):"), 1, 0);
     daq_5322_status_label_ = new QLabel("❌ 未连接");
     status_layout->addWidget(daq_5322_status_label_, 1, 1);
-    
+
     status_layout->addWidget(new QLabel("JY5323 (DAQ):"), 2, 0);
     daq_5323_status_label_ = new QLabel("❌ 未连接");
     status_layout->addWidget(daq_5323_status_label_, 2, 1);
-    
+
     status_layout->addWidget(new QLabel("JY8902 (DMM):"), 3, 0);
     dmm_status_label_ = new QLabel("❌ 未连接");    status_layout->addWidget(dmm_status_label_, 3, 1);
-    
+
     layout->addWidget(status_group);
-    
+
     // 控制按钮
     QGroupBox* control_group = new QGroupBox("系统控制");
     QHBoxLayout* control_layout = new QHBoxLayout(control_group);
-    
+
     init_button_ = new QPushButton("初始化系统");
     shutdown_button_ = new QPushButton("关闭系统");
     shutdown_button_->setEnabled(false);
-    
+
     control_layout->addWidget(init_button_);
     control_layout->addWidget(shutdown_button_);
     control_layout->addStretch();
-    
+
     layout->addWidget(control_group);
     layout->addStretch();
-    
+
     // 连接信号
     connect(init_button_, &QPushButton::clicked, this, &MainWindow::initializeSystem);
     connect(shutdown_button_, &QPushButton::clicked, this, &MainWindow::shutdownSystem);
@@ -321,59 +336,53 @@ void MainWindow::setupSingleTestPage()
 {
     single_test_page_ = new QWidget();
     main_tabs_->addTab(single_test_page_, "单元件测试");
-    
+
     QHBoxLayout* main_layout = new QHBoxLayout(single_test_page_);
-    
+
     // 左侧参数设置
     QGroupBox* param_group = new QGroupBox("测试参数");
     param_group->setFixedWidth(300);
     QFormLayout* param_layout = new QFormLayout(param_group);
-    
+
     component_type_combo_ = new QComboBox();
-    component_type_combo_->addItems({"电阻", "电容", "电感", "二极管", "集成电路"});
+    QVector<ComponentType> supportTypes = diagnostic_manager->getSupportedComponentTypes();
+    for (auto t : supportTypes) {
+        component_type_combo_->addItem(getComponentTypeDisplayName(t), QVariant::fromValue<int>(int(t)));
+    }
     param_layout->addRow("元件类型:", component_type_combo_);
-    
+
     component_ref_edit_ = new QLineEdit();
     component_ref_edit_->setPlaceholderText("如: R1, C2, IC3");
     param_layout->addRow("元件标识:", component_ref_edit_);
-    
+
     nominal_value_spin_ = new QDoubleSpinBox();
     nominal_value_spin_->setRange(0.001, 1000000);
     nominal_value_spin_->setDecimals(6);
     nominal_value_spin_->setSuffix(" Ω/F/H");
     param_layout->addRow("标称值:", nominal_value_spin_);
-    
+
     tolerance_spin_ = new QDoubleSpinBox();
     tolerance_spin_->setRange(0.1, 50.0);
     tolerance_spin_->setValue(5.0);
     tolerance_spin_->setSuffix(" %");
     param_layout->addRow("容差:", tolerance_spin_);
-      channel_spin_ = new QSpinBox();
-    channel_spin_->setRange(0, 31);
-    param_layout->addRow("测试通道:", channel_spin_);
-    
-    // 添加接线引导按钮
-    QPushButton* wiring_guide_button = new QPushButton("接线引导");
-    wiring_guide_button->setToolTip("打开接线引导对话框");
-    connect(wiring_guide_button, &QPushButton::clicked, this, &MainWindow::startWiringGuide);
-    param_layout->addRow("接线设置:", wiring_guide_button);
-    
+
     single_test_button_ = new QPushButton("开始测试");
     single_test_button_->setEnabled(false);
     param_layout->addRow(single_test_button_);
-    
+
     main_layout->addWidget(param_group);
-    
+
     // 右侧结果显示
     QGroupBox* result_group = new QGroupBox("测试结果");
     QVBoxLayout* result_layout = new QVBoxLayout(result_group);
-    
+
     single_result_text_ = new QTextEdit();
     single_result_text_->setReadOnly(true);
     result_layout->addWidget(single_result_text_);
-    
+
     main_layout->addWidget(result_group);
-    
+
     connect(single_test_button_, &QPushButton::clicked, this, &MainWindow::startSingleTest);
 }
 
@@ -381,26 +390,26 @@ void MainWindow::setupBatchTestPage()
 {
     batch_test_page_ = new QWidget();
     main_tabs_->addTab(batch_test_page_, "批量测试");
-    
+
     QVBoxLayout* layout = new QVBoxLayout(batch_test_page_);
-    
+
     // 工具栏
     QHBoxLayout* toolbar_layout = new QHBoxLayout();
-    
+
     add_component_button_ = new QPushButton("添加元件");
     remove_component_button_ = new QPushButton("删除元件");
     load_sequence_button_ = new QPushButton("加载序列");
     save_sequence_button_ = new QPushButton("保存序列");
     batch_test_button_ = new QPushButton("开始批量测试");
     batch_test_button_->setEnabled(false);
-    
+
     toolbar_layout->addWidget(add_component_button_);
     toolbar_layout->addWidget(remove_component_button_);
     toolbar_layout->addWidget(load_sequence_button_);
     toolbar_layout->addWidget(save_sequence_button_);
     toolbar_layout->addStretch();
     toolbar_layout->addWidget(batch_test_button_);
-    
+
     layout->addLayout(toolbar_layout);
       // 元件列表表格
     component_table_ = new QTableWidget();
@@ -408,14 +417,14 @@ void MainWindow::setupBatchTestPage()
     QStringList headers = {"测试名称", "组件类型", "标称值", "状态", "超时"};
     component_table_->setHorizontalHeaderLabels(headers);
     component_table_->horizontalHeader()->setStretchLastSection(true);
-    
+
     layout->addWidget(component_table_);
-    
+
     // 进度条
     test_progress_ = new QProgressBar();
     test_progress_->setVisible(false);
     layout->addWidget(test_progress_);
-    
+
     // 连接信号
     connect(add_component_button_, &QPushButton::clicked, this, &MainWindow::addComponent);
     connect(remove_component_button_, &QPushButton::clicked, this, &MainWindow::removeComponent);
@@ -428,21 +437,21 @@ void MainWindow::setupResultsPage()
 {
     results_page_ = new QWidget();
     main_tabs_->addTab(results_page_, "测试结果");
-    
+
     QVBoxLayout* layout = new QVBoxLayout(results_page_);
-    
+
     // 工具栏
     QHBoxLayout* toolbar_layout = new QHBoxLayout();
-    
+
     export_button_ = new QPushButton("导出结果");
     clear_button_ = new QPushButton("清除结果");
-    
+
     toolbar_layout->addWidget(export_button_);
     toolbar_layout->addWidget(clear_button_);
     toolbar_layout->addStretch();
-    
+
     layout->addLayout(toolbar_layout);
-    
+
     // 使用分割器
     QSplitter* splitter = new QSplitter(Qt::Horizontal);
       // 结果表格
@@ -452,17 +461,17 @@ void MainWindow::setupResultsPage()
     results_table_->setHorizontalHeaderLabels(headers);
     results_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     results_table_->horizontalHeader()->setStretchLastSection(true);
-    
+
     splitter->addWidget(results_table_);
-    
+
     // 详细信息
     detail_text_ = new QTextEdit();
     detail_text_->setReadOnly(true);
     detail_text_->setMaximumWidth(400);
-    
+
     splitter->addWidget(detail_text_);
     splitter->setSizes({800, 400});
-    
+
     layout->addWidget(splitter);
       // 连接信号
     connect(export_button_, &QPushButton::clicked, this, &MainWindow::exportResults);
@@ -477,7 +486,7 @@ void MainWindow::setupStatusBar()
     status_progress_ = new QProgressBar();
     status_progress_->setVisible(false);
     status_progress_->setMaximumWidth(200);
-    
+
     statusBar()->addWidget(system_status_label_);
     statusBar()->addPermanentWidget(test_count_label_);
     statusBar()->addPermanentWidget(status_progress_);
@@ -486,7 +495,7 @@ void MainWindow::setupStatusBar()
 void MainWindow::setupMenuBar()
 {
     QMenuBar* menu_bar = menuBar();
-    
+
     // 文件菜单
     QMenu* file_menu = menu_bar->addMenu("文件");
     file_menu->addAction("加载测试序列", this, &MainWindow::loadTestSequence);
@@ -503,7 +512,7 @@ void MainWindow::setupMenuBar()
     system_menu->addAction("设备管理器测试", this, &MainWindow::openDeviceManagerTest);
     system_menu->addSeparator();
     system_menu->addAction("接线引导", this, &MainWindow::startWiringGuide);
-    
+
     // 工具菜单
     QMenu* tools_menu = menu_bar->addMenu("工具");
     tools_menu->addAction("PCB板卡识别", this, &MainWindow::openPCBIdentification);
@@ -514,11 +523,11 @@ void MainWindow::setupMenuBar()
     tools_menu->addAction("PCB综合分析", this, &MainWindow::openPCBAnalyzer);
     tools_menu->addSeparator();
     tools_menu->addAction("检测历史管理", this, &MainWindow::openDetectionHistory);
-    
+
     // 帮助菜单
     QMenu* help_menu = menu_bar->addMenu("帮助");
     help_menu->addAction("关于", [this]() {
-        QMessageBox::about(this, "关于", 
+        QMessageBox::about(this, "关于",
             "PCB元件故障诊断系统 v1.0\n\n"
             "基于JYTEK设备的自动化测试系统\n"
             "支持设备: JY5711, JY5320, JY8902\n\n"
@@ -530,21 +539,21 @@ void MainWindow::initializeSystem()
 {
     init_button_->setEnabled(false);
     init_button_->setText("初始化中...");
-    
+
     QApplication::processEvents();
       bool success = device_manager_->initializeDeviceThreads();
     QString errorMessage;
     if (!success) {
         errorMessage = device_manager_->getLastError();
     }
-    
+
     if (success) {
         init_button_->setText("初始化系统");
         shutdown_button_->setEnabled(true);
         single_test_button_->setEnabled(true);
         batch_test_button_->setEnabled(true);
         system_status_label_->setText("系统就绪");
-        
+
         QMessageBox::information(this, "成功", "设备初始化成功！");
     } else {
         init_button_->setEnabled(true);
@@ -556,41 +565,41 @@ void MainWindow::initializeSystem()
 void MainWindow::shutdownSystem()
 {
     device_manager_->shutdownDeviceThreads();
-    
+
     init_button_->setEnabled(true);
     shutdown_button_->setEnabled(false);
     single_test_button_->setEnabled(false);
     batch_test_button_->setEnabled(false);
     system_status_label_->setText("系统未就绪");
-    
+
     updateDeviceStatus();
 }
 
 void MainWindow::startSingleTest()
 {
     ComponentSpec component = createComponentFromUI();
-    
+
     // 清除之前的任务ID
     current_task_id_.clear();
-    
+
     // 检查系统是否就绪
     if (!device_manager_ || !device_manager_->isSystemReady()) {
         QMessageBox::warning(this, "系统未就绪", "请先初始化测试设备！");
         return;
     }
-    
+
     // 设置测试参数
     component.test_voltage = 3.3;  // 默认3.3V测试电压
     component.test_current = 0.01; // 默认10mA测试电流
     component.requires_dmm = true; // 默认使用万用表
-    
+
     single_test_button_->setEnabled(false);
     single_test_button_->setText("接线引导中...");
     single_result_text_->clear();
     single_result_text_->append("开始为 " + component.reference + " 进行接线引导...\n");
-    
+
     QApplication::processEvents();
-    
+
     // 显示接线引导对话框
     showWiringGuideForComponent(component);
 }
@@ -602,27 +611,18 @@ void MainWindow::startBatchTest()
         stopBatchTest();
         return;
     }
-    
-    if (current_sequence_.steps.isEmpty()) {
-        // 如果没有测试序列，创建一个默认序列
-        if (!sequence_manager_->createDefaultSequence(current_sequence_)) {
-            QMessageBox::warning(this, "错误", "无法创建默认测试序列！");
-            return;
-        }
-        populateComponentTable();
-    }
-    
+
     // Check if system is ready
     bool systemReady = device_manager_ ? device_manager_->isSystemReady() : false;
-    
+
     if (!systemReady) {
         QMessageBox::warning(this, "系统未就绪", "请先初始化测试设备！");
         return;
     }
-    
+
     // 创建批量测试的统一组件规格
     ComponentSpec batchComponent = createBatchComponentSpec();
-    
+
     // 使用单一的接线引导对话框进行批量测试接线
     startBatchTestWithUnifiedWiring(batchComponent);
 }
@@ -634,7 +634,7 @@ void MainWindow::runNextTest()
         finishBatchTest();
         return;
     }
-    
+
     const TestStep& step = current_sequence_.steps[current_test_index_];
     if (!step.enabled) {
         // 跳过禁用的测试
@@ -645,17 +645,14 @@ void MainWindow::runNextTest()
         return;
     }
       qDebug() << "开始测试步骤" << (current_test_index_ + 1) << "/" << current_sequence_.steps.size() << ":" << step.testName;
-      // 创建组件规格 - 直接转换ComponentSpecs到ComponentSpec
-    ComponentSpecs originalSpecs = step.specs;
-    
+
     // 创建ComponentSpec用于新框架
     ComponentSpec specs;
     specs.reference = step.testName; // 使用testName作为reference
-    specs.type = ComponentType::RESISTOR; // 默认类型，应该根据componentType来设置
-    specs.nominal_value = originalSpecs.resistance.nominal;
-    specs.tolerance_percent = originalSpecs.resistance.tolerance * 100.0; // 转换为百分比
+    specs.type = stringToComponentType(step.componentType);
+    specs.params = step.specs;
     // specs.parameters保持为空或根据需要设置
-    
+
     test_count_label_->setText(QString("正在测试: %1 (%2/%3)")
                               .arg(step.testName)
                               .arg(current_test_index_ + 1)
@@ -663,9 +660,9 @@ void MainWindow::runNextTest()
     if (task_generator_ && unified_wiring_prepared_ && !main_batch_task_id_.isEmpty()) {
         // 设置当前步骤的任务ID为主任务ID（共享端口分配）
         current_task_id_ = main_batch_task_id_;
-        
+
         qDebug() << "使用主任务端口分配执行测试步骤：" << specs.reference;
-        
+
         // 直接执行故障诊断，使用已分配的端口
         QTimer::singleShot(100, [this, specs]() {
             // 执行故障诊断
@@ -685,14 +682,14 @@ void MainWindow::finishBatchTest()
     test_progress_->setVisible(false);
       // 清理统一接线方案
     unified_wiring_prepared_ = false;
-    
+
     // 完成主任务并释放端口
     if (task_generator_ && !main_batch_task_id_.isEmpty()) {
         task_generator_->finalizeTaskExecution(main_batch_task_id_, true, "BATCH_COMPLETED");
         main_batch_task_id_.clear();
     }
     current_task_id_.clear();
-    
+
     // 统计结果
     int passed = 0, failed = 0, errors = 0;
     for (const auto& result : test_results_) {
@@ -702,14 +699,14 @@ void MainWindow::finishBatchTest()
             case DiagnosticResult::ERROR: errors++; break;
         }
     }
-    
+
     QString summary = QString("批量测试完成！\n通过: %1\n失败: %2\n错误: %3")
                      .arg(passed).arg(failed).arg(errors);
-    
+
     test_count_label_->setText(QString("完成 %1 个测试").arg(test_results_.size()));
     updateResultsTable();
     main_tabs_->setCurrentWidget(results_page_);
-    
+
     QMessageBox::information(this, "测试完成", summary);
 }
 
@@ -724,22 +721,22 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
 {
     // 添加结果到列表
     test_results_.append(result);
-    
+
     // 在单元件测试时完成任务并释放端口，在批量测试时保持主任务不变
     if (task_generator_ && !current_task_id_.isEmpty() && !batch_testing_active_) {
         bool success = (result.result == DiagnosticResult::PASS);
-        QString resultString = (result.result == DiagnosticResult::PASS) ? "PASS" : 
+        QString resultString = (result.result == DiagnosticResult::PASS) ? "PASS" :
                               (result.result == DiagnosticResult::FAIL) ? "FAIL" : "ERROR";
         task_generator_->finalizeTaskExecution(current_task_id_, success, resultString);
         current_task_id_.clear();  // 清除任务ID
     }
     // 注意：在批量测试中，不清除 current_task_id_，因为所有步骤共享主任务
-    
+
     // 在单元件测试时更新结果显示
     if (main_tabs_->currentWidget() == single_test_page_) {
-        single_result_text_->append(formatResult(result));
+        single_result_text_->append(result.diagnosticSummary);
         single_result_text_->append("\n测试完成。");
-        
+
         // Re-enable the single test button
         single_test_button_->setEnabled(true);
         single_test_button_->setText("开始测试");
@@ -747,7 +744,7 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
       // 在批量测试时处理下一个测试
     if (batch_testing_active_) {
         updateResultsTable();
-        
+
         // 使用统一的下一个测试处理函数
         proceedToNextBatchTest();
     }
@@ -756,7 +753,7 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
 void MainWindow::onErrorOccurred(const QString& error)
 {
     qDebug() << "错误发生：" << error;
-    
+
     // 在批量测试中，记录错误但继续下一个测试
     if (batch_testing_active_) {
         // 创建错误结果记录
@@ -769,15 +766,15 @@ void MainWindow::onErrorOccurred(const QString& error)
         errorResult.confidence = 0.0;
         errorResult.notes = QString("测试错误: %1").arg(error);
         errorResult.timestamp = QDateTime::currentDateTime();
-        
+
         test_results_.append(errorResult);
-        
+
         // 继续下一个测试
         proceedToNextBatchTest();
     } else {
         // 在单元件测试中，显示错误对话框
         QMessageBox::warning(this, "错误", error);
-        
+
         // 恢复单元件测试按钮状态
         if (single_test_button_) {
             single_test_button_->setEnabled(true);
@@ -793,360 +790,182 @@ void MainWindow::addComponent()
     dialog.setWindowTitle("添加测试元件");
     dialog.setModal(true);
     dialog.setMinimumSize(600, 500);
-    
+
     QVBoxLayout* main_layout = new QVBoxLayout(&dialog);
-    
+
     // 创建标签页控件
     QTabWidget* tabs = new QTabWidget();
     main_layout->addWidget(tabs);
-    
+
     // 基本信息页面
     QWidget* basic_page = new QWidget();
     tabs->addTab(basic_page, "基本信息");
-    
     QFormLayout* basic_layout = new QFormLayout(basic_page);
-    
+
     // 元件类型选择
     QComboBox* type_combo = new QComboBox();
-    type_combo->addItems({"电阻", "电容", "电感", "二极管", "集成电路"});
+    QVector<ComponentType> supportTypes = diagnostic_manager->getSupportedComponentTypes();
+    for (auto t : supportTypes) {
+        type_combo->addItem(getComponentTypeDisplayName(t), QVariant::fromValue<int>(int(t)));
+    }
     basic_layout->addRow("元件类型:", type_combo);
-    
+
     // 元件标识
     QLineEdit* ref_edit = new QLineEdit();
     ref_edit->setPlaceholderText("如: R1, C2, L3, D4, IC5");
     basic_layout->addRow("元件标识:", ref_edit);
-    
-    // 测试通道
-    QSpinBox* channel_spin = new QSpinBox();
-    channel_spin->setRange(0, 31);
-    channel_spin->setValue(test_components_.size());
-    basic_layout->addRow("测试通道:", channel_spin);
-    
+
     // 描述信息
     QLineEdit* desc_edit = new QLineEdit();
     desc_edit->setPlaceholderText("可选的描述信息");
     basic_layout->addRow("描述:", desc_edit);
-    
-    // 电阻参数页面
-    QWidget* resistor_page = new QWidget();
-    tabs->addTab(resistor_page, "电阻参数");
-    
-    QFormLayout* resistor_layout = new QFormLayout(resistor_page);
-    
-    QDoubleSpinBox* resistance_spin = new QDoubleSpinBox();
-    resistance_spin->setRange(0.001, 10000000.0);
-    resistance_spin->setDecimals(6);
-    resistance_spin->setValue(1000.0);
-    resistance_spin->setSuffix(" Ω");
-    resistor_layout->addRow("阻值:", resistance_spin);
-    
-    QDoubleSpinBox* resistor_tolerance_spin = new QDoubleSpinBox();
-    resistor_tolerance_spin->setRange(0.1, 50.0);
-    resistor_tolerance_spin->setValue(5.0);
-    resistor_tolerance_spin->setSuffix(" %");
-    resistor_layout->addRow("容差:", resistor_tolerance_spin);
-    
-    QDoubleSpinBox* temp_coeff_spin = new QDoubleSpinBox();
-    temp_coeff_spin->setRange(-1000.0, 1000.0);
-    temp_coeff_spin->setValue(0.0);
-    temp_coeff_spin->setSuffix(" ppm/°C");
-    resistor_layout->addRow("温度系数:", temp_coeff_spin);
-    
-    QDoubleSpinBox* max_power_spin = new QDoubleSpinBox();
-    max_power_spin->setRange(0.001, 100.0);
-    max_power_spin->setValue(0.25);
-    max_power_spin->setSuffix(" W");
-    resistor_layout->addRow("最大功率:", max_power_spin);
-    
-    // 电容参数页面
-    QWidget* capacitor_page = new QWidget();
-    tabs->addTab(capacitor_page, "电容参数");
-    
-    QFormLayout* capacitor_layout = new QFormLayout(capacitor_page);
-    
-    QDoubleSpinBox* capacitance_spin = new QDoubleSpinBox();
-    capacitance_spin->setRange(1e-12, 1.0);
-    capacitance_spin->setDecimals(12);
-    capacitance_spin->setValue(100e-9);
-    capacitance_spin->setSuffix(" F");
-    capacitor_layout->addRow("容值:", capacitance_spin);
-    
-    QDoubleSpinBox* capacitor_tolerance_spin = new QDoubleSpinBox();
-    capacitor_tolerance_spin->setRange(0.1, 50.0);
-    capacitor_tolerance_spin->setValue(10.0);
-    capacitor_tolerance_spin->setSuffix(" %");
-    capacitor_layout->addRow("容差:", capacitor_tolerance_spin);
-    
-    QDoubleSpinBox* max_esr_spin = new QDoubleSpinBox();
-    max_esr_spin->setRange(0.001, 1000.0);
-    max_esr_spin->setValue(1.0);
-    max_esr_spin->setSuffix(" Ω");
-    capacitor_layout->addRow("最大ESR:", max_esr_spin);
-    
-    QDoubleSpinBox* max_leakage_spin = new QDoubleSpinBox();
-    max_leakage_spin->setRange(1e-12, 1e-3);
-    max_leakage_spin->setDecimals(12);
-    max_leakage_spin->setValue(1e-6);
-    max_leakage_spin->setSuffix(" A");
-    capacitor_layout->addRow("最大漏电流:", max_leakage_spin);
-    
-    QDoubleSpinBox* cap_voltage_spin = new QDoubleSpinBox();
-    cap_voltage_spin->setRange(1.0, 1000.0);
-    cap_voltage_spin->setValue(50.0);
-    cap_voltage_spin->setSuffix(" V");
-    capacitor_layout->addRow("额定电压:", cap_voltage_spin);
-    
-    // 电感参数页面
-    QWidget* inductor_page = new QWidget();
-    tabs->addTab(inductor_page, "电感参数");
-    
-    QFormLayout* inductor_layout = new QFormLayout(inductor_page);
-    
-    QDoubleSpinBox* inductance_spin = new QDoubleSpinBox();
-    inductance_spin->setRange(1e-9, 1.0);
-    inductance_spin->setDecimals(12);
-    inductance_spin->setValue(100e-6);
-    inductance_spin->setSuffix(" H");
-    inductor_layout->addRow("感值:", inductance_spin);
-    
-    QDoubleSpinBox* inductor_tolerance_spin = new QDoubleSpinBox();
-    inductor_tolerance_spin->setRange(0.1, 50.0);
-    inductor_tolerance_spin->setValue(20.0);
-    inductor_tolerance_spin->setSuffix(" %");
-    inductor_layout->addRow("容差:", inductor_tolerance_spin);
-    
-    QDoubleSpinBox* max_current_spin = new QDoubleSpinBox();
-    max_current_spin->setRange(0.001, 100.0);
-    max_current_spin->setValue(1.0);
-    max_current_spin->setSuffix(" A");
-    inductor_layout->addRow("最大电流:", max_current_spin);
-    
-    QDoubleSpinBox* dcr_spin = new QDoubleSpinBox();
-    dcr_spin->setRange(0.001, 1000.0);
-    dcr_spin->setValue(0.1);
-    dcr_spin->setSuffix(" Ω");
-    inductor_layout->addRow("直流电阻:", dcr_spin);
-    
-    // 二极管参数页面
-    QWidget* diode_page = new QWidget();
-    tabs->addTab(diode_page, "二极管参数");
-    
-    QFormLayout* diode_layout = new QFormLayout(diode_page);
-    
-    QDoubleSpinBox* forward_voltage_spin = new QDoubleSpinBox();
-    forward_voltage_spin->setRange(0.1, 5.0);
-    forward_voltage_spin->setDecimals(3);
-    forward_voltage_spin->setValue(0.7);
-    forward_voltage_spin->setSuffix(" V");
-    diode_layout->addRow("正向压降:", forward_voltage_spin);
-    
-    QDoubleSpinBox* diode_tolerance_spin = new QDoubleSpinBox();
-    diode_tolerance_spin->setRange(0.1, 50.0);
-    diode_tolerance_spin->setValue(10.0);
-    diode_tolerance_spin->setSuffix(" %");
-    diode_layout->addRow("容差:", diode_tolerance_spin);
-    
-    QDoubleSpinBox* reverse_voltage_spin = new QDoubleSpinBox();
-    reverse_voltage_spin->setRange(1.0, 1000.0);
-    reverse_voltage_spin->setValue(50.0);
-    reverse_voltage_spin->setSuffix(" V");
-    diode_layout->addRow("反向耐压:", reverse_voltage_spin);
-    
-    QDoubleSpinBox* diode_leakage_spin = new QDoubleSpinBox();
-    diode_leakage_spin->setRange(1e-12, 1e-3);
-    diode_leakage_spin->setDecimals(12);
-    diode_leakage_spin->setValue(1e-6);
-    diode_leakage_spin->setSuffix(" A");
-    diode_layout->addRow("最大漏电流:", diode_leakage_spin);
-    
-    // IC参数页面
-    QWidget* ic_page = new QWidget();
-    tabs->addTab(ic_page, "IC参数");
-    
-    QFormLayout* ic_layout = new QFormLayout(ic_page);
-    
-    QDoubleSpinBox* supply_voltage_spin = new QDoubleSpinBox();
-    supply_voltage_spin->setRange(1.0, 50.0);
-    supply_voltage_spin->setValue(5.0);
-    supply_voltage_spin->setSuffix(" V");
-    ic_layout->addRow("供电电压:", supply_voltage_spin);
-    
-    QDoubleSpinBox* ic_tolerance_spin = new QDoubleSpinBox();
-    ic_tolerance_spin->setRange(0.1, 20.0);
-    ic_tolerance_spin->setValue(5.0);
-    ic_tolerance_spin->setSuffix(" %");
-    ic_layout->addRow("容差:", ic_tolerance_spin);
-    
-    QDoubleSpinBox* ic_max_current_spin = new QDoubleSpinBox();
-    ic_max_current_spin->setRange(0.001, 10.0);
-    ic_max_current_spin->setValue(0.1);
-    ic_max_current_spin->setSuffix(" A");
-    ic_layout->addRow("最大电流:", ic_max_current_spin);
-    
-    QLineEdit* ic_type_edit = new QLineEdit();
-    ic_type_edit->setPlaceholderText("如: Logic, Analog, Mixed-Signal");
-    ic_layout->addRow("IC类型:", ic_type_edit);
-    
-    // 根据元件类型切换到相应页面
-    auto switchToComponentPage = [=]() {
-        int type_index = type_combo->currentIndex();
-        tabs->setCurrentIndex(type_index + 1); // +1因为第一页是基本信息
-    };
-    
-    connect(type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), switchToComponentPage);
-    
-    // 自动生成元件标识
-    auto generateReference = [=]() {
-        int type_index = type_combo->currentIndex();
-        QStringList prefixes = {"R", "C", "L", "D", "IC"};
-        if (type_index >= 0 && type_index < prefixes.size()) {
-            QString prefix = prefixes[type_index];
-            int count = 0;
-            for (const auto& comp : test_components_) {
-                if (comp.reference.startsWith(prefix)) {
-                    count++;
+
+    // 动态创建各类型参数页面并保存对应控件
+    QMap<ComponentType, QList<QWidget*>> paramWidgetsMap;
+    for (int i = 0; i < supportTypes.size(); ++i) {
+        ComponentType t = supportTypes[i];
+        QWidget* param_page = new QWidget();
+        tabs->addTab(param_page, getComponentTypeDisplayName(t) + " 参数");
+        QFormLayout* param_layout = new QFormLayout(param_page);
+
+        QList<QWidget*> widgetList;
+        auto params = diagnostic_manager->getRequiredParameters(t);
+        for (auto it = params.constBegin(); it != params.constEnd(); ++it) {
+            QString paramName = it.key();
+            QVariant defaultValue = it.value();
+            QWidget* widget = nullptr;
+            switch (defaultValue.type()) {
+                case QMetaType::Bool: {
+                    QCheckBox* cb = new QCheckBox();
+                    cb->setChecked(defaultValue.toBool());
+                    widget = cb;
+                    break;
+                }
+                case QMetaType::Int: {
+                    QSpinBox* sb = new QSpinBox();
+                    sb->setValue(defaultValue.toInt());
+                    widget = sb;
+                    break;
+                }
+                case QMetaType::Double: {
+                    QDoubleSpinBox* dsb = new QDoubleSpinBox();
+                    dsb->setDecimals(6);
+                    dsb->setValue(defaultValue.toDouble());
+                    widget = dsb;
+                    break;
+                }
+                case QMetaType::QStringList: {
+                    QComboBox* cb = new QComboBox();
+                    for (auto& opt : defaultValue.toStringList())
+                        cb->addItem(opt);
+                    widget = cb;
+                    break;
+                }
+                default: {
+                    QLineEdit* le = new QLineEdit();
+                    le->setText(defaultValue.toString());
+                    widget = le;
+                    break;
                 }
             }
-            ref_edit->setText(QString("%1%2").arg(prefix).arg(count + 1));
+            param_layout->addRow(paramName + ":", widget);
+            widgetList.append(widget);
         }
-    };
-    
-    connect(type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), generateReference);
-    
-    // 初始化默认值
-    generateReference();
-    switchToComponentPage();
-    
+        paramWidgetsMap.insert(t, widgetList);
+    }
+
+    // 切换到对应类型的参数页
+    connect(type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+        [tabs](int idx){
+            tabs->setCurrentIndex(idx + 1);
+        });
+
+    // 初始化
+    type_combo->setCurrentIndex(0);
+    tabs->setCurrentIndex(1);
+
     // 对话框按钮
     QDialogButtonBox* button_box = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     main_layout->addWidget(button_box);
-    
     connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    
+
     // 执行对话框
-    if (dialog.exec() == QDialog::Accepted) {
-        ComponentSpec component;
-        
-        // 基本信息
-        QString type_text = type_combo->currentText();
-        if (type_text == "电阻") component.type = ComponentType::RESISTOR;
-        else if (type_text == "电容") component.type = ComponentType::CAPACITOR;
-        else if (type_text == "电感") component.type = ComponentType::INDUCTOR;
-        else if (type_text == "二极管") component.type = ComponentType::DIODE;
-        else if (type_text == "集成电路") component.type = ComponentType::IC;
-        else component.type = ComponentType::RESISTOR;
-        
-        component.reference = ref_edit->text();
-        component.channel = channel_spin->value();
-        component.description = desc_edit->text();
-        
-        // 根据类型设置特定参数
-        switch (component.type) {            
-            case ComponentType::RESISTOR:                
-                component.nominal_value = resistance_spin->value();
-                component.tolerance_percent = resistor_tolerance_spin->value() / 100.0;
-                component.temp_coefficient = temp_coeff_spin->value();
-                component.max_voltage = sqrt(max_power_spin->value() * resistance_spin->value()); // P = V²/R
-                component.max_current = sqrt(max_power_spin->value() / resistance_spin->value()); // P = I²R
-                break;                  
-            case ComponentType::CAPACITOR:
-                component.nominal_value = capacitance_spin->value();
-                component.tolerance_percent = capacitor_tolerance_spin->value() / 100.0;
-                component.max_esr = max_esr_spin->value();
-                component.max_leakage = max_leakage_spin->value();
-                component.max_voltage = cap_voltage_spin->value();
-                component.max_current = 0.1; // 默认最大电流
-                break;                  
-            case ComponentType::INDUCTOR:
-                component.nominal_value = inductance_spin->value();
-                component.tolerance_percent = inductor_tolerance_spin->value() / 100.0;
-                component.max_current = max_current_spin->value();
-                component.max_voltage = 50.0; // 默认最大电压
-                component.temp_coefficient = dcr_spin->value(); // 使用temp_coefficient字段存储DCR
-                break;                  
-            case ComponentType::DIODE:
-                component.nominal_value = forward_voltage_spin->value();
-                component.tolerance_percent = diode_tolerance_spin->value() / 100.0;
-                component.max_voltage = reverse_voltage_spin->value();
-                component.max_leakage = diode_leakage_spin->value();
-                component.max_current = 1.0; // 默认最大电流
-                break;                  
-            case ComponentType::IC:
-                component.nominal_value = supply_voltage_spin->value();
-                component.tolerance_percent = ic_tolerance_spin->value() / 100.0;
-                component.max_voltage = supply_voltage_spin->value();
-                component.max_current = ic_max_current_spin->value();
-                // 将IC类型存储在描述中
-                if (!ic_type_edit->text().isEmpty()) {
-                    component.description += QString(" [%1]").arg(ic_type_edit->text());
-                }
-                break;                  
-            default:
-                component.nominal_value = 1000.0;
-                component.tolerance_percent = 0.05;
-                break;
-        }
-        
-        // 验证输入
-        if (component.reference.isEmpty()) {
-            QMessageBox::warning(this, "输入错误", "请输入元件标识！");
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    // 构建ComponentSpec
+    ComponentSpec component;
+    component.type = supportTypes[type_combo->currentIndex()];
+    component.reference = ref_edit->text().trimmed();
+    component.description = desc_edit->text().trimmed();
+
+    // 读取参数页面的值
+    auto paramKeys = diagnostic_manager->getRequiredParameters(component.type).keys();
+    auto widgets   = paramWidgetsMap.value(component.type);
+    for (int i = 0; i < widgets.size() && i < paramKeys.size(); ++i) {
+        QWidget* w = widgets[i];
+        QVariant v;
+        if (auto cb = qobject_cast<QCheckBox*>(w))        v = cb->isChecked();
+        else if (auto sb = qobject_cast<QSpinBox*>(w))    v = sb->value();
+        else if (auto dsb = qobject_cast<QDoubleSpinBox*>(w)) v = dsb->value();
+        else if (auto cbx = qobject_cast<QComboBox*>(w))  v = cbx->currentText();
+        else if (auto le = qobject_cast<QLineEdit*>(w))   v = le->text();
+        component.params.insert(paramKeys[i], v);
+    }
+
+    // 验证输入
+    if (component.reference.isEmpty()) {
+        QMessageBox::warning(this, "输入错误", "请输入元件标识！");
+        return;
+    }
+    for (auto& ex : test_components_) {
+        if (ex.reference == component.reference) {
+            QMessageBox::warning(this, "输入错误",
+                QString("元件标识 '%1' 已存在，请使用不同的标识！").arg(component.reference));
             return;
         }
-        
-        // 检查元件标识是否重复
-        for (const auto& existing : test_components_) {
-            if (existing.reference == component.reference) {
-                QMessageBox::warning(this, "输入错误", 
-                    QString("元件标识 '%1' 已存在，请使用不同的标识！").arg(component.reference));
-                return;
-            }
-        }
-          // 添加到组件列表
-        test_components_.append(component);
-        
-        // 转换为TestStep并添加到测试序列
-        TestStep step = createTestStepFromComponent(component);
-        sequence_manager_->addTestStep(current_sequence_, step);
-        
-        // 刷新表格显示
-        populateComponentTable();
-        
-        // 显示成功消息
-        QString type_name = type_combo->currentText();
-        QMessageBox::information(this, "添加成功", 
-            QString("已成功添加%1 '%2'").arg(type_name).arg(component.reference));
     }
+
+    // 添加到列表并生成测试步骤
+    test_components_.append(component);
+    TestStep step = createTestStepFromComponent(component);
+    sequence_manager_->addTestStep(current_sequence_, step);
+    populateComponentTable();
+
+    QMessageBox::information(this, "添加成功",
+        QString("已成功添加 %1 '%2'")
+            .arg(getComponentTypeDisplayName(component.type))
+            .arg(component.reference));
 }
 
 void MainWindow::removeComponent()
 {
     int row = component_table_->currentRow();
-    
+
     // 验证选中行的有效性
     if (row < 0 || row >= current_sequence_.steps.size()) {
         QMessageBox::warning(this, "删除失败", "请先选择要删除的元件！");
         return;
     }
-    
+
     // 获取要删除的元件信息
     const TestStep& stepToRemove = current_sequence_.steps[row];
     QString componentRef = stepToRemove.testName;
-    
+
     // 确认删除操作
-    int result = QMessageBox::question(this, "确认删除", 
+    int result = QMessageBox::question(this, "确认删除",
         QString("确定要删除测试步骤 '%1' 吗？").arg(componentRef),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    
+
     if (result != QMessageBox::Yes) {
         return;
     }
-    
+
     // 同时从两个数据结构中删除
     // 1. 从测试序列中删除
     sequence_manager_->removeTestStep(current_sequence_, row);
-    
+
     // 2. 从组件列表中删除（如果存在对应的项）
     // 通过匹配reference找到对应的ComponentSpec
     for (int i = 0; i < test_components_.size(); ++i) {
@@ -1171,27 +990,27 @@ void MainWindow::removeComponent()
                 expectedTestName = QString("未知组件测试 - %1").arg(test_components_[i].reference);
                 break;
         }
-        
+
         if (expectedTestName == stepToRemove.testName) {
             test_components_.removeAt(i);
             break;
         }
     }
-    
+
     // 刷新表格显示
     populateComponentTable();
-    
+
     // 显示成功消息
     statusBar()->showMessage(QString("已删除测试步骤: %1").arg(componentRef), 3000);
 }
 
 void MainWindow::loadTestSequence()
 {
-    QString filename = QFileDialog::getOpenFileName(this, 
-        "加载测试序列", 
-        "", 
+    QString filename = QFileDialog::getOpenFileName(this,
+        "加载测试序列",
+        "",
         "JSON文件 (*.json);;所有文件 (*.*)");
-    
+
     if (!filename.isEmpty()) {
         TestSequence sequence;
         if (sequence_manager_->loadSequence(filename, sequence)) {
@@ -1206,14 +1025,14 @@ void MainWindow::saveTestSequence()
 {
     if (current_sequence_.steps.isEmpty()) {
         // 如果当前序列为空，创建一个默认序列
-        sequence_manager_->createDefaultSequence(current_sequence_);
+        return;
     }
-    
-    QString filename = QFileDialog::getSaveFileName(this, 
-        "保存测试序列", 
+
+    QString filename = QFileDialog::getSaveFileName(this,
+        "保存测试序列",
         current_sequence_.name + ".json",
         "JSON文件 (*.json);;所有文件 (*.*)");
-    
+
     if (!filename.isEmpty()) {
         if (sequence_manager_->saveSequence(filename, current_sequence_)) {
             statusBar()->showMessage(QString("成功保存测试序列到: %1").arg(filename), 5000);
@@ -1227,16 +1046,16 @@ void MainWindow::exportResults()
         QMessageBox::information(this, "提示", "没有测试结果可导出");
         return;
     }
-    
-    QString filename = QFileDialog::getSaveFileName(this, 
-        "导出测试结果", 
+
+    QString filename = QFileDialog::getSaveFileName(this,
+        "导出测试结果",
         QString("test_results_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
         "CSV文件 (*.csv);;JSON文件 (*.json);;HTML报告 (*.html);;所有文件 (*.*)");
-    
+
     if (!filename.isEmpty()) {
         QFileInfo fileInfo(filename);
         QString extension = fileInfo.suffix().toLower();
-        
+
         bool success = false;
         if (extension == "csv") {
             success = result_exporter_->exportToCSV(test_results_, filename);
@@ -1248,7 +1067,7 @@ void MainWindow::exportResults()
             // 默认导出为CSV
             success = result_exporter_->exportToCSV(test_results_, filename);
         }
-        
+
         if (success) {
             statusBar()->showMessage(QString("成功导出 %1 个测试结果").arg(test_results_.size()), 5000);
         }
@@ -1268,7 +1087,7 @@ void MainWindow::openPCBIdentification()
         QMessageBox::warning(this, "错误", "PCB识别对话框未初始化");
         return;
     }
-    
+
     // 显示PCB识别对话框
     pcb_dialog_->show();
     pcb_dialog_->raise();
@@ -1281,7 +1100,7 @@ void MainWindow::openCameraControl()
         QMessageBox::warning(this, "错误", "相机控制组件未初始化");
         return;
     }
-    
+
     // 设置为独立窗口并显示
     camera_control_->setWindowTitle("摄像头控制系统");
     camera_control_->setMinimumSize(1200, 800);
@@ -1296,7 +1115,7 @@ void MainWindow::openPCBAnalyzer()
         QMessageBox::warning(this, "错误", "PCB分析器组件未初始化");
         return;
     }
-    
+
     // 设置为独立窗口并显示
     pcb_analyzer_->setWindowTitle("PCB板卡元件综合分析系统");
     pcb_analyzer_->setMinimumSize(1400, 900);
@@ -1311,13 +1130,13 @@ void MainWindow::openDetectionHistory()
         history_widget_ = new PCBDetectionHistoryWidget();
         history_widget_->setDetectionManager(detection_manager_);
         history_widget_->setAttribute(Qt::WA_DeleteOnClose, false);
-        
+
         // 连接信号，当历史窗口关闭时重置指针
         connect(history_widget_, &QWidget::destroyed, this, [this]() {
             history_widget_ = nullptr;
         });
     }
-    
+
     // 设置为独立窗口并显示
     history_widget_->setWindowTitle("PCB检测历史管理");
     history_widget_->setMinimumSize(1200, 800);    history_widget_->show();
@@ -1340,13 +1159,13 @@ void MainWindow::openDeviceManagerTest()
     if (!device_test_window_) {
         device_test_window_ = new DeviceManagerTestWindow(device_manager_, this);
         device_test_window_->setAttribute(Qt::WA_DeleteOnClose, false);
-        
+
         // 连接信号，当测试窗口关闭时重置指针
         connect(device_test_window_, &QWidget::destroyed, this, [this]() {
             device_test_window_ = nullptr;
         });
     }
-    
+
     // 设置为独立窗口并显示
     device_test_window_->setWindowTitle("设备管理器测试");
     device_test_window_->setMinimumSize(800, 600);
@@ -1365,7 +1184,7 @@ void MainWindow::startWiringGuide()
     component.type = static_cast<ComponentType>(component_type_combo_->currentIndex());
     component.nominal_value = nominal_value_spin_->value();
     component.tolerance_percent = tolerance_spin_->value();
-    
+
     showWiringGuideForComponent(component);
 }
 
@@ -1377,15 +1196,15 @@ void MainWindow::showWiringGuideForComponent(const ComponentSpec& component)
         delete current_wiring_dialog_;
         current_wiring_dialog_ = nullptr;
     }
-    
+
     if (!port_manager_) {
         QMessageBox::warning(this, "错误", "端口管理器未初始化");
         return;
     }
-    
+
     // 创建接线引导对话框
-    current_wiring_dialog_ = new WiringGuideDialog(component, port_manager_, this);
-    
+    current_wiring_dialog_ = new WiringGuideDialog(component, port_manager_, diagnostic_manager, this);
+
     // 连接信号
     connect(current_wiring_dialog_, &WiringGuideDialog::wiringCompleted,
             this, &MainWindow::onWiringCompleted);
@@ -1404,14 +1223,14 @@ void MainWindow::onWiringCompleted(const WiringScheme& scheme)
 {
     // 接线完成后的处理
     statusBar()->showMessage(QString("接线配置完成 - %1").arg(scheme.schemeName), 3000);
-    
+
     // 清理接线对话框（先断开信号连接）
     if (current_wiring_dialog_) {
         disconnect(current_wiring_dialog_, &WiringGuideDialog::wiringCancelled, nullptr, nullptr);
         current_wiring_dialog_->close();
         current_wiring_dialog_ = nullptr;
     }
-    
+
     // 生成测试任务
     if (task_generator_) {
         ComponentSpec component = createComponentFromUI();
@@ -1420,11 +1239,11 @@ void MainWindow::onWiringCompleted(const WiringScheme& scheme)
             current_task_id_ = taskId;  // 保存任务ID以便后续清理
             single_result_text_->append(QString("接线方案应用成功: %1\n").arg(scheme.schemeName));
             single_result_text_->append(QString("测试任务已生成: %1\n").arg(taskId));
-            
+
             // 准备执行测试
             if (task_generator_->prepareTaskExecution(taskId)) {
                 single_result_text_->append("测试任务准备完成，开始执行测试...\n");
-                
+
                 // 开始故障诊断
                 QTimer::singleShot(1000, [this, component]() {
                     single_test_button_->setText("故障诊断中...");
@@ -1481,18 +1300,18 @@ ComponentSpec MainWindow::createBatchComponentSpec()
             } else if (step.componentType == "ic" || step.componentType == "集成电路") {
                 componentType = ComponentType::IC;
             }
-            
+
             requiredTypes.insert(componentType);
         }
     }
-    
+
     // 如果只有一种类型，使用该类型；否则使用通用类型
     if (requiredTypes.size() == 1) {
         batchComponent.type = *requiredTypes.begin();
     }
-    
+
     qDebug() << "创建批量测试组件规格，涉及" << requiredTypes.size() << "种组件类型";
-    
+
     return batchComponent;
 }
 
@@ -1502,18 +1321,18 @@ void MainWindow::startBatchTestWithUnifiedWiring(const ComponentSpec& batchCompo
         QMessageBox::warning(this, "错误", "端口管理器未初始化");
         return;
     }
-    
+
     // 关闭任何现有的接线对话框
     if (current_wiring_dialog_) {
         current_wiring_dialog_->close();
         delete current_wiring_dialog_;
         current_wiring_dialog_ = nullptr;
     }
-    
+
     // 创建统一的接线引导对话框
-    current_wiring_dialog_ = new WiringGuideDialog(batchComponent, port_manager_, this);
+    current_wiring_dialog_ = new WiringGuideDialog(batchComponent, port_manager_, diagnostic_manager, this);
     current_wiring_dialog_->setWindowTitle("批量测试 - 统一接线引导");
-    
+
     // 连接信号 - 使用批量测试专用的槽函数
     connect(current_wiring_dialog_, &WiringGuideDialog::wiringCompleted,
             this, &MainWindow::onBatchWiringCompleted);
@@ -1527,7 +1346,7 @@ void MainWindow::startBatchTestWithUnifiedWiring(const ComponentSpec& batchCompo
                 current_wiring_dialog_ = nullptr;
                 QMessageBox::information(this, "测试取消", "批量测试已取消");
             });
-    
+
     // 显示对话框
     current_wiring_dialog_->show();
 }
@@ -1540,19 +1359,19 @@ void MainWindow::onBatchWiringCompleted(const WiringScheme& scheme)
     if (task_generator_) {
         ComponentSpec batchComponent = createBatchComponentSpec();
         QString taskId = task_generator_->generateTaskFromScheme(scheme, batchComponent);
-        
+
         if (!taskId.isEmpty()) {
             main_batch_task_id_ = taskId;  // 保存主任务ID
             current_task_id_ = taskId;     // 当前任务ID也设置为主任务ID
             qDebug() << "批量测试主任务已生成：" << taskId;
-            
+
             // 标记统一接线已准备好
             unified_wiring_prepared_ = true;
-            
+
             // 开始批量测试
             batch_testing_active_ = true;
             current_test_index_ = 0;
-            
+
             batch_test_button_->setText("停止测试");
             batch_test_button_->setEnabled(true);
             test_progress_->setVisible(true);
@@ -1560,12 +1379,12 @@ void MainWindow::onBatchWiringCompleted(const WiringScheme& scheme)
             test_progress_->setValue(0);
             test_results_.clear();
             updateResultsTable();
-            
+
             qDebug() << "开始批量测试，共" << current_sequence_.steps.size() << "个测试步骤";
-            
+
             // 开始第一个测试
             QTimer::singleShot(500, this, &MainWindow::runNextTest);
-            
+
         } else {
             QMessageBox::warning(this, "错误", "无法生成批量测试任务");
             unified_wiring_prepared_ = false;
@@ -1588,7 +1407,7 @@ void MainWindow::executeBatchTestWithPreAllocatedWiring(const ComponentSpec& spe
     // 这个方法现在已经不需要了，因为runNextTest已经简化
     // 但为了兼容性保留它，直接调用故障诊断
     qDebug() << "使用预分配接线执行测试：" << specs.reference;
-    
+
     // 使用延迟执行，避免阻塞UI
     QTimer::singleShot(100, [this, specs]() {
         fault_diagnostic_->diagnoseComponent(specs);
@@ -1682,7 +1501,7 @@ void MainWindow::updateDetailText(int currentRow, int currentColumn, int previou
 
     if (currentRow >= 0 && currentRow < test_results_.size()) {
         const DiagnosticResult& result = test_results_[currentRow];
-        detail_text_->setText(formatResult(result));
+        detail_text_->setText(result.diagnosticSummary);
     }
 }
 
@@ -1690,58 +1509,20 @@ TestStep MainWindow::createTestStepFromComponent(const ComponentSpec& component)
 {
     TestStep step;
 
-    // 基本信息
-    switch (component.type) {
-    case ComponentType::RESISTOR:
-        step.componentType = "resistor";        step.testName = QString("电阻测试 - %1").arg(component.reference);        step.specs.resistance.nominal = component.nominal_value;
-        step.specs.resistance.tolerance = component.tolerance_percent;
-        step.specs.resistance.tempCoefficient = component.temp_coefficient;
-        break;
+    step.componentType = "unknown";
+    step.testName = QString("未知组件测试 - %1").arg(component.reference);
 
-    case ComponentType::CAPACITOR:
-        step.componentType = "capacitor";        step.testName = QString("电容测试 - %1").arg(component.reference);        step.specs.capacitance.nominal = component.nominal_value;
-        step.specs.capacitance.tolerance = component.tolerance_percent;
-        step.specs.capacitance.esr = component.max_esr;
-        step.specs.capacitance.leakageCurrent = component.max_leakage;
-        break;
-    case ComponentType::INDUCTOR:
-        step.componentType = "inductor";        step.testName = QString("电感测试 - %1").arg(component.reference);        step.specs.inductance.nominal = component.nominal_value;
-        step.specs.inductance.tolerance = component.tolerance_percent;
-        step.specs.inductance.dcResistance = 0.1; // 默认直流电阻
-        step.specs.inductance.qFactory = 50.0; // 默认品质因数
-        break;
-    case ComponentType::DIODE:
-        step.componentType = "diode";
-        step.testName = QString("二极管测试 - %1").arg(component.reference);
-        step.specs.diode.forwardVoltage = component.nominal_value;
-        step.specs.diode.reverseLeakage = component.max_leakage;
-        step.specs.diode.breakdownVoltage = component.max_voltage * 1.2; // 击穿电压比最大工作电压高20%
-        break;
-    case ComponentType::IC:
-        step.componentType = "ic";        step.testName = QString("集成电路测试 - %1").arg(component.reference);        step.specs.ic.supplyVoltage = component.nominal_value;
-        step.specs.ic.supplyCurrent = component.max_current;
-        step.specs.ic.inputLevels.high = component.nominal_value * 0.7; // 70% Vcc 为高电平
-        step.specs.ic.inputLevels.low = component.nominal_value * 0.3;  // 30% Vcc 为低电平
-        step.specs.ic.outputLevels.high = component.nominal_value * 0.8; // 80% Vcc 为输出高电平
-        step.specs.ic.outputLevels.low = component.nominal_value * 0.2;  // 20% Vcc 为输出低电平
-        break;
-
-    default:
-        step.componentType = "unknown";
-        step.testName = QString("未知组件测试 - %1").arg(component.reference);
-        break;
-    }
+    step.componentType = ComponentDiagnosticFramework::getComponentTypeDisplayName(component.type);
+    step.testName = component.name + QString("测试 - %1").arg(component.reference);
+    step.specs = component.params;
 
     // 通用设置
     step.enabled = true;
     step.timeoutMs = 5000; // 5秒超时
 
     // 设置测试参数
-    step.parameters["channel"] = component.channel;
     step.parameters["reference"] = component.reference;
     step.parameters["description"] = component.description;
-    step.parameters["max_voltage"] = component.max_voltage;
-    step.parameters["max_current"] = component.max_current;
 
     return step;
 }
@@ -1754,14 +1535,13 @@ ComponentSpec MainWindow::createComponentFromUI()
     if (type_text == "电阻") component.type = ComponentType::RESISTOR;
     else if (type_text == "电容") component.type = ComponentType::CAPACITOR;
     else if (type_text == "电感") component.type = ComponentType::INDUCTOR;
-    else if (type_text == "二极管") component.type = ComponentType::DIODE;    
+    else if (type_text == "二极管") component.type = ComponentType::DIODE;
     else if (type_text == "集成电路") component.type = ComponentType::IC;
     else component.type = ComponentType::RESISTOR; // default
-    
+
     component.reference = component_ref_edit_->text();
     component.nominal_value = nominal_value_spin_->value();
     component.tolerance_percent = tolerance_spin_->value() / 100.0;
-    component.channel = channel_spin_->value();
 
     return component;
 }
@@ -1779,21 +1559,13 @@ void MainWindow::populateComponentTable()
         component_table_->setItem(i, 0, new QTableWidgetItem(step.testName));
         component_table_->setItem(i, 1, new QTableWidgetItem(step.componentType));
 
-        // 根据组件类型显示标称值
-        QString nominalValue;
-        if (step.componentType == "resistor") {
-            nominalValue = QString::number(step.specs.resistance.nominal, 'g', 6) + "Ω";
-        } else if (step.componentType == "capacitor") {
-            nominalValue = QString::number(step.specs.capacitance.nominal * 1e6, 'g', 6) + "μF";
-        } else if (step.componentType == "inductor") {
-            nominalValue = QString::number(step.specs.inductance.nominal * 1e6, 'g', 6) + "μH";
-        } else if (step.componentType == "diode") {
-            nominalValue = QString::number(step.specs.diode.forwardVoltage, 'g', 3) + "V";
-        } else if (step.componentType == "ic") {
-            nominalValue = QString::number(step.specs.ic.supplyVoltage, 'g', 3) + "V";
+        QString displayText;
+        QTextStream ts(&displayText);
+        for (auto it = step.specs.constBegin(); it != step.specs.constEnd(); ++it) {
+            ts << it.key() << ": " << it.value().toString() << "\n";
         }
+        component_table_->setItem(i, 2, new QTableWidgetItem(displayText));
 
-        component_table_->setItem(i, 2, new QTableWidgetItem(nominalValue));
         component_table_->setItem(i, 3, new QTableWidgetItem(step.enabled ? "启用" : "禁用"));
         component_table_->setItem(i, 4, new QTableWidgetItem(QString::number(step.timeoutMs / 1000.0, 'f', 1) + "s"));
 
@@ -1808,64 +1580,6 @@ void MainWindow::populateComponentTable()
 }
 
 
-QString MainWindow::formatResult(const DiagnosticResult& result)
-{
-    QString text;
-    text += "=== 测试结果 ===\n";
-    text += QString("测试ID: %1\n").arg(result.testId);
-    text += QString("组件类型: %1\n").arg(result.componentType);
-    text += QString("组件标识: %1\n").arg(result.componentId);
-
-    QString resultText;
-    switch (result.result) {
-    case DiagnosticResult::PASS: resultText = "通过"; break;
-    case DiagnosticResult::FAIL: resultText = "失败"; break;
-    case DiagnosticResult::ERROR: resultText = "错误"; break;
-    }
-    text += QString("测试结果: %1\n").arg(resultText);
-
-    text += QString("健康度: %1%\n").arg(result.healthScore, 0, 'f', 1);
-    text += QString("置信度: %1%\n").arg(result.confidence, 0, 'f', 1);
-
-    if (!result.faultTypes.isEmpty()) {
-        text += QString("故障类型: %1\n").arg(result.faultTypes.join(", "));
-    }
-
-    text += QString("期望值: %1\n").arg(result.expectedValue, 0, 'g', 6);
-    text += QString("容差: ±%1%\n").arg(result.tolerance * 100, 0, 'f', 2);
-        // 测量数据
-    text += "\n=== 测量数据 ===\n";
-    const MeasurementResult& data = result.measurementData;
-
-    // 根据组件类型显示相应的测量值
-    if (result.componentType == "电阻" && data.primary_value != 0.0) {
-        text += QString("电阻值: %1 Ω\n").arg(data.primary_value, 0, 'g', 6);
-    } else if (result.componentType == "电容" && data.primary_value != 0.0) {
-        text += QString("电容值: %1 F\n").arg(data.primary_value, 0, 'g', 6);
-    } else if (result.componentType == "电感" && data.primary_value != 0.0) {
-        text += QString("电感值: %1 H\n").arg(data.primary_value, 0, 'g', 6);
-    } else if (data.primary_value != 0.0) {
-        text += QString("主要测量值: %1\n").arg(data.primary_value, 0, 'g', 6);
-    }
-
-    if (data.voltage != 0.0) text += QString("电压: %1 V\n").arg(data.voltage, 0, 'g', 6);
-    if (data.current != 0.0) text += QString("电流: %1 A\n").arg(data.current, 0, 'g', 6);
-    if (data.power != 0.0) text += QString("功率: %1 W\n").arg(data.power, 0, 'g', 6);
-    if (data.esr != 0.0) text += QString("等效串联电阻: %1 Ω\n").arg(data.esr, 0, 'g', 6);
-    if (data.leakage_current != 0.0) text += QString("漏电流: %1 A\n").arg(data.leakage_current, 0, 'g', 6);
-    if (data.temperature != 25.0) text += QString("温度: %1 °C\n").arg(data.temperature, 0, 'f', 1);
-
-    text += QString("\n测试时间: %1\n").arg(result.timestamp.toString("yyyy-MM-dd hh:mm:ss"));
-    text += QString("测试设备: %1\n").arg(result.testEquipment);
-
-    if (!result.notes.isEmpty()) {
-        text += QString("备注: %1\n").arg(result.notes);
-    }
-
-    return text;
-}
-
-
 QString MainWindow::getStatusIcon(DeviceStatus status)
 {
     switch (status) {
@@ -1875,129 +1589,16 @@ QString MainWindow::getStatusIcon(DeviceStatus status)
     }
 }
 
-void MainWindow::showPortConfigurationForComponent(const ComponentSpec& component)
-{
-    if (!port_manager_) {
-        QMessageBox::warning(this, "错误", "端口管理器未初始化");
-        single_test_button_->setEnabled(true);
-        single_test_button_->setText("开始测试");
-        return;
-    }
-    
-    // 显示端口配置信息
-    single_result_text_->append("正在进行端口配置...\n");
-    
-    // 获取推荐端口配置
-    QVector<PortInfo> recommendedPorts = port_manager_->getRecommendedPorts(component.type);
-    
-    if (recommendedPorts.isEmpty()) {
-        single_result_text_->append("错误：没有可用的端口配置！\n");
-        single_test_button_->setEnabled(true);
-        single_test_button_->setText("开始测试");
-        return;
-    }
-    
-    // 自动分配端口
-    QVector<PortInfo> allocatedPorts = port_manager_->autoAllocatePorts(component.type, component.reference);
-    
-    if (allocatedPorts.isEmpty()) {
-        single_result_text_->append("错误：端口分配失败！\n");
-        single_test_button_->setEnabled(true);
-        single_test_button_->setText("开始测试");
-        return;
-    }
-    
-    // 显示分配的端口信息
-    single_result_text_->append(QString("成功分配 %1 个端口：\n").arg(allocatedPorts.size()));
-    for (const PortInfo& port : allocatedPorts) {
-        single_result_text_->append(QString("  - %1:%2 (%3)\n")
-                                   .arg(port.deviceName)
-                                   .arg(port.portNumber)
-                                   .arg(port.description));
-    }
-      single_result_text_->append("端口配置完成，开始执行测试...\n");
-    
-    single_test_button_->setText("执行测试中...");
-    
-    // 延迟执行故障诊断，让用户看到状态更新
-    QTimer::singleShot(1000, [this, component]() {
-        single_test_button_->setText("故障诊断中...");
-        single_result_text_->append("开始故障诊断分析...\n");
-        
-        // 执行故障诊断
-        DiagnosticResult result = fault_diagnostic_->diagnoseComponent(component);
-        
-        // 手动触发诊断完成事件（以防信号没有正确触发）
-        // QTimer::singleShot(100, [this, result]() {
-        //     onDiagnosticCompleted(result);
-        // });
-    });
-}
-
-void MainWindow::executeTestWithWiringGuide(const ComponentSpec& component)
-{
-    if (!task_generator_ || !wiring_resource_manager_) {
-        qDebug() << "错误：任务生成器或资源管理器未初始化";
-        // 跳过当前测试，继续下一个
-        proceedToNextBatchTest();
-        return;
-    }
-    
-    try {
-        // 自动生成最优接线方案
-        WiringScheme optimalScheme = wiring_resource_manager_->generateOptimalScheme(component);
-        if (optimalScheme.schemeId.isEmpty()) {
-            qDebug() << "错误：无法为组件" << component.reference << "生成接线方案";
-           
-
-            proceedToNextBatchTest();
-            return;
-        }
-        
-        qDebug() << "为组件" << component.reference << "生成接线方案：" << optimalScheme.schemeName;
-        
-        // 生成测试任务
-        QString taskId = task_generator_->generateTaskFromScheme(optimalScheme, component);
-        if (taskId.isEmpty()) {
-            qDebug() << "错误：无法生成测试任务";
-            proceedToNextBatchTest();
-            return;
-        }
-        
-        current_task_id_ = taskId;  // 保存任务ID以便后续清理
-        qDebug() << "测试任务已生成：" << taskId;
-        
-        // 准备执行测试
-        if (task_generator_->prepareTaskExecution(taskId)) {
-            qDebug() << "开始执行故障诊断：" << component.reference;
-            
-            // 使用延迟执行，避免阻塞UI
-            QTimer::singleShot(100, [this, component]() {
-                // 执行故障诊断
-                fault_diagnostic_->diagnoseComponent(component);
-            });
-        } else {
-            qDebug() << "错误：测试任务准备失败";
-            current_task_id_.clear();
-            proceedToNextBatchTest();
-        }
-        
-    } catch (const std::exception& e) {
-        qDebug() << "执行测试时发生异常：" << e.what();        current_task_id_.clear();
-        proceedToNextBatchTest();
-    }
-}
-
 void MainWindow::proceedToNextBatchTest()
 {
     if (!batch_testing_active_) {
         return;
     }
-    
+
     // 移动到下一个测试
     current_test_index_++;
     test_progress_->setValue(current_test_index_);
-    
+
     // 延迟执行下一个测试，给UI时间更新
     QTimer::singleShot(500, this, &MainWindow::runNextTest);
 }
@@ -2005,35 +1606,32 @@ void MainWindow::proceedToNextBatchTest()
 void MainWindow::stopBatchTest()
 {
     batch_testing_active_ = false;
-    
+
     // 清理主任务
     if (task_generator_ && !main_batch_task_id_.isEmpty()) {
         task_generator_->finalizeTaskExecution(main_batch_task_id_, false, "STOPPED");
         main_batch_task_id_.clear();
     }
     current_task_id_.clear();
-    
+
     // 释放所有端口
     if (port_manager_) {
         port_manager_->releaseAllPorts();
     }
-    
+
     // 清理统一接线方案
     unified_wiring_prepared_ = false;
-    
+
     batch_test_button_->setText("开始批量测试");
     batch_test_button_->setEnabled(true);
     test_progress_->setVisible(false);
-    
+
     test_count_label_->setText(QString("测试已停止 (%1/%2)")
                               .arg(current_test_index_)
                               .arg(current_sequence_.steps.size()));
-    
-    QMessageBox::information(this, "测试停止", 
+
+    QMessageBox::information(this, "测试停止",
         QString("批量测试已停止。\n已完成 %1 个测试，剩余 %2 个。")
         .arg(current_test_index_)
         .arg(current_sequence_.steps.size() - current_test_index_));
 }
-
-// 移除 showUnifiedWiringGuideDialog 函数，不再需要
-

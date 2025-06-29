@@ -35,7 +35,7 @@ PortManager::~PortManager()
     if (deviceManager_) {
         disconnect(deviceManager_, nullptr, this, nullptr);
     }
-    disconnect(this, nullptr, nullptr, nullptr);
+    // disconnect(this, nullptr, nullptr, nullptr);
     
     // 静默释放所有端口（不发送信号）
     {
@@ -194,10 +194,6 @@ bool PortManager::allocatePort(const QString& deviceName, int portNumber, const 
 {
     QMutexLocker locker(&portMutex_);
     
-    // 添加详细的调试信息
-    qDebug() << "尝试分配端口:" << deviceName << portNumber << "给用户:" << allocatedTo;
-    qDebug() << "用户字符串长度:" << allocatedTo.length() << "是否为空:" << allocatedTo.isEmpty();
-    
     PortInfo* port = findPort(deviceName, portNumber);
     
     if (!port) {
@@ -215,8 +211,6 @@ bool PortManager::allocatePort(const QString& deviceName, int portNumber, const 
     // 检查allocatedTo是否为空或无效
     if (allocatedTo.isEmpty()) {
         qWarning() << "警告：尝试将端口分配给空用户名！";
-        // 可以选择拒绝分配或使用默认名称
-        // return false; // 如果要拒绝空用户名分配
     }
     
     port->isAvailable = false;
@@ -345,10 +339,9 @@ QVector<PortInfo> PortManager::getResistorPorts() const
     QVector<PortInfo> ports;
     QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
     
-    // 电阻测试只需要万用表的2个端口进行2线法测量
-    if (availableDMM.size() >= 2) {
+    // 电阻测试只需要万用表的1个端口进行2线法测量
+    if (availableDMM.size() >= 1) {
         ports.append(availableDMM[0]);  // CH0
-        ports.append(availableDMM[1]);  // CH1
     }
     
     qDebug() << "电阻测试端口配置: 需要2个万用表端口，可用" << availableDMM.size() << "个";
@@ -662,29 +655,130 @@ bool PortManager::loadPortConfiguration(const QString& filePath)
     return true;
 }
 
-QVector<PortInfo> PortManager::autoAllocatePorts(ComponentType componentType, const QString& allocatedTo)
+QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requirements, QString &allocatedTo)
 {
     // 检查用户名是否有效
-    if (allocatedTo.isEmpty() || allocatedTo.trimmed().isEmpty()) {
+    if (requirements.isEmpty()) {
         qWarning() << "警告：尝试自动分配端口给空用户名，操作被拒绝";
         return QVector<PortInfo>();
     }
     
     // 在分配前清理无效分配
     cleanupInvalidAllocations();
-    
-    QVector<PortInfo> recommendedPorts = getRecommendedPorts(componentType);
     QVector<PortInfo> allocatedPorts;
     
-    qDebug() << "开始自动分配端口，用户:" << allocatedTo << "组件类型:" << static_cast<int>(componentType);
-    
-    for (const PortInfo& recommendedPort : recommendedPorts) {
-        if (allocatePort(recommendedPort.deviceName, recommendedPort.portNumber, allocatedTo)) {
-            allocatedPorts.append(getPortInfo(recommendedPort.deviceName, recommendedPort.portNumber));
+    for (const PortRequirement& recommendedPort : requirements) {
+        switch (recommendedPort.portType) {
+            case PortType::ANALOG_OUTPUT:
+                {
+                    QString deviceName = "JY5711";
+                    bool allocated = false;
+                    for(int portNumber = 0; portNumber <= 15; portNumber++){
+                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
+                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：模拟输出端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            case PortType::DIGITAL_OUTPUT:
+                {
+                    QString deviceName = "JY5711";
+                    bool allocated = false;
+                    for(int portNumber = 16; portNumber <= 27; portNumber++){
+                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
+                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：数字输出端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            case PortType::POWER_OUTPUT:
+                {
+                    QString deviceName = "JY5711";
+                    bool allocated = false;
+                    for(int portNumber = 28; portNumber <= 31; portNumber++){
+                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
+                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：电源输出端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            case PortType::ANALOG_INPUT:
+                {
+                    QString deviceName = "JY5323";
+                    bool allocated = false;
+                    for(int portNumber = 0; portNumber <= 31; portNumber++){
+                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
+                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：模拟输入端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            case PortType::DIGITAL_INPUT:
+                {
+                    QString deviceName = "JY5322";
+                    bool allocated = false;
+                    for(int portNumber = 0; portNumber <= 15; portNumber++){
+                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
+                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：数字输入端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            case PortType::DMM_MEASUREMENT:
+                {
+                    QString deviceName = "JY8902";
+                    bool allocated = false;
+                    if (allocatePort(deviceName, 0, allocatedTo)) {
+                        allocatedPorts.append(getPortInfo(deviceName, 0));
+                        allocated = true;
+                    }
+                    if(!allocated){
+                        qWarning() << "警告：万用表测量端口分配失败";
+                        cleanupInvalidAllocations();
+                        return QVector<PortInfo>();
+                    }
+                }
+                break;
+            default:
+                break;
         }
     }
     
-    qDebug() << "自动分配端口完成:" << componentType << "分配了" << allocatedPorts.size() << "个端口";
     return allocatedPorts;
 }
 

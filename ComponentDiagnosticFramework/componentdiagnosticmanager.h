@@ -82,6 +82,13 @@ public:
      */
     bool isComponentTypeSupported(ComponentType type) const;
     
+    /**
+     * @brief 获取指定类型的诊断器
+     * @param type 组件类型
+     * @return 诊断器实例指针，如果不存在则返回nullptr
+     */
+    BaseComponentDiagnostic* getDiagnostic(ComponentType type) const;
+    
     // === 单个组件诊断接口 ===
     
     /**
@@ -91,6 +98,25 @@ public:
      */
     ComponentDiagnosticResult diagnoseComponent(const ComponentSpec& component);
     
+    /**
+     * @brief 获取组件所需接口
+     * @param component 组件规格
+     * @return 端口需求列表
+     */
+    QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const;
+
+    /**
+     * @brief 获取电阻器测试所需的标准参数
+     * @return 标准参数列表
+     */
+    QMap<QString, QVariant> getRequiredParameters(const ComponentType& type) const;
+
+    /**
+     * @brief 生成接线方案
+     * @param component 组件规格
+     */
+    QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const;
+
     /**
      * @brief 诊断单个组件（异步）
      * @param component 组件规格
@@ -180,6 +206,7 @@ public:
      * @param maxConcurrency 最大并发任务数
      */
     void setMaxConcurrency(int maxConcurrency);
+
     
 signals:
     // === 单个组件诊断信号 ===

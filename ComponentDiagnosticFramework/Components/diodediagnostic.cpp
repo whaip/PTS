@@ -144,53 +144,54 @@ ComponentTestConfig DiodeDiagnostic::configureDataAcquisition(const ComponentSpe
 {
     ComponentTestConfig config;
     
-    if (!getDeviceManager()) {
-        return config;
-    }
+    // if (!getDeviceManager()) {
+    //     return config;
+    // }
     
-    try {
-        config.testName = "二极管特性测试";
-        config.timeout = 30000;  // 30秒超时
+    // try {
+    //     config.testName = "二极管特性测试";
+    //     config.timeout = 30000;  // 30秒超时
         
-        // 设置端口配置
-        for (const auto& port : ports) {
-            PortConfig portConfig;
-            portConfig.deviceName = port.deviceName;
-            portConfig.channel = port.portNumber;
-            config.portConfigs.append(portConfig);
-        }
+    //     // 设置端口配置
+    //     for (const auto& port : ports) {
+    //         PortConfig portConfig;
+    //         portConfig.deviceName = port.deviceName;
+    //         portConfig.channel = port.portNumber;
+    //         config.portConfigs.append(portConfig);
+    //     }
         
-        // 配置SMU（源测量单元）进行I-V测量
-        config.parameters["mode"] = "VOLTAGE_SOURCE";
-        config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, forwardMaxVoltage_};
-        config.parameters["current_range"] = QVariantList{-forwardMaxCurrent_, forwardMaxCurrent_};
-        config.parameters["compliance_current"] = forwardMaxCurrent_;
-        config.parameters["measurement_speed"] = "MEDIUM";
-        config.parameters["auto_range"] = true;
+    //     // 配置SMU（源测量单元）进行I-V测量
+    //     config.parameters["mode"] = "VOLTAGE_SOURCE";
+    //     config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, forwardMaxVoltage_};
+    //     config.parameters["current_range"] = QVariantList{-forwardMaxCurrent_, forwardMaxCurrent_};
+    //     config.parameters["compliance_current"] = forwardMaxCurrent_;
+    //     config.parameters["measurement_speed"] = "MEDIUM";
+    //     config.parameters["auto_range"] = true;
         
-        // 根据二极管类型调整参数
-        if (component.parameters.contains("type")) {
-            QString diodeType = component.parameters["type"];
+    //     // 根据二极管类型调整参数
+    //     if (component.parameters.contains("type")) {
+    //         QString diodeType = component.parameters["type"];
             
-            if (diodeType.contains("SCHOTTKY")) {
-                // 肖特基二极管：低正向压降，高频特性好
-                config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 1.0};
-                config.parameters["measurement_speed"] = "FAST";
-            } else if (diodeType.contains("ZENER")) {
-                // 齐纳二极管：需要测试击穿特性
-                config.parameters["voltage_range"] = QVariantList{-20.0, forwardMaxVoltage_};
-            } else if (diodeType.contains("LED")) {
-                // LED：较高正向压降
-                config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 5.0};
-            }
-        }
+    //         if (diodeType.contains("SCHOTTKY")) {
+    //             // 肖特基二极管：低正向压降，高频特性好
+    //             config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 1.0};
+    //             config.parameters["measurement_speed"] = "FAST";
+    //         } else if (diodeType.contains("ZENER")) {
+    //             // 齐纳二极管：需要测试击穿特性
+    //             config.parameters["voltage_range"] = QVariantList{-20.0, forwardMaxVoltage_};
+    //         } else if (diodeType.contains("LED")) {
+    //             // LED：较高正向压降
+    //             config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 5.0};
+    //         }
+    //     }
         
-        return config;
+    //     return config;
         
-    } catch (const std::exception& e) {
-        qWarning() << "Configuration failed:" << e.what();
-        return config;
-    }
+    // } catch (const std::exception& e) {
+    //     qWarning() << "Configuration failed:" << e.what();
+    //     return config;
+    // }
+    return config;
 }
 
 TestData DiodeDiagnostic::executeDataAcquisition(const ComponentTestConfig& config)

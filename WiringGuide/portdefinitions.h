@@ -42,37 +42,6 @@ struct JY8902Ports {
     static constexpr int TOTAL_PORTS = 2;
 };
 
-// 端口类型枚举
-enum class PortType {
-    ANALOG_OUTPUT,    // 模拟输出
-    DIGITAL_OUTPUT,   // 数字输出
-    POWER_OUTPUT,     // 电源输出
-    ANALOG_INPUT,     // 模拟输入
-    DIGITAL_INPUT,    // 数字输入
-    DMM_MEASUREMENT   // 万用表测量端口
-};
-
-// 端口信息结构
-struct PortInfo {
-    QString deviceName;
-    int portNumber;
-    PortType portType;
-    QString description;
-    double maxVoltage;
-    double maxCurrent;
-    bool isAvailable;
-    QString allocatedTo;  // 分配给哪个测试/元件
-    
-    PortInfo() : portNumber(-1), portType(PortType::ANALOG_INPUT), 
-                maxVoltage(0), maxCurrent(0), isAvailable(true) {}
-                
-    PortInfo(const QString& device, int port, PortType type, 
-             const QString& desc, double voltage = 0, double current = 0)
-        : deviceName(device), portNumber(port), portType(type), 
-          description(desc), maxVoltage(voltage), maxCurrent(current),
-          isAvailable(true) {}
-};
-
 // 连接信息结构
 struct ConnectionInfo {
     PortInfo sourcePort;      // 源端口
@@ -98,7 +67,7 @@ struct WiringScheme {
 
 } // namespace PortDefinitions
 
-Q_DECLARE_METATYPE(PortDefinitions::PortInfo)
+Q_DECLARE_METATYPE(PortInfo)
 Q_DECLARE_METATYPE(PortDefinitions::ConnectionInfo)
 Q_DECLARE_METATYPE(PortDefinitions::WiringScheme)
 

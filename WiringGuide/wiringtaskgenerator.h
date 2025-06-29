@@ -38,9 +38,8 @@ public:
     ~WiringTaskGenerator();
 
     // 任务生成
-    QString generateTask(const ComponentSpec& component);
     QString generateTaskFromScheme(const WiringScheme& scheme, const ComponentSpec& component);
-    QString generateBatchTasks(const QVector<ComponentSpec>& components);
+    QString generateBatchTasks(const QVector<WiringScheme>& schemes, const QVector<ComponentSpec>& components);
     
     // 任务管理
     TestTask getTask(const QString& taskId) const;

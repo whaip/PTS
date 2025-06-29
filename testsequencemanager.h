@@ -60,7 +60,7 @@ struct TestStep {
     QString componentType;      // "resistor", "capacitor", "inductor", "diode", "ic"
     QString testName;          // 测试名称
     QJsonObject parameters;    // 测试参数
-    ComponentSpecs specs;      // 期望规格
+    QMap<QString, QVariant> specs;      // 期望规格
     bool enabled;             // 是否启用此测试步骤
     int timeoutMs;            // 超时时间
 };
@@ -85,7 +85,6 @@ public:
     // 序列管理
     bool loadSequence(const QString& filePath, TestSequence& sequence);
     bool saveSequence(const QString& filePath, const TestSequence& sequence);
-    bool createDefaultSequence(TestSequence& sequence);
     
     // 序列操作
     void addTestStep(TestSequence& sequence, const TestStep& step);
@@ -115,8 +114,8 @@ private:
     // JSON转换辅助函数
     QJsonObject testStepToJson(const TestStep& step);
     TestStep jsonToTestStep(const QJsonObject& json);
-    QJsonObject componentSpecsToJson(const ComponentSpecs& specs);
-    ComponentSpecs jsonToComponentSpecs(const QJsonObject& json);
+    QJsonObject componentParamsToJson(const QMap<QString, QVariant>& params);
+    QMap<QString, QVariant> jsonToComponentParams(const QJsonObject& json);
     
     // 文件管理
     QStringList recent_files_;

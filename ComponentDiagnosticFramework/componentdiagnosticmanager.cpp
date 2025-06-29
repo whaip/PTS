@@ -1,4 +1,5 @@
 #include "componentdiagnosticmanager.h"
+#include "commontypes.h"
 #include <QUuid>
 #include <QDateTime>
 #include <QDebug>
@@ -104,6 +105,12 @@ bool ComponentDiagnosticManager::isComponentTypeSupported(ComponentType type) co
     return diagnostics_.contains(type);
 }
 
+BaseComponentDiagnostic* ComponentDiagnosticManager::getDiagnostic(ComponentType type) const
+{
+    auto it = diagnostics_.find(type);
+    return it != diagnostics_.end() ? it.value() : nullptr;
+}
+
 ComponentDiagnosticResult ComponentDiagnosticManager::diagnoseComponent(const ComponentSpec& component)
 {
     QString taskId = generateTaskId();
@@ -133,6 +140,44 @@ ComponentDiagnosticResult ComponentDiagnosticManager::diagnoseComponent(const Co
     }
     
     return result;
+}
+
+QVector<PortRequirement> ComponentDiagnosticManager::getPortRequirements(const ComponentSpec& component) const
+{
+    QVector<PortRequirement> requirements;
+
+    BaseComponentDiagnostic* diagnostic = getDiagnostic(component.type);
+    if (diagnostic) {
+        requirements = diagnostic->getPortRequirements(component);
+    }else{
+        qDebug() << "元件诊断未注册";
+    }
+    return requirements;
+}
+
+QMap<QString, QVariant> ComponentDiagnosticManager::getRequiredParameters(const ComponentType& type) const
+{
+    QMap<QString, QVariant> parameters;
+
+    BaseComponentDiagnostic* diagnostic = getDiagnostic(type);
+    if (diagnostic) {
+        parameters = diagnostic->getRequiredParameters();
+    } else {
+        qDebug() << "元件诊断未注册";
+    }
+    return parameters;
+}
+QVector<WiringConnection> ComponentDiagnosticManager::generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const
+{
+    QVector<WiringConnection> wiringScheme;
+
+    BaseComponentDiagnostic* diagnostic = getDiagnostic(component.type);
+    // 根据组件规格生成接线方案
+    // 这里的逻辑需要根据实际需求进行调整
+    if (diagnostic) {
+        wiringScheme = diagnostic->generateWiringScheme(component, allocatedPorts);
+    }
+    return wiringScheme;
 }
 
 QString ComponentDiagnosticManager::diagnoseComponentAsync(const ComponentSpec& component)
@@ -746,7 +791,7 @@ ComponentDiagnosticResult ComponentDiagnosticManager::executeSingleDiagnosis(con
     
     try {
         // 执行诊断
-        result = diagnostic->diagnose(component);
+        result = diagnostic->diagnoseComponent(component);
         
         // 更新统计信息
         QString typeName = BaseComponentDiagnostic::componentTypeToString(component.type);
