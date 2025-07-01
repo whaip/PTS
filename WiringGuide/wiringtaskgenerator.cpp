@@ -33,7 +33,7 @@ QString WiringTaskGenerator::generateTaskFromScheme(const WiringScheme& scheme, 
     
     // 验证任务
     QStringList errors;
-    if (!validateTaskConfiguration(task, errors)) {
+    if (component.reference != "Batch Test" && !validateTaskConfiguration(task, errors)) {
         QString error = QString("任务验证失败: %1").arg(errors.join("; "));
         emit errorOccurred(error);
         return QString();

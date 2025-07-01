@@ -125,21 +125,17 @@ public:
      * @param allocatedPorts 分配的端口列表
      * @return 接线连接定义
      */
-    virtual QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, 
-                                                          const QVector<PortInfo>& allocatedPorts) const = 0;
+    virtual QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const = 0;
     
     /**
      * @brief 配置数据采集参数
      * @param component 组件规格
-     * @param ports 端口信息
      * @return 测试配置
      */
-    virtual ComponentTestConfig configureDataAcquisition(const ComponentSpec& component,
-                                                        const QVector<PortInfo>& ports) const = 0;
+    virtual ComponentTestConfig configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const = 0;
     
     /**
      * @brief 执行数据采集
-     * @param config 测试配置
      * @return 测试数据
      */
     virtual TestData executeDataAcquisition(const ComponentTestConfig& config) = 0;
@@ -223,7 +219,7 @@ signals:
 private:
     DeviceManager* deviceManager_;
     QString currentComponentId_;
-    
+
     // 诊断流程的私有方法
     bool allocatePorts(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);
     bool allocatePortsByComponentType(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);

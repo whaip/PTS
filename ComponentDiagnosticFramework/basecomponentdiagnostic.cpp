@@ -50,39 +50,19 @@ ComponentDiagnosticResult BaseComponentDiagnostic::diagnoseComponent(const Compo
         // 1. 验证组件规格
         logInfo(QString("开始诊断组件: %1 (%2)").arg(component.reference).arg(getComponentTypeName()));
         
-        if (!validateComponentSpec(component)) {
-            throw std::runtime_error("组件规格验证失败");
-        }
-        
-        emit diagnosisProgress(currentComponentId_, 10);
-        
-        // 2. 获取端口需求并分配端口
-        QVector<PortInfo> allocatedPorts;
-        if (!allocatePorts(component, allocatedPorts)) {
-            throw std::runtime_error("端口分配失败");
-        }
-        
-        emit diagnosisProgress(currentComponentId_, 20);
-        
-        // 3. 生成接线方案并等待接线完成
-        if (!setupWiring(component, allocatedPorts)) {
-            releasePorts(allocatedPorts);
-            throw std::runtime_error("接线设置失败");
-        }
-        
-        emit diagnosisProgress(currentComponentId_, 40);
-        
         // 4. 预处理设置
         if (!preTestSetup(component)) {
-            releasePorts(allocatedPorts);
             throw std::runtime_error("预处理设置失败");
         }
         
         emit diagnosisProgress(currentComponentId_, 50);
         
         // 5. 配置数据采集
-        ComponentTestConfig testConfig = configureDataAcquisition(component, allocatedPorts);
+        ComponentTestConfig testConfig = configureDataAcquisition(component, component.allocatedPorts);
         
+        if(testConfig.parameters.isEmpty()) {
+            throw std::runtime_error("配置数据采集失败, 配置参数为空");
+        }
         emit diagnosisProgress(currentComponentId_, 60);
         
         // 6. 执行数据采集
@@ -91,7 +71,6 @@ ComponentDiagnosticResult BaseComponentDiagnostic::diagnoseComponent(const Compo
         emit testCompleted(currentComponentId_, testData);
         
         if (!validateTestData(testData)) {
-            releasePorts(allocatedPorts);
             throw std::runtime_error("测试数据验证失败");
         }
         
@@ -104,7 +83,6 @@ ComponentDiagnosticResult BaseComponentDiagnostic::diagnoseComponent(const Compo
         
         // 8. 后处理清理
         postTestCleanup();
-        releasePorts(allocatedPorts);
         
         // 设置诊断成功的基本信息
         result.componentId = component.reference;
@@ -145,16 +123,6 @@ bool BaseComponentDiagnostic::validateComponentSpec(const ComponentSpec& compone
     
     if (component.type == ComponentType::UNKNOWN) {
         logError("未知组件类型");
-        return false;
-    }
-    
-    if (component.nominal_value <= 0) {
-        logError("标称值必须大于0");
-        return false;
-    }
-    
-    if (component.tolerance_percent < 0 || component.tolerance_percent > 100) {
-        logError("容差百分比必须在0-100之间");
         return false;
     }
     

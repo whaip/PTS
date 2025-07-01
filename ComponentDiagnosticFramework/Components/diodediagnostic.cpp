@@ -198,86 +198,86 @@ TestData DiodeDiagnostic::executeDataAcquisition(const ComponentTestConfig& conf
 {
     TestData data;
     
-    try {
-        QMap<QString, QVariant> measurement;
+    // try {
+    //     QMap<QString, QVariant> measurement;
         
-        // 1. 正向I-V特性测量
-        QMap<double, double> forwardIV = measureIVCurve(forwardMaxCurrent_, forwardMaxVoltage_, forwardCurrentSteps_, false);
-        measurement["forward_iv_curve"] = QVariant::fromValue(forwardIV);
+    //     // 1. 正向I-V特性测量
+    //     QMap<double, double> forwardIV = measureIVCurve(forwardMaxCurrent_, forwardMaxVoltage_, forwardCurrentSteps_, false);
+    //     measurement["forward_iv_curve"] = QVariant::fromValue(forwardIV);
         
-        // 2. 反向I-V特性测量
-        QMap<double, double> reverseIV = measureIVCurve(leakageThreshold_, reverseMaxVoltage_, 20, true);
-        measurement["reverse_iv_curve"] = QVariant::fromValue(reverseIV);
+    //     // 2. 反向I-V特性测量
+    //     QMap<double, double> reverseIV = measureIVCurve(leakageThreshold_, reverseMaxVoltage_, 20, true);
+    //     measurement["reverse_iv_curve"] = QVariant::fromValue(reverseIV);
         
-        // 3. 开启电压检测
-        double thresholdVoltage = detectThresholdVoltage(FORWARD_CURRENT_THRESHOLD);
-        measurement["threshold_voltage"] = thresholdVoltage;
+    //     // 3. 开启电压检测
+    //     double thresholdVoltage = detectThresholdVoltage(FORWARD_CURRENT_THRESHOLD);
+    //     measurement["threshold_voltage"] = thresholdVoltage;
         
-        // 4. 标准电流下的正向压降
-        QVector<double> testCurrents = {0.001, 0.01, 0.1}; // 1mA, 10mA, 100mA
-        QMap<double, double> forwardDrops;
-        for (double current : testCurrents) {
-            if (current <= forwardMaxCurrent_) {
-                double vf = measureForwardDrop(current);
-                if (vf > 0) {
-                    forwardDrops[current] = vf;
-                }
-            }
-        }
-        measurement["forward_drops"] = QVariant::fromValue(forwardDrops);
+    //     // 4. 标准电流下的正向压降
+    //     QVector<double> testCurrents = {0.001, 0.01, 0.1}; // 1mA, 10mA, 100mA
+    //     QMap<double, double> forwardDrops;
+    //     for (double current : testCurrents) {
+    //         if (current <= forwardMaxCurrent_) {
+    //             double vf = measureForwardDrop(current);
+    //             if (vf > 0) {
+    //                 forwardDrops[current] = vf;
+    //             }
+    //         }
+    //     }
+    //     measurement["forward_drops"] = QVariant::fromValue(forwardDrops);
         
-        // 5. 反向漏电流测量
-        QVector<double> reverseVoltages = {-1.0, -5.0, -10.0};
-        QMap<double, double> leakageCurrents;
-        for (double voltage : reverseVoltages) {
-            if (voltage >= reverseMaxVoltage_) {
-                double leakage = measureReverseCurrent(voltage);
-                if (leakage >= 0) {
-                    leakageCurrents[voltage] = leakage;
-                }
-            }
-        }
-        measurement["leakage_currents"] = QVariant::fromValue(leakageCurrents);
+    //     // 5. 反向漏电流测量
+    //     QVector<double> reverseVoltages = {-1.0, -5.0, -10.0};
+    //     QMap<double, double> leakageCurrents;
+    //     for (double voltage : reverseVoltages) {
+    //         if (voltage >= reverseMaxVoltage_) {
+    //             double leakage = measureReverseCurrent(voltage);
+    //             if (leakage >= 0) {
+    //                 leakageCurrents[voltage] = leakage;
+    //             }
+    //         }
+    //     }
+    //     measurement["leakage_currents"] = QVariant::fromValue(leakageCurrents);
         
-        // 6. 结电容测量
-        double junctionCapacitance = measureJunctionCapacitance(capacitanceFrequency_, capacitanceDCBias_, capacitanceACVoltage_);
-        measurement["junction_capacitance"] = junctionCapacitance;
+    //     // 6. 结电容测量
+    //     double junctionCapacitance = measureJunctionCapacitance(capacitanceFrequency_, capacitanceDCBias_, capacitanceACVoltage_);
+    //     measurement["junction_capacitance"] = junctionCapacitance;
         
-        // 7. 击穿电压测试（如果启用）
-        if (breakdownTestEnabled_) {
-            double breakdownVoltage = measureBreakdownVoltage(breakdownCurrentLimit_);
-            measurement["breakdown_voltage"] = breakdownVoltage;
-        }
+    //     // 7. 击穿电压测试（如果启用）
+    //     if (breakdownTestEnabled_) {
+    //         double breakdownVoltage = measureBreakdownVoltage(breakdownCurrentLimit_);
+    //         measurement["breakdown_voltage"] = breakdownVoltage;
+    //     }
         
-        // 8. 动态特性测试（如果启用）
-        if (dynamicTestEnabled_) {
-            QMap<QString, double> switchingTimes = measureSwitchingTimes(pulseAmplitude_, 1000.0);
-            measurement["switching_times"] = QVariant::fromValue(switchingTimes);
-        }
+    //     // 8. 动态特性测试（如果启用）
+    //     if (dynamicTestEnabled_) {
+    //         QMap<QString, double> switchingTimes = measureSwitchingTimes(pulseAmplitude_, 1000.0);
+    //         measurement["switching_times"] = QVariant::fromValue(switchingTimes);
+    //     }
         
-        // 9. 计算二极管参数
-        if (!forwardIV.isEmpty()) {
-            double idealityFactor = calculateIdealityFactor(forwardIV);
-            double saturationCurrent = calculateSaturationCurrent(forwardIV);
-            double seriesResistance = calculateSeriesResistance(forwardIV);
+    //     // 9. 计算二极管参数
+    //     if (!forwardIV.isEmpty()) {
+    //         double idealityFactor = calculateIdealityFactor(forwardIV);
+    //         double saturationCurrent = calculateSaturationCurrent(forwardIV);
+    //         double seriesResistance = calculateSeriesResistance(forwardIV);
             
-            measurement["ideality_factor"] = idealityFactor;
-            measurement["saturation_current"] = saturationCurrent;
-            measurement["series_resistance"] = seriesResistance;
-        }
+    //         measurement["ideality_factor"] = idealityFactor;
+    //         measurement["saturation_current"] = saturationCurrent;
+    //         measurement["series_resistance"] = seriesResistance;
+    //     }
         
-        // 10. 二极管类型检测
-        QString detectedType = detectDiodeType(forwardIV);
-        measurement["detected_type"] = detectedType;
+    //     // 10. 二极管类型检测
+    //     QString detectedType = detectDiodeType(forwardIV);
+    //     measurement["detected_type"] = detectedType;
         
-        data.measurements.append(measurement);
-        data.timestamp = QDateTime::currentDateTime();
-        data.valid = true;
+    //     data.measurements.append(measurement);
+    //     data.timestamp = QDateTime::currentDateTime();
+    //     data.valid = true;
         
-    } catch (const std::exception& e) {
-        data.errorMessage = QString("Data acquisition failed: %1").arg(e.what());
-        data.valid = false;
-    }
+    // } catch (const std::exception& e) {
+    //     data.errorMessage = QString("Data acquisition failed: %1").arg(e.what());
+    //     data.valid = false;
+    // }
     
     return data;
 }

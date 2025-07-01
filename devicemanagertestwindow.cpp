@@ -527,101 +527,110 @@ void DeviceManagerTestWindow::testMeasureVoltage()
     QString deviceName = daqDevices.first();
 
     // 使用更合理的采集参数
-    QVector<int> channels = {0, 1};
-    double sampleRate = 10000.0;      // 降低到10kHz
-    int samplesPerChannel = 1000;     // 每通道1000个样本
+    DeviceOperation test;
+    test.command = DeviceCommand::CONFIGURE_CHANNEL;
+    test.parameters["mode"] = "multi";
+    test.parameters["channelCount"] = 2;
+    test.parameters["sampleRate"] = 10000.0;
+    test.parameters["samplesPerChannel"] = 1000;
+    // 设置采集通道列表
+    test.parameters["channels"] = QVariant::fromValue(QVector<int>({0, 1}));  // 使用 QVector<int> 包装通道列表
+    QVector<int> channels = QVector<int>() << 0 << 1;  // 用于后续循环和导出
+    test.parameters["inputRangeMin"] = -10.0;
+    test.parameters["inputRangeMax"] = 10.0;
     
     appendResult(QString("配置多点采集 - 设备: %1, 通道: %2, 采样率: %3Hz, 样本数: %4")
                 .arg(deviceName)
-                .arg(channels.size())
-                .arg(sampleRate)
-                .arg(samplesPerChannel));
+                .arg(test.parameters["channelCount"].toString())
+                .arg(test.parameters["sampleRate"].toDouble())
+                .arg(test.parameters["samplesPerChannel"].toInt()));
     
-    if (!deviceManager_->configureMultiPointAcquisition(deviceName, channels, sampleRate, samplesPerChannel)) {
+    if (!deviceManager_->submitOperation(deviceName, test)) {
         appendResult("多点采集配置失败: " + deviceManager_->getLastError());
         return;
     }
 
-    if (!deviceManager_->startMultiPointAcquisition(deviceName)) {
+    DeviceResult aoConfigResult = deviceManager_->waitForResult(deviceName, 5000);
+    if (!aoConfigResult.success) {
+        appendResult("配置多点采集失败: " + aoConfigResult.error);
+        return;
+    }
+
+    test.command = DeviceCommand::START_MEASUREMENT;
+    test.timeout = 5000;
+    // test.parameters["mode"] = "multi";
+    // test.parameters["channelCount"] = 2;
+    // test.parameters["sampleRate"] = 10000.0;
+    // test.parameters["samplesPerChannel"] = 1000;
+    // test.parameters["channels"] = QVector<int>({0, 1});
+    // test.parameters["inputRangeMin"] = -10.0;
+    // test.parameters["inputRangeMax"] = 10.0;
+    if (!deviceManager_->submitOperation(deviceName, test)) {
         appendResult("多点采集启动失败: " + deviceManager_->getLastError());
         return;
     }
 
+    aoConfigResult = deviceManager_->waitForResult(deviceName, 5000);
+    if (!aoConfigResult.success) {
+        appendResult("多点采集启动失败: " + aoConfigResult.error);
+        return;
+    }
     appendResult("多点采集已启动，等待数据...");
     
     QVector<QVector<double>> channelData;
-    int attempts = 0;
-    const int maxAttempts = 50;  // 增加尝试次数
-    
-    while (attempts < maxAttempts) {
-        QThread::msleep(100); // 减少等待时间到100ms
+    DeviceManager::WaitResult waitResult = deviceManager_->waitForDataWithEventLoop(deviceName, channelData, 30, 200, 8000);
+    if (waitResult.success) {
+        appendResult("数据采集成功，通道数据大小: " + QString::number(channelData.size()));
         
-        if (deviceManager_->readMultiPointData(deviceName, channelData, 5000)) {
-            appendResult("多点采集数据读取成功!");
-            appendResult(QString("采集到 %1 个通道的数据").arg(channelData.size()));
-            
-            for (int ch = 0; ch < channelData.size() && ch < channels.size(); ++ch) {
-                appendResult(QString("通道%1: %2 个样本").arg(channels[ch]).arg(channelData[ch].size()));
-                
-                // 计算统计信息
-                if (!channelData[ch].isEmpty()) {
-                    double sum = 0.0;
-                    double minVal = channelData[ch][0];
-                    double maxVal = channelData[ch][0];
-                    
-                    for (double value : channelData[ch]) {
-                        sum += value;
-                        minVal = qMin(minVal, value);
-                        maxVal = qMax(maxVal, value);
-                    }
-                    
-                    double avgVal = sum / channelData[ch].size();
-                    appendResult(QString("  统计: 平均值=%.4f, 最小值=%.4f, 最大值=%.4f")
-                               .arg(avgVal).arg(minVal).arg(maxVal));
-                    
-                    // 显示前5个样本
-                    QString samples = "  前5个样本: ";
-                    int showCount = qMin(5, channelData[ch].size());
-                    for (int i = 0; i < showCount; ++i) {
-                        samples += QString::number(channelData[ch][i], 'f', 4) + " ";
-                    }
-                    appendResult(samples);
-                }
-            }
-            
-            // 只有成功读取到数据才导出
-            if (!channelData.isEmpty() && !channelData[0].isEmpty()) {
-                QString fileName = QString("multipoint_data_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
-                if (deviceManager_->exportAcquisitionData(channelData, channels, fileName)) {
-                    appendResult("数据已导出到: " + fileName);
-                } else {
-                    appendResult("数据导出失败: " + deviceManager_->getLastError());
-                }
-            } else {
-                appendResult("警告: 读取到的数据为空，跳过导出");
-            }
-            
-            break;
-        } else {
-            attempts++;
-            if (attempts % 10 == 0) {  // 每10次尝试输出一次状态
-                appendResult(QString("等待数据... (%1/%2) - %3")
-                           .arg(attempts).arg(maxAttempts)
-                           .arg(deviceManager_->getLastError()));
+        // 验证数据完整性
+        bool dataValid = true;
+        for (int ch = 0; ch < channelData.size(); ++ch) {
+            if (channelData[ch].size() != test.parameters["samplesPerChannel"].toInt()) {
+                appendResult(QString("❌ 通道 %1 数据不完整: 期望 %2 样本，实际 %3 样本")
+                           .arg(ch).arg(test.parameters["samplesPerChannel"].toInt()).arg(channelData[ch].size()));
+                dataValid = false;
             }
         }
+        
+        if (dataValid) {
+            appendResult("✓ 数据完整性验证通过");
+            
+            // 显示数据统计
+            for (int ch = 0; ch < channelData.size(); ++ch) {
+                const QVector<double>& data = channelData[ch];
+                double minVal = *std::min_element(data.begin(), data.end());
+                double maxVal = *std::max_element(data.begin(), data.end());
+                double avgVal = std::accumulate(data.begin(), data.end(), 0.0) / data.size();
+                
+                appendResult(QString("通道 %1: 样本数=%2, 范围=[%3, %4]V, 平均=%5V")
+                           .arg(ch).arg(data.size())
+                           .arg(minVal, 0, 'f', 3)
+                           .arg(maxVal, 0, 'f', 3)
+                           .arg(avgVal, 0, 'f', 3));
+            }
+            
+            // 可选：导出数据
+            QString fileName = QString("multipoint_voltage_test_%1.csv")
+                              .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"));
+            if (deviceManager_->exportAcquisitionData(channelData, channels, fileName)) {
+                appendResult("数据已导出到: " + fileName);
+            }
+        }
+    } else {
+        appendResult("数据采集失败: " + waitResult.errorMessage);
     }
-    
-    if (attempts >= maxAttempts) {
-        appendResult(QString("警告: 超时未读取到完整数据 (尝试了%1次)").arg(maxAttempts));
-    }
-    
     // 停止采集
     appendResult("正在停止多点采集...");
-    if (!deviceManager_->stopMultiPointAcquisition(deviceName)) {
+    DeviceOperation stopOp(DeviceCommand::STOP_MEASUREMENT);
+    stopOp.timeout = 5000;
+    if (!deviceManager_->submitOperation(deviceName, stopOp)) {
         appendResult("停止多点采集失败: " + deviceManager_->getLastError());
+    } 
+    DeviceResult stopResult = deviceManager_->waitForResult(deviceName, 5000);
+    if (stopResult.success) {
+        appendResult("多点采集已停止");
     } else {
-        appendResult("多点采集已成功停止");
+        appendResult("停止多点采集失败: " + stopResult.error);
     }
 }
 
@@ -849,50 +858,83 @@ void DeviceManagerTestWindow::testMeasureResistance()
     // 3. 使用DeviceOperation启动连续测量
     appendResult("步骤2: 启动DMM连续测量...");
     
+    // DeviceOperation startOp;
+    // startOp.command = DeviceCommand::START_MEASUREMENT;
+    // startOp.timeout = 10000;
+    
+    // if (!deviceManager_->submitOperation("JY8902", startOp)) {
+    //     appendResult("❌ DMM启动操作提交失败");
+    //     return;
+    // }
+    
+    // DeviceResult startResult = deviceManager_->waitForResult("JY8902", 10000);
+    // if (startResult.success) {
+    //     appendResult("✓ DMM连续测量启动成功");
+    // } else {
+    //     appendResult("❌ DMM启动失败: " + startResult.error);
+    //     return;
+    // }
+
     DeviceOperation startOp;
     startOp.command = DeviceCommand::START_MEASUREMENT;
     startOp.timeout = 10000;
-    
-    if (!deviceManager_->submitOperation("JY8902", startOp)) {
-        appendResult("❌ DMM启动操作提交失败");
-        return;
+    if(!deviceManager_->submitOperation("JY8902", startOp)) {
+        throw std::runtime_error(QString("设备 %1 启动失败: %2").arg("JY8902", deviceManager_->getLastError()).toStdString());
     }
-    
     DeviceResult startResult = deviceManager_->waitForResult("JY8902", 10000);
-    if (startResult.success) {
-        appendResult("✓ DMM连续测量启动成功");
-    } else {
-        appendResult("❌ DMM启动失败: " + startResult.error);
-        return;
+    if(!startResult.success) {
+        throw std::runtime_error(QString("设备 %1 启动失败: %2").arg("JY8902", startResult.error).toStdString());
     }
     
     // 4. 使用DeviceOperation发送软件触发
     appendResult("步骤3: 发送软件触发...");
     
+    // DeviceOperation triggerOp;
+    // triggerOp.command = DeviceCommand::SYNC_TRIGGER;
+    // triggerOp.timeout = 10000;
+    
+    // if (!deviceManager_->submitOperation("JY8902", triggerOp)) {
+    //     appendResult("❌ DMM软件触发操作提交失败");
+    //     return;
+    // }
+    
+    // DeviceResult triggerResult = deviceManager_->waitForResult("JY8902", 10000);
+    // if (triggerResult.success) {
+    //     appendResult("✓ DMM软件触发发送成功");
+    // } else {
+    //     appendResult("❌ DMM软件触发失败: " + triggerResult.error);
+    //     return;
+    // }
     DeviceOperation triggerOp;
     triggerOp.command = DeviceCommand::SYNC_TRIGGER;
     triggerOp.timeout = 10000;
-    
     if (!deviceManager_->submitOperation("JY8902", triggerOp)) {
-        appendResult("❌ DMM软件触发操作提交失败");
-        return;
+        throw std::runtime_error(QString("设备 %1 同步触发失败: %2").arg("JY8902", deviceManager_->getLastError()).toStdString());
     }
-    
     DeviceResult triggerResult = deviceManager_->waitForResult("JY8902", 10000);
-    if (triggerResult.success) {
-        appendResult("✓ DMM软件触发发送成功");
-    } else {
-        appendResult("❌ DMM软件触发失败: " + triggerResult.error);
-        return;
+    if (!triggerResult.success) {
+        throw std::runtime_error(QString("设备 %1 同步触发失败: %2").arg("JY8902", triggerResult.error).toStdString());
     }
     
     // 5. 使用DeviceOperation读取数据（事件循环方式）
     appendResult("步骤4: 使用事件循环读取DMM数据...");
     
     // 使用兼容的事件循环等待数据
+    // QVector<QVector<double>> channelData;
+    // DeviceManager::WaitResult waitResult = deviceManager_->waitForDataWithEventLoop(
+    //     "JY8902", channelData, 50, 100, 15000);
+
     QVector<QVector<double>> channelData;
     DeviceManager::WaitResult waitResult = deviceManager_->waitForDataWithEventLoop(
         "JY8902", channelData, 50, 100, 15000);
+    // if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty())
+    // {
+    //     for(double value : channelData[0]) {
+    //         appendResult(QString("万用表测量电阻值: %1 Ω").arg(value));
+    //     }
+    // }else{
+    //     throw std::runtime_error("万用表测量数据为空或读取失败");
+    // }
     
     if (waitResult.success && !channelData.isEmpty() && !channelData[0].isEmpty()) {
         appendResult("✓ 事件循环数据读取成功！");

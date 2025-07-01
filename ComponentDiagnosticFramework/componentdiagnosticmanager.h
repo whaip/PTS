@@ -324,6 +324,7 @@ private:
     int globalTimeout_;
     int maxConcurrency_;
     
+    ComponentTestConfig  config_;
     // 统计信息
     mutable QMutex statisticsMutex_;
     QMap<QString, int> componentCounts_;

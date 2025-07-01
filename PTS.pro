@@ -43,7 +43,7 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     devicemanager.cpp \
-    devicethread.cpp \    
+    devicethread.cpp \
     devicemanagertestwindow.cpp \
     faultdiagnostic.cpp\
     signalconfiguration.cpp \
@@ -78,6 +78,7 @@ SOURCES += \
     pcbboardmanager.cpp \    
     pcbboardmanagementwidget.cpp \
     PCB_Components_Detect/staticlabelviewdialog.cpp \
+    uestcqcustomplot.cpp \
     WiringGuide/wiringguidedialog.cpp \
     WiringGuide/portmanager.cpp \
     WiringGuide/wiringguidedialog.cpp \
@@ -87,7 +88,7 @@ SOURCES += \
 HEADERS += \
     mainwindow.h \
     devicemanager.h \
-    devicethread.h \    
+    devicethread.h \
     devicemanagertestwindow.h \
     commontypes.h \
     faultdiagnostic.h\
@@ -125,6 +126,7 @@ HEADERS += \
     pcbboardmanagementwidget.h \
     5711waveformconfig.h \
     PCB_Components_Detect/staticlabelviewdialog.h \
+    uestcqcustomplot.h \
     WiringGuide/wiringguidedialog.h \
     WiringGuide/portdefinitions.h \
     WiringGuide/portmanager.h \

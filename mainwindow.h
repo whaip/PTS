@@ -26,6 +26,9 @@
 #include <QMessageBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QCheckBox>
+#include <QMap>
+#include <QVariant>
 #include "devicemanager.h"
 #include "faultdiagnostic.h"
 #include "testsequencemanager.h"
@@ -43,6 +46,7 @@
 #include "WiringGuide/portmanager.h"
 #include "WiringGuide/wiringresourcemanager.h"
 #include "WiringGuide/wiringtaskgenerator.h"
+#include "UESTCQCustomPlot.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -85,7 +89,7 @@ private slots:
     void openBoardManagement();
     void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
     void startWiringGuide();        // 开始接线引导
-    void onWiringCompleted(const WiringScheme& scheme);  // 接线完成回调
+    void onWiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
     // void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
     // void executeTestWithWiringGuide(const ComponentSpec& component);  // 使用接线引导执行测试（批量测试用）
@@ -134,7 +138,10 @@ private:
     QDoubleSpinBox* tolerance_spin_;
     QSpinBox* channel_spin_;
     QPushButton* single_test_button_;
+    UESTCQCustomPlot* single_measurement_plot_;
     QTextEdit* single_result_text_;
+    QTabWidget* single_param_tabs_;                                    
+    QMap<ComponentType, QList<QWidget*>> single_param_widgets_map_;
 
     // 批量测试页面
     QWidget* batch_test_page_;
@@ -148,6 +155,7 @@ private:
 
     // 结果页面
     QWidget* results_page_;
+    UESTCQCustomPlot* measurement_plot_; 
     QTableWidget* results_table_;
     QPushButton* export_button_;
     QPushButton* clear_button_;
@@ -164,7 +172,7 @@ private:
     bool batch_testing_active_;
 
     // 批量测试的统一接线方案管理
-    bool unified_wiring_prepared_;                      // 是否已准备统一接线
+    bool unified_wiring_prepared_;
 
     // 私有方法
     void setupUI();
@@ -181,10 +189,13 @@ private:
     TestStep createTestStepFromComponent(const ComponentSpec& component);
     void populateComponentTable();
     QString getStatusIcon(DeviceStatus status);
-      // 批量测试的统一接线方案管理方法
-    ComponentSpec createBatchComponentSpec();
-    void startBatchTestWithUnifiedWiring(const ComponentSpec& batchComponent);
-    void onBatchWiringCompleted(const WiringScheme& scheme);
+    void updateMeasurementPlot(const QMap<QString, QVariant>& measurementData);
+    void updateSingleTestMeasurementPlot(const QMap<QString, QVariant>& measurementData);
+
+    // 批量测试的统一接线方案管理方法
+    QVector<ComponentSpec> createBatchComponentSpec();
+    void startBatchTestWithUnifiedWiring(const QVector<ComponentSpec>& batchComponent);
+    void onBatchWiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void executeBatchTestWithPreAllocatedWiring(const ComponentSpec& specs);
 };
 

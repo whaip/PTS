@@ -7,7 +7,6 @@
 #include <QFutureWatcher>
 #include <QScrollBar>
 #include <QMap>
-#include "DataManager.h"
 #include <QLabel>
 #include <random>
 #include <algorithm>
@@ -31,20 +30,19 @@ public:
     explicit UESTCQCustomPlot(QWidget *parent = nullptr);
     ~UESTCQCustomPlot();
 
-    QCPGraph* addLine(const QString& filePath);
-    void removeLine(std::vector<QCPGraph*> graphs);
+    // 移除文件加载相关方法，只保留实时数据相关方法
     void setHorizontalScrollBar(QScrollBar* scrollBar);
     void replot(QCustomPlot::RefreshPriority refreshPriority = QCustomPlot::rpQueuedReplot);
 
     QCPGraph* addRealTimeLine(const QString& name);
-    void updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QList<double>> data);
+    void updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QVector<double>> data);
+    void removeAllLines(); 
 
 private slots:
     void onXRangeChanged(const QCPRange &range);
     void onScrollBarValueChanged(int value);
     void onMouseDoubleClick(QMouseEvent* event);
     void onLegendClick(QCPLegend* legend, QCPAbstractLegendItem* item, QMouseEvent* event);
-    void processQueuedUpdates();
 
 protected:
     void leaveEvent(QEvent *event) override;
@@ -54,9 +52,6 @@ protected:
 private:
     void setDataRange(double lower, double upper);
     void updateScrollBar();
-    void updateMaxRange();
-    void updateGraphData(QCPGraph* graph);
-    void updateAllGraphsData();
     void addCursor(QCPGraph* graph, const QColor& color);
     void removeCursor(QCPGraph* graph);
     void updateCursors(QMouseEvent* event);
@@ -70,23 +65,12 @@ private:
     QScrollBar* scrollBar;
     double maxX;
     double minX;
-    static const int MINIMUM_POINTS = 1000;
-    QMap<QCPGraph*, DataManager*> dataManagers;
-    QLabel* coordLabel;
     QMap<QCPGraph*, Cursor> cursors;
     QVector<QColor> colorPool;
     int currentColorIndex;
 
-    QThreadPool threadPool;
-    QMap<QCPGraph*, QFutureWatcher<DataManager::DataBlock>*> dataWatchers;
-    bool isUpdating;
-    QTimer* updateTimer;
-
     QCPItemText* legendToggleButton;
     bool isLegendExpanded;
-    int lastIndex = 0;
-
-    QMutex dataAccessMutex;
 };
 
 #endif // UESTCQCUSTOMPLOT_H

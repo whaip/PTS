@@ -296,7 +296,6 @@ void PortManager::cleanupInvalidAllocations()
 
 void PortManager::cleanupInvalidAllocationsInternal()
 {
-    // 注意：此函数假设调用者已经持有portMutex_锁
     int cleanedCount = 0;
     for (auto it = devicePorts_.begin(); it != devicePorts_.end(); ++it) {
         for (PortInfo& port : it.value()) {
@@ -314,140 +313,6 @@ void PortManager::cleanupInvalidAllocationsInternal()
     if (cleanedCount > 0) {
         qDebug() << "已清理" << cleanedCount << "个无效分配的端口";
     }
-}
-
-QVector<PortInfo> PortManager::getRecommendedPorts(ComponentType componentType) const
-{
-    switch (componentType) {
-    case ComponentType::RESISTOR:
-        return getResistorPorts();
-    case ComponentType::CAPACITOR:
-        return getCapacitorPorts();
-    case ComponentType::INDUCTOR:
-        return getInductorPorts();
-    case ComponentType::DIODE:
-        return getDiodePorts();
-    case ComponentType::IC:
-        return getICPorts();
-    default:
-        return getResistorPorts(); // 默认使用电阻配置
-    }
-}
-
-QVector<PortInfo> PortManager::getResistorPorts() const
-{
-    QVector<PortInfo> ports;
-    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
-    
-    // 电阻测试只需要万用表的1个端口进行2线法测量
-    if (availableDMM.size() >= 1) {
-        ports.append(availableDMM[0]);  // CH0
-    }
-    
-    qDebug() << "电阻测试端口配置: 需要2个万用表端口，可用" << availableDMM.size() << "个";
-    return ports;
-}
-
-QVector<PortInfo> PortManager::getCapacitorPorts() const
-{
-    QVector<PortInfo> ports;
-    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
-    QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
-    QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    
-    // 电容测试优先使用万用表直接测量，备选方案是阻抗测量
-    if (availableDMM.size() >= 2) {
-        // 方案1：万用表直接测量电容值
-        ports.append(availableDMM[0]);  // CH0
-        ports.append(availableDMM[1]);  // CH1
-        qDebug() << "电容测试端口配置: 使用万用表直接测量";
-    } else if (!availableAO.isEmpty() && availableAI.size() >= 2) {
-        // 方案2：交流阻抗测量法
-        ports.append(availableAO.first());  // 信号源
-        ports.append(availableAI[0]);       // 电压测量
-        ports.append(availableAI[1]);       // 电流测量
-        qDebug() << "电容测试端口配置: 使用阻抗测量法";
-    }
-    
-    return ports;
-}
-
-QVector<PortInfo> PortManager::getInductorPorts() const
-{
-    QVector<PortInfo> ports;
-    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
-    QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
-    QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    
-    // 电感测试：万用表无法直接测量电感，需要阻抗测量法
-    if (!availableAO.isEmpty() && availableAI.size() >= 2) {
-        // 交流阻抗测量法
-        ports.append(availableAO.first());  // 信号源
-        ports.append(availableAI[0]);       // 电压测量
-        ports.append(availableAI[1]);       // 电流测量
-        qDebug() << "电感测试端口配置: 使用阻抗测量法";
-    } else if (availableDMM.size() >= 2) {
-        // 备选：使用万用表测量直流电阻（DCR）
-        ports.append(availableDMM[0]);
-        ports.append(availableDMM[1]);
-        qDebug() << "电感测试端口配置: 使用万用表测量DCR";
-    }
-    
-    return ports;
-}
-
-QVector<PortInfo> PortManager::getDiodePorts() const
-{
-    QVector<PortInfo> ports;
-    QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
-    QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    QVector<PortInfo> availableDMM = getAvailablePorts(PortType::DMM_MEASUREMENT);
-    
-    // 二极管测试需要：直流电压源 + 电压/电流测量
-    if (!availableAO.isEmpty() && !availableAI.isEmpty()) {
-        ports.append(availableAO.first());  // 直流电压源
-        ports.append(availableAI.first());  // 电压测量
-        qDebug() << "二极管测试端口配置: 使用电压源+模拟输入";
-    } else if (availableDMM.size() >= 2) {
-        // 备选方案：万用表二极管测试模式
-        ports.append(availableDMM[0]);
-        ports.append(availableDMM[1]);
-        qDebug() << "二极管测试端口配置: 使用万用表二极管模式";
-    }
-    
-    return ports;
-}
-
-QVector<PortInfo> PortManager::getICPorts() const
-{
-    QVector<PortInfo> ports;
-    QVector<PortInfo> availableAO = getAvailablePorts(PortType::ANALOG_OUTPUT);
-    QVector<PortInfo> availableAI = getAvailablePorts(PortType::ANALOG_INPUT);
-    QVector<PortInfo> availableDO = getAvailablePorts(PortType::DIGITAL_OUTPUT);
-    QVector<PortInfo> availableDI = getAvailablePorts(PortType::DIGITAL_INPUT);
-    QVector<PortInfo> availablePWR = getAvailablePorts(PortType::POWER_OUTPUT);
-    
-    // IC测试需要更多端口
-    if (availableAO.size() >= 2) {
-        ports.append(availableAO[0]);
-        ports.append(availableAO[1]);
-    }
-    if (availableAI.size() >= 4) {
-        for (int i = 0; i < 4; ++i) {
-            ports.append(availableAI[i]);
-        }
-    }
-    if (availableDO.size() >= 2) {
-        ports.append(availableDO[0]);
-        ports.append(availableDO[1]);
-    }
-    if (availableDI.size() >= 2) {
-        ports.append(availableDI[0]);
-        ports.append(availableDI[1]);
-    }
-    if (!availablePWR.isEmpty()) ports.append(availablePWR.first());
-    
-    return ports;
 }
 
 bool PortManager::validatePortConfiguration(const QVector<ConnectionInfo>& connections, QStringList& errors) const
@@ -682,6 +547,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：模拟输出端口分配失败";
+                        lastError_ = "模拟输出端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }
@@ -700,6 +566,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：数字输出端口分配失败";
+                        lastError_ = "数字输出端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }
@@ -718,6 +585,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：电源输出端口分配失败";
+                        lastError_ = "电源输出端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }
@@ -736,6 +604,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：模拟输入端口分配失败";
+                        lastError_ = "模拟输入端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }
@@ -754,6 +623,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：数字输入端口分配失败";
+                        lastError_ = "数字输入端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }
@@ -769,6 +639,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                     if(!allocated){
                         qWarning() << "警告：万用表测量端口分配失败";
+                        lastError_ = "万用表测量端口分配失败";
                         cleanupInvalidAllocations();
                         return QVector<PortInfo>();
                     }

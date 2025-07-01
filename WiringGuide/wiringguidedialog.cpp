@@ -71,6 +71,12 @@ void WiringGuideDialog::closeEvent(QCloseEvent* event)
     QDialog::closeEvent(event);
 }
 
+void WiringGuideDialog::setBatchWiring(const QVector<ComponentSpec>& batchComponentSpecs)
+{
+    batchComponentSpecs_ = batchComponentSpecs;
+    isBatchWiring_ = true;
+}
+
 void WiringGuideDialog::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
@@ -101,7 +107,7 @@ void WiringGuideDialog::setupUI()
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
     connect(finishBtn, &QPushButton::clicked, [this]() {
         if (wiringCompleted_) {
-            emit wiringCompleted(currentScheme_);
+            emit wiringCompleted(currentScheme_, allocatedPorts_);
             accept();
         } else {
             QMessageBox::warning(this, "警告", "请完成所有接线步骤后再点击完成");
@@ -224,13 +230,18 @@ void WiringGuideDialog::setupPortSelectionPage()
     connect(autoAllocateBtn_, &QPushButton::clicked, this, &WiringGuideDialog::onAutoAllocatePorts);
     connect(manualAllocateBtn_, &QPushButton::clicked, this, &WiringGuideDialog::onManualAllocatePorts);
     connect(clearSelectionBtn_, &QPushButton::clicked, [this]() {
-        portManager_->releasePortsForUser(component_.reference);
+        if(isBatchWiring_)
+        {
+            for(const auto& comp : batchComponentSpecs_)
+            {
+                portManager_->releaseAllPorts();
+            }
+        }else{
+            portManager_->releasePortsForUser(component_.reference);
+        }
         updatePortTable();
         updateAvailablePorts();
     });
-
-    connect(availablePortsTable_, &QTableWidget::itemSelectionChanged,
-            this, &WiringGuideDialog::onPortSelectionChanged);
 }
 
 void WiringGuideDialog::setupWiringInstructionPage()
@@ -377,21 +388,44 @@ void WiringGuideDialog::onAutoAllocatePorts()
 {
     if (!portManager_) return;
 
-    QVector<PortRequirement> requirements = diagnostic_manager_->getPortRequirements(component_);
-    QString allocatedTo = component_.reference;
-    QVector<PortInfo> allocatedPorts = portManager_->autoAllocatePorts(requirements, allocatedTo);
+    allocatedPorts_.clear();
+    if (isBatchWiring_) {
+        for (auto& component : batchComponentSpecs_) {
+            QVector<PortRequirement> requirements = diagnostic_manager_->getPortRequirements(component);
+            QString allocatedTo = component.reference;
+            QVector<PortInfo> allocatedPorts = portManager_->autoAllocatePorts(requirements, allocatedTo);
+            if(allocatedPorts.isEmpty()){
+                QMessageBox::StandardButton reply = QMessageBox::question(this, 
+                    "端口分配失败", 
+                    QString("组件 %1 的端口分配失败：%2，测试时将跳过该测试，是否继续？").arg(allocatedTo).arg(portManager_->getLastError()),
+                    QMessageBox::Yes | QMessageBox::No);
+                    
+                if (reply == QMessageBox::No) {
+                    portManager_->releaseAllPorts();
+                    return;
+                }
+            }
+            allocatedPorts_[component.reference] = allocatedPorts;
+            component.allocatedPorts = allocatedPorts;
+        }
+    } else {
+        QVector<PortRequirement> requirements = diagnostic_manager_->getPortRequirements(component_);
+        QString allocatedTo = component_.reference;
+        QVector<PortInfo> allocatedPorts = portManager_->autoAllocatePorts(requirements, allocatedTo);
+        allocatedPorts_[component_.reference] = allocatedPorts;
+    }
 
-    if (allocatedPorts.isEmpty()) {
+    if (allocatedPorts_.isEmpty()) {
         QMessageBox::warning(this, "警告", "没有足够的可用端口进行自动分配");
         return;
     }
 
     updatePortTable();
     updateAvailablePorts();
-    generateWiringSteps(component_, allocatedPorts);
+    generateWiringSteps(component_, allocatedPorts_);
 
     QMessageBox::information(this, "成功",
-        QString("自动分配了 %1 个端口，请查看已选端口列表").arg(allocatedPorts.size()));
+        QString("自动分配了 %1 个端口，请查看已选端口列表").arg(allocatedPorts_.size()));
 }
 
 void WiringGuideDialog::onManualAllocatePorts()
@@ -424,7 +458,7 @@ void WiringGuideDialog::onManualAllocatePorts()
     if (portManager_->allocatePort(deviceName, portNumber, component_.reference)) {
         qDebug() << "端口分配成功";
         updatePortTable();
-        generateWiringSteps(component_, QVector<PortInfo>{portManager_->getPortInfo(deviceName, portNumber)});
+        // generateWiringSteps(component_, QVector<PortInfo>{portManager_->getPortInfo(deviceName, portNumber)});
 
         QMessageBox::information(this, "成功",
             QString("已添加端口：%1-%2 (%3)").arg(deviceName).arg(portNumber).arg(portType));
@@ -434,44 +468,25 @@ void WiringGuideDialog::onManualAllocatePorts()
     }
 }
 
-void WiringGuideDialog::generateWiringSteps(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts)
+void WiringGuideDialog::generateWiringSteps(const ComponentSpec& component, const QMap<QString, QVector<PortInfo>>& allocatedPorts)
 {
     if (!portManager_) return;
 
     wiringSteps_.clear();
-
-    wiringSteps_ = convertToConnectionInfo(diagnostic_manager_->generateWiringScheme(component, allocatedPorts));
+    if (isBatchWiring_) {
+        for (const auto& component : batchComponentSpecs_) {
+            QVector<ConnectionInfo> temp = convertToConnectionInfo(diagnostic_manager_->generateWiringScheme(component, allocatedPorts[component.reference]));
+            wiringSteps_ += temp.toList();
+        }
+    } else {
+        wiringSteps_ = convertToConnectionInfo(diagnostic_manager_->generateWiringScheme(component, allocatedPorts[component.reference]));
+    }
 
     // 更新步骤列表
     updateWiringStepsList();
 
     // 更新图表
     updateConnectionDiagram();
-}
-
-QVector<ConnectionInfo> WiringGuideDialog::generateConnectionsForComponent(ComponentType type, const QVector<PortInfo>& ports)
-{
-    QVector<ConnectionInfo> connections;
-
-    switch (type) {
-    case ComponentType::RESISTOR:
-        connections = generateResistorConnections(ports);
-        break;
-    case ComponentType::CAPACITOR:
-        connections = generateCapacitorConnections(ports);
-        break;
-    case ComponentType::INDUCTOR:
-        connections = generateInductorConnections(ports);
-        break;
-    case ComponentType::DIODE:
-        connections = generateDiodeConnections(ports);
-        break;
-    case ComponentType::IC:
-        connections = generateICConnections(ports);
-        break;
-    }
-
-    return connections;
 }
 
 void WiringGuideDialog::updateWiringStepsList()
@@ -652,24 +667,32 @@ void WiringGuideDialog::updateValidationResults()
 
 void WiringGuideDialog::onGenerateScheme()
 {
-    currentScheme_.schemeId = QUuid::createUuid().toString();
-    currentScheme_.schemeName = QString("%1测试方案").arg(component_.reference);
-    currentScheme_.componentType = component_.type;
-    currentScheme_.description = QString("为%1元件生成的接线方案").arg(componentTypeToString(component_.type));
-    currentScheme_.connections = wiringSteps_;
+    if(!isBatchWiring_) {
+        currentScheme_.schemeId = QUuid::createUuid().toString();
+        currentScheme_.schemeName = QString("%1测试方案").arg(component_.reference);
+        currentScheme_.componentType = component_.type;
+        currentScheme_.description = QString("为%1元件生成的接线方案").arg(componentTypeToString(component_.type));
+        currentScheme_.connections = wiringSteps_;
 
-    // 添加测试参数
-    currentScheme_.testParameters["component_reference"] = component_.reference;
-    currentScheme_.testParameters["nominal_value"] = component_.nominal_value;
-    currentScheme_.testParameters["tolerance"] = component_.tolerance_percent;
-    currentScheme_.testParameters["test_voltage"] = getTestVoltage();
-    currentScheme_.testParameters["test_frequency"] = getTestFrequency();
+        // 添加测试参数
+        currentScheme_.testParameters["component_reference"] = component_.reference;
+        currentScheme_.testParameters["nominal_value"] = component_.nominal_value;
+        currentScheme_.testParameters["tolerance"] = component_.tolerance_percent;
+        currentScheme_.testParameters["test_voltage"] = getTestVoltage();
+        currentScheme_.testParameters["test_frequency"] = getTestFrequency();
 
-    QMessageBox::information(this, "成功",
-        QString("接线方案生成成功!\n方案ID: %1").arg(currentScheme_.schemeId));
+        QMessageBox::information(this, "成功",
+            QString("接线方案生成成功!\n方案ID: %1").arg(currentScheme_.schemeId));
+    }else{
+        currentScheme_.schemeId = QUuid::createUuid().toString();
+        currentScheme_.schemeName = QString("%1测试方案").arg("Batch test");
+        currentScheme_.componentType = batchComponentSpecs_[0].type;
+        currentScheme_.description = QString("为Batch Test生成的接线方案");
+        currentScheme_.connections = wiringSteps_;
+    }
 
     // 直接发出完成信号，跳过验证页面的显示
-    emit wiringCompleted(currentScheme_);
+    emit wiringCompleted(currentScheme_, allocatedPorts_);
     accept();
 }
 
@@ -762,236 +785,6 @@ QColor WiringGuideDialog::getWireColor(const QString& colorName) const
     return Qt::gray;
 }
 
-// 这些函数需要根据具体的元件类型实现
-QVector<ConnectionInfo> WiringGuideDialog::generateResistorConnections(const QVector<PortInfo>& ports)
-{
-    QVector<ConnectionInfo> connections;
-
-    // 电阻测试使用万用表2线法测量
-    // 需要：2个万用表测量端口（DMM_MEASUREMENT）
-
-    QVector<PortInfo> dmmPorts;
-
-    // 收集所有万用表端口
-    for (const PortInfo& port : ports) {
-        if (port.portType == PortType::DMM_MEASUREMENT) {
-            dmmPorts.append(port);
-        }
-    }
-
-    // 需要至少2个万用表端口进行2线法测量
-    if (dmmPorts.size() >= 2) {
-        // 连接1：万用表通道0到电阻第一端
-        ConnectionInfo conn1;
-        conn1.sourcePort = dmmPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到电阻的第一个引脚（正极）";
-        connections.append(conn1);
-
-        // 连接2：万用表通道1到电阻第二端
-        ConnectionInfo conn2;
-        conn2.sourcePort = dmmPorts[1];
-        conn2.wireColor = "黑色";
-        conn2.instruction = "连接到电阻的第二个引脚（负极）";
-        connections.append(conn2);
-    }
-
-    return connections;
-}
-
-QVector<ConnectionInfo> WiringGuideDialog::generateCapacitorConnections(const QVector<PortInfo>& ports)
-{
-    QVector<ConnectionInfo> connections;
-
-    // 电容测试使用万用表电容测量功能
-    // 需要：2个万用表测量端口（DMM_MEASUREMENT）
-
-    QVector<PortInfo> dmmPorts;
-
-    // 收集所有万用表端口
-    for (const PortInfo& port : ports) {
-        if (port.portType == PortType::DMM_MEASUREMENT) {
-            dmmPorts.append(port);
-        }
-    }
-
-    // 需要至少2个万用表端口进行电容测量
-    if (dmmPorts.size() >= 2) {
-        // 连接1：万用表通道0到电容正极
-        ConnectionInfo conn1;
-        conn1.sourcePort = dmmPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到电容的正极（+）";
-        connections.append(conn1);
-
-        // 连接2：万用表通道1到电容负极
-        ConnectionInfo conn2;
-        conn2.sourcePort = dmmPorts[1];
-        conn2.wireColor = "黑色";
-        conn2.instruction = "连接到电容的负极（-）";
-        connections.append(conn2);
-    } else {
-        qDebug() << "DMM端口不足，无法生成连接步骤";
-    }
-
-    return connections;
-}
-
-QVector<ConnectionInfo> WiringGuideDialog::generateInductorConnections(const QVector<PortInfo>& ports)
-{
-    QVector<ConnectionInfo> connections;
-
-    QVector<PortInfo> analogOutputPorts;
-    QVector<PortInfo> analogInputPorts;
-    QVector<PortInfo> dmmPorts;
-
-    // 分类端口
-    for (const PortInfo& port : ports) {
-        qDebug() << "检查端口：" << port.deviceName << port.portNumber
-                 << "类型：" << static_cast<int>(port.portType);
-
-        switch (port.portType) {
-        case PortType::ANALOG_OUTPUT:
-            analogOutputPorts.append(port);
-            break;
-        case PortType::ANALOG_INPUT:
-            analogInputPorts.append(port);
-            break;
-        case PortType::DMM_MEASUREMENT:
-            dmmPorts.append(port);
-            break;
-        default:
-            break;
-        }
-    }
-
-    qDebug() << "找到的端口数量 - AO:" << analogOutputPorts.size()
-             << "AI:" << analogInputPorts.size() << "DMM:" << dmmPorts.size();
-
-    // 优先使用阻抗测量法（信号源+模拟输入）
-    if (!analogOutputPorts.isEmpty() && analogInputPorts.size() >= 2) {
-        qDebug() << "使用交流阻抗测量法";
-
-        // 连接1：信号源到电感第一端
-        ConnectionInfo conn1;
-        conn1.sourcePort = analogOutputPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到电感的第一个端子（信号输入）";
-        connections.append(conn1);
-
-        // 连接2：电压测量到电感第一端
-        ConnectionInfo conn2;
-        conn2.sourcePort = analogInputPorts[0];
-        conn2.wireColor = "黄色";
-        conn2.instruction = "连接到电感的第一个端子（电压测量）";
-        connections.append(conn2);
-
-        // 连接3：电流测量到电感第二端
-        ConnectionInfo conn3;
-        conn3.sourcePort = analogInputPorts[1];
-        conn3.wireColor = "绿色";
-        conn3.instruction = "连接到电感的第二个端子（电流测量）";
-        connections.append(conn3);
-
-    } else if (dmmPorts.size() >= 2) {
-        qDebug() << "使用万用表测量DCR（直流电阻）";
-
-        // 连接1：万用表通道0到电感第一端
-        ConnectionInfo conn1;
-        conn1.sourcePort = dmmPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到电感的第一个端子";
-        connections.append(conn1);
-
-        // 连接2：万用表通道1到电感第二端
-        ConnectionInfo conn2;
-        conn2.sourcePort = dmmPorts[1];
-        conn2.wireColor = "黑色";
-        conn2.instruction = "连接到电感的第二个端子";
-        connections.append(conn2);
-    } else {
-        qDebug() << "端口不足，无法生成电感连接步骤";
-    }
-
-    qDebug() << "生成的连接数量：" << connections.size();
-    return connections;
-}
-
-QVector<ConnectionInfo> WiringGuideDialog::generateDiodeConnections(const QVector<PortInfo>& ports)
-{
-    qDebug() << "generateDiodeConnections: 开始生成二极管连接，端口数量：" << ports.size();
-
-    QVector<ConnectionInfo> connections;
-
-    QVector<PortInfo> analogOutputPorts;
-    QVector<PortInfo> analogInputPorts;
-    QVector<PortInfo> dmmPorts;
-
-    // 分类端口
-    for (const PortInfo& port : ports) {
-        qDebug() << "检查端口：" << port.deviceName << port.portNumber
-                 << "类型：" << static_cast<int>(port.portType);
-
-        switch (port.portType) {
-        case PortType::ANALOG_OUTPUT:
-            analogOutputPorts.append(port);
-            break;
-        case PortType::ANALOG_INPUT:
-            analogInputPorts.append(port);
-            break;
-        case PortType::DMM_MEASUREMENT:
-            dmmPorts.append(port);
-            break;
-        default:
-            break;
-        }
-    }
-
-    qDebug() << "找到的端口数量 - AO:" << analogOutputPorts.size()
-             << "AI:" << analogInputPorts.size() << "DMM:" << dmmPorts.size();
-
-    // 优先使用电压源+模拟输入的方案
-    if (!analogOutputPorts.isEmpty() && !analogInputPorts.isEmpty()) {
-        qDebug() << "使用电压源+模拟输入方案";
-
-        // 连接1：电压源到二极管阳极
-        ConnectionInfo conn1;
-        conn1.sourcePort = analogOutputPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到二极管的阳极（+）";
-        connections.append(conn1);
-
-        // 连接2：模拟输入到二极管阴极（测量电压）
-        ConnectionInfo conn2;
-        conn2.sourcePort = analogInputPorts[0];
-        conn2.wireColor = "黑色";
-        conn2.instruction = "连接到二极管的阴极（-）进行电压测量";
-        connections.append(conn2);
-
-    } else if (dmmPorts.size() >= 2) {
-        qDebug() << "使用万用表二极管模式";
-
-        // 连接1：万用表正极到二极管阳极
-        ConnectionInfo conn1;
-        conn1.sourcePort = dmmPorts[0];
-        conn1.wireColor = "红色";
-        conn1.instruction = "连接到二极管的阳极（+）";
-        connections.append(conn1);
-
-        // 连接2：万用表负极到二极管阴极
-        ConnectionInfo conn2;
-        conn2.sourcePort = dmmPorts[1];
-        conn2.wireColor = "黑色";
-        conn2.instruction = "连接到二极管的阴极（-）";
-        connections.append(conn2);
-    } else {
-        qDebug() << "端口不足，无法生成二极管连接步骤";
-    }
-
-    qDebug() << "生成的连接数量：" << connections.size();
-    return connections;
-}
-
 QVector<ConnectionInfo> WiringGuideDialog::convertToConnectionInfo(const QVector<WiringConnection>& connections) const
 {
     QVector<ConnectionInfo> infoList;
@@ -1006,96 +799,6 @@ QVector<ConnectionInfo> WiringGuideDialog::convertToConnectionInfo(const QVector
         infoList.append(info);
     }
     return infoList;
-}
-
-QVector<ConnectionInfo> WiringGuideDialog::generateICConnections(const QVector<PortInfo>& ports)
-{
-    qDebug() << "generateICConnections: 开始生成IC连接，端口数量：" << ports.size();
-
-    QVector<ConnectionInfo> connections;
-
-    QVector<PortInfo> analogOutputPorts;
-    QVector<PortInfo> analogInputPorts;
-    QVector<PortInfo> digitalOutputPorts;
-    QVector<PortInfo> digitalInputPorts;
-    QVector<PortInfo> powerPorts;
-
-    // 分类端口
-    for (const PortInfo& port : ports) {
-        qDebug() << "检查端口：" << port.deviceName << port.portNumber
-                 << "类型：" << static_cast<int>(port.portType);
-
-        switch (port.portType) {
-        case PortType::ANALOG_OUTPUT:
-            analogOutputPorts.append(port);
-            break;
-        case PortType::ANALOG_INPUT:
-            analogInputPorts.append(port);
-            break;
-        case PortType::DIGITAL_OUTPUT:
-            digitalOutputPorts.append(port);
-            break;
-        case PortType::DIGITAL_INPUT:
-            digitalInputPorts.append(port);
-            break;
-        case PortType::POWER_OUTPUT:
-            powerPorts.append(port);
-            break;
-        default:
-            break;
-        }
-    }
-
-    qDebug() << "找到的端口数量 - AO:" << analogOutputPorts.size()
-             << "AI:" << analogInputPorts.size()
-             << "DO:" << digitalOutputPorts.size()
-             << "DI:" << digitalInputPorts.size()
-             << "PWR:" << powerPorts.size();
-
-    // IC测试连接方案（简化版）
-    int connectionIndex = 1;
-
-    // 电源连接
-    if (!powerPorts.isEmpty()) {
-        ConnectionInfo conn;
-        conn.sourcePort = powerPorts[0];
-        conn.wireColor = "红色";
-        conn.instruction = "连接到IC的VCC引脚（电源正极）";
-        connections.append(conn);
-        connectionIndex++;
-    }
-
-    // 模拟输出连接（信号源）
-    for (int i = 0; i < qMin(2, analogOutputPorts.size()); ++i) {
-        ConnectionInfo conn;
-        conn.sourcePort = analogOutputPorts[i];
-        conn.wireColor = (i == 0) ? "蓝色" : "绿色";
-        conn.instruction = QString("连接到IC的输入引脚%1").arg(i + 1);
-        connections.append(conn);
-        connectionIndex++;
-    }
-
-    // 模拟输入连接（信号测量）
-    for (int i = 0; i < qMin(2, analogInputPorts.size()); ++i) {
-        ConnectionInfo conn;
-        conn.sourcePort = analogInputPorts[i];
-        conn.wireColor = (i == 0) ? "黄色" : "紫色";
-        conn.instruction = QString("连接到IC的输出引脚%1").arg(i + 1);
-        connections.append(conn);
-        connectionIndex++;
-    }
-
-    // 如果没有其他端口，至少提供一个基本连接
-    if (connections.isEmpty() && !ports.isEmpty()) {
-        ConnectionInfo conn;
-        conn.sourcePort = ports[0];
-        conn.wireColor = "红色";
-        conn.instruction = "连接到IC的主要测试引脚";
-        connections.append(conn);
-    }
-
-    qDebug() << "生成的连接数量：" << connections.size();
-    return connections;
 }
 
 QString WiringGuideDialog::generateDetailedInstruction(const ConnectionInfo& connection) const
@@ -1174,35 +877,4 @@ double WiringGuideDialog::getTestFrequency() const
     default:
         return 1000;
     }
-}
-
-void WiringGuideDialog::onPortSelectionChanged()
-{
-    // 端口选择改变时的处理
-}
-
-void WiringGuideDialog::onConnectionCompleted()
-{
-    // 连接完成时的处理
-}
-
-void WiringGuideDialog::onStartWiring()
-{
-    // 开始接线时的处理
-}
-
-void WiringGuideDialog::updateWiringProgress()
-{
-    // 更新接线进度
-}
-
-void WiringGuideDialog::onShowPortDetails()
-{
-    // 显示端口详情
-}
-
-void WiringGuideDialog::onComponentTypeChanged()
-{
-    // 组件类型改变时的处理
-    // 此槽函数当前为空实现，可根据需要添加逻辑
 }

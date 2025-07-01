@@ -7,9 +7,9 @@
  * @brief 电容器诊断类
  * 
  * 实现电容器的完整诊断流程，包括：
- * - 端口配置（交流激励 + 电压/电流测量）
+ * - 端口配置（JY5711交流激励 + JY5322电压测量 + JY5323电流测量）
  * - 接线方案生成
- * - 数据采集配置（容值、ESR、漏电流测量）
+ * - 数据采集配置（基于阻抗的容值、ESR测量）
  * - 故障分析
  */
 class CapacitorDiagnostic : public BaseComponentDiagnostic
@@ -30,33 +30,37 @@ protected:
     
     /**
      * @brief 获取电容器测试的端口需求
-     * 需要：1个交流信号输出 + 1个电压测量 + 1个电流测量端口
+     * 需要：1个交流信号输出(JY5711) + 1个电压测量(JY5322) + 1个电流测量端口(JY5323)
      */
     QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const override;
     
     /**
-     * @brief 生成电容器接线方案
-     * 支持容值测量和ESR测量
+     * @brief 获取电容器测试所需的标准参数
+     * 包括标称值、容差、ESR限制等
      */
-    QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, 
-                                                  const QVector<PortInfo>& allocatedPorts) const override;
+    QMap<QString, QVariant> getRequiredParameters() const override;
+    
+    /**
+     * @brief 生成电容器接线方案
+     * 基于阻抗测量的接线方案
+     */
+    QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
     
     /**
      * @brief 配置电容器数据采集
-     * 设置交流激励和测量参数
+     * 设置JY5711交流激励、JY5322电压测量和JY5323电流测量参数
      */
-    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component,
-                                                const QVector<PortInfo>& ports) const override;
+    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
     
     /**
      * @brief 执行电容器数据采集
-     * 执行多频率阻抗特性测量
+     * 执行基于阻抗计算的多频率特性测量
      */
     TestData executeDataAcquisition(const ComponentTestConfig& config) override;
     
     /**
      * @brief 电容器故障分析
-     * 分析开路、短路、容值偏差、高ESR、高漏电流等故障
+     * 基于阻抗计算分析开路、短路、容值偏差、高ESR等故障
      */
     ComponentDiagnosticResult analyzeFaults(const ComponentSpec& component,
                                            const TestData& testData) override;
@@ -78,6 +82,8 @@ private:
     double calculateQualityFactor(double capacitance, double esr, double frequency) const;
     double calculateStability(const QVector<double>& measurements) const;
     
+    mutable QVector<PortInfo> allocatedPorts_;
+    mutable ComponentTestConfig config_;
     // 多频率测量结果
     struct FrequencyResponse {
         double frequency;        // 频率 (Hz)
@@ -99,9 +105,19 @@ private:
         bool measureLeakage;            // 是否测量漏电流
         double leakageTestVoltage;      // 漏电流测试电压 (V)
         
+        // 新增：阻抗范围和预期电流范围
+        double expectedMinImpedance;    // 预期最小阻抗 (Ω)
+        double expectedMaxImpedance;    // 预期最大阻抗 (Ω)
+        double expectedMinCurrent;      // 预期最小电流 (A, RMS)
+        double expectedMaxCurrent;      // 预期最大电流 (A, RMS)
+        QString impedanceRange;         // 万用表阻抗测量范围
+        
         CapacitorTestParams() : testVoltage(1.0), dcBiasVoltage(0.0), 
                                measurementPoints(10), settlingTime(500),
-                               measureLeakage(true), leakageTestVoltage(10.0) {}
+                               measureLeakage(true), leakageTestVoltage(10.0),
+                               expectedMinImpedance(0.0), expectedMaxImpedance(0.0),
+                               expectedMinCurrent(0.0), expectedMaxCurrent(0.0),
+                               impedanceRange("auto") {}
     };
     
     CapacitorTestParams calculateOptimalTestParams(const ComponentSpec& component) const;

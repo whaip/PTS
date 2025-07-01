@@ -74,7 +74,7 @@ QVector<PortRequirement> InductorDiagnostic::getPortRequirements(const Component
     return requirements;
 }
 
-QVector<WiringConnection> InductorDiagnostic::generateWiringScheme(const ComponentSpec& component, 
+QVector<WiringConnection> InductorDiagnostic::generateWiringScheme(const ComponentSpec& component,
                                                                  const QVector<PortInfo>& allocatedPorts) const
 {
     Q_UNUSED(component)
@@ -100,10 +100,8 @@ QVector<WiringConnection> InductorDiagnostic::generateWiringScheme(const Compone
     return connections;
 }
 
-ComponentTestConfig InductorDiagnostic::configureDataAcquisition(const ComponentSpec& component,
-                                                                const QVector<PortInfo>& ports) const
+ComponentTestConfig InductorDiagnostic::configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& ports) const
 {
-    Q_UNUSED(ports)
     
     ComponentTestConfig config;
     // config.testName = QString("Inductor Test - %1").arg(component.reference);
@@ -142,90 +140,90 @@ TestData InductorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
     testData.timestamp = QDateTime::currentDateTime();
     testData.valid = false;
     
-    QString componentRef = config.testName.contains("-") ? 
+    QString componentRef = config.testName.contains("-") ?
                           config.testName.split("-").last().trimmed() : "Unknown";
     
-    emit diagnosisStarted(componentRef);
-    emit diagnosisProgress(componentRef, 10);
+    // emit diagnosisStarted(componentRef);
+    // emit diagnosisProgress(componentRef, 10);
     
-    try {
-        // 1. 基本连通性检查
-        int faultType = detectOpenShortFault();
-        testData.measurements.append(QVariantMap{{"open_short_fault", faultType}});
+    // try {
+    //     // 1. 基本连通性检查
+    //     int faultType = detectOpenShortFault();
+    //     testData.measurements.append(QVariantMap{{"open_short_fault", faultType}});
         
-        if (faultType == 1) {
-            testData.errorMessage = "Open circuit detected";
-            testData.measurements.append(QVariantMap{{"error", "Open circuit"}});
-            return testData;
-        } else if (faultType == 2) {
-            testData.errorMessage = "Short circuit detected";
-            testData.measurements.append(QVariantMap{{"error", "Short circuit"}});
-            return testData;
-        }
+    //     if (faultType == 1) {
+    //         testData.errorMessage = "Open circuit detected";
+    //         testData.measurements.append(QVariantMap{{"error", "Open circuit"}});
+    //         return testData;
+    //     } else if (faultType == 2) {
+    //         testData.errorMessage = "Short circuit detected";
+    //         testData.measurements.append(QVariantMap{{"error", "Short circuit"}});
+    //         return testData;
+    //     }
         
-        emit diagnosisProgress(componentRef, 25);
+    //     emit diagnosisProgress(componentRef, 25);
         
-        // 2. 多频率电感量测量
-        QVector<double> frequencies = generateFrequencySequence(startFrequency_, endFrequency_, frequencyPoints_);
-        QMap<double, double> inductanceSpectrum = measureInductanceSpectrum(frequencies, minTestCurrent_);
-        testData.measurements.append(QVariantMap{{"inductance_spectrum", QVariant::fromValue(inductanceSpectrum)}});
+    //     // 2. 多频率电感量测量
+    //     QVector<double> frequencies = generateFrequencySequence(startFrequency_, endFrequency_, frequencyPoints_);
+    //     QMap<double, double> inductanceSpectrum = measureInductanceSpectrum(frequencies, minTestCurrent_);
+    //     testData.measurements.append(QVariantMap{{"inductance_spectrum", QVariant::fromValue(inductanceSpectrum)}});
         
-        emit diagnosisProgress(componentRef, 50);
+    //     emit diagnosisProgress(componentRef, 50);
         
-        // 3. Q值测量
-        QMap<double, double> qValues;
-        for (double freq : frequencies) {
-            if (qValues.size() >= 10) break; // 限制测量点数
-            double q = measureQualityFactor(freq, minTestCurrent_);
-            if (q > 0) {
-                qValues[freq] = q;
-            }
-        }
-        testData.measurements.append(QVariantMap{{"quality_factors", QVariant::fromValue(qValues)}});
+    //     // 3. Q值测量
+    //     QMap<double, double> qValues;
+    //     for (double freq : frequencies) {
+    //         if (qValues.size() >= 10) break; // 限制测量点数
+    //         double q = measureQualityFactor(freq, minTestCurrent_);
+    //         if (q > 0) {
+    //             qValues[freq] = q;
+    //         }
+    //     }
+    //     testData.measurements.append(QVariantMap{{"quality_factors", QVariant::fromValue(qValues)}});
         
-        emit diagnosisProgress(componentRef, 70);
+    //     emit diagnosisProgress(componentRef, 70);
         
-        // 4. ESR测量
-        QMap<double, double> esrValues;
-        for (auto it = qValues.begin(); it != qValues.end(); ++it) {
-            double esr = measureESR(it.key(), minTestCurrent_);
-            if (esr > 0) {
-                esrValues[it.key()] = esr;
-            }
-        }
-        testData.measurements.append(QVariantMap{{"esr_values", QVariant::fromValue(esrValues)}});
+    //     // 4. ESR测量
+    //     QMap<double, double> esrValues;
+    //     for (auto it = qValues.begin(); it != qValues.end(); ++it) {
+    //         double esr = measureESR(it.key(), minTestCurrent_);
+    //         if (esr > 0) {
+    //             esrValues[it.key()] = esr;
+    //         }
+    //     }
+    //     testData.measurements.append(QVariantMap{{"esr_values", QVariant::fromValue(esrValues)}});
         
-        emit diagnosisProgress(componentRef, 85);
+    //     emit diagnosisProgress(componentRef, 85);
         
-        // 5. 谐振频率检测
-        double resonantFreq = detectResonantFrequency();
-        testData.measurements.append(QVariantMap{{"resonant_frequency", resonantFreq}});
+    //     // 5. 谐振频率检测
+    //     double resonantFreq = detectResonantFrequency();
+    //     testData.measurements.append(QVariantMap{{"resonant_frequency", resonantFreq}});
         
-        // 6. 饱和特性测试（如果启用）
-        if (saturationTestEnabled_) {
-            double testFreq = 1000.0; // 使用1kHz进行饱和测试
-            QMap<double, double> saturationData = measureSaturationCharacteristic(testFreq);
-            testData.measurements.append(QVariantMap{{"saturation_characteristic", QVariant::fromValue(saturationData)}});
-        }
+    //     // 6. 饱和特性测试（如果启用）
+    //     if (saturationTestEnabled_) {
+    //         double testFreq = 1000.0; // 使用1kHz进行饱和测试
+    //         QMap<double, double> saturationData = measureSaturationCharacteristic(testFreq);
+    //         testData.measurements.append(QVariantMap{{"saturation_characteristic", QVariant::fromValue(saturationData)}});
+    //     }
         
-        emit diagnosisProgress(componentRef, 100);
+    //     emit diagnosisProgress(componentRef, 100);
         
-        // 记录测量条件
-        testData.measurements.append(QVariantMap{
-            {"test_conditions", QVariantMap{
-                {"frequency_range", QVariantList{startFrequency_, endFrequency_}},
-                {"frequency_points", frequencyPoints_},
-                {"test_current", minTestCurrent_},
-                {"saturation_test_enabled", saturationTestEnabled_}
-            }}
-        });
+    //     // 记录测量条件
+    //     testData.measurements.append(QVariantMap{
+    //         {"test_conditions", QVariantMap{
+    //             {"frequency_range", QVariantList{startFrequency_, endFrequency_}},
+    //             {"frequency_points", frequencyPoints_},
+    //             {"test_current", minTestCurrent_},
+    //             {"saturation_test_enabled", saturationTestEnabled_}
+    //         }}
+    //     });
         
-        testData.valid = true;
+    //     testData.valid = true;
         
-    } catch (const std::exception& e) {
-        testData.errorMessage = QString("Data acquisition failed: %1").arg(e.what());
-        testData.measurements.append(QVariantMap{{"error", testData.errorMessage}});
-    }
+    // } catch (const std::exception& e) {
+    //     testData.errorMessage = QString("Data acquisition failed: %1").arg(e.what());
+    //     testData.measurements.append(QVariantMap{{"error", testData.errorMessage}});
+    // }
     
     return testData;
 }

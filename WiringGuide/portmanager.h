@@ -50,6 +50,8 @@ public:
     
     // 获取推荐端口
     QVector<PortInfo> getRecommendedPorts(ComponentType componentType) const;
+
+    QString getLastError() const { return lastError_; }
     
     // 端口配置保存和加载
     bool savePortConfiguration(const QString& filePath) const;
@@ -69,13 +71,14 @@ private slots:
 private:
     DeviceManager* deviceManager_;
     QMap<QString, QVector<PortInfo>> devicePorts_;  // 设备名 -> 端口列表
+    QString lastError_;
     mutable QMutex portMutex_;
     QTimer* statusUpdateTimer_;
       void initializeJY5711Ports();
     void initializeJY5323Ports();
     void initializeJY5322Ports();
     void initializeJY8902Ports();  // 添加万用表端口初始化函数
-      QString generatePortKey(const QString& deviceName, int portNumber) const;
+    QString generatePortKey(const QString& deviceName, int portNumber) const;
     PortInfo* findPort(const QString& deviceName, int portNumber);
     const PortInfo* findPort(const QString& deviceName, int portNumber) const;
     

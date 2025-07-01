@@ -251,6 +251,7 @@ struct ComponentSpec {
     QStringList testPoints;     // 测试点列表
     QMap<QString, QString> parameters;  // 其他参数
     QMap<QString, QVariant> params;
+    QVector<PortInfo> allocatedPorts;
 
     // 测试相关属性
     bool requiresTesting;       // 是否需要测试

@@ -58,11 +58,14 @@ struct ComponentSpecs {
 
 struct TestStep {
     QString componentType;      // "resistor", "capacitor", "inductor", "diode", "ic"
+    ComponentType common_type;
     QString testName;          // 测试名称
     QJsonObject parameters;    // 测试参数
-    QMap<QString, QVariant> specs;      // 期望规格
+    QMap<QString, QVariant> specs;      // 获取的参数
     bool enabled;             // 是否启用此测试步骤
     int timeoutMs;            // 超时时间
+    QVector<PortInfo> allocatedPorts;
+    QString component;
 };
 
 struct TestSequence {

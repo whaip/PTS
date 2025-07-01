@@ -400,6 +400,7 @@ bool AODeviceThread::initializeChannel()
 void AODeviceThread::shutdownDevice()
 {
     if (deviceHandle_) {
+        int ret = JY5710_AO_Stop(deviceHandle_);
         JY5710_Close(deviceHandle_);
         deviceHandle_ = nullptr;
     }
@@ -444,12 +445,8 @@ DeviceResult AODeviceThread::executeOperation(const DeviceOperation& operation)
             
         case DeviceCommand::START_MEASUREMENT:
             result.success = initializeChannel();
-            if(!result.success) {
-                result.error = "Failed to initialize AO device for measurement";
-            }
-            apiResult = JY5710_AO_Start(deviceHandle_);
-            if (apiResult == Success) {
-                result.success = true;
+            shutdownDevice();
+            if(result.success){
                 qDebug() << "AO started";
             } else {
                 result.error += QString("Failed to start AO, error: %1").arg(apiResult);
@@ -769,6 +766,7 @@ void DAQDeviceThread::shutdownDevice()
 DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
 {
     DeviceResult result;
+    DeviceOperation test = operation;
     
     if (!deviceHandle_ && operation.command != DeviceCommand::INITIALIZE) {
         result.error = "Device not initialized";
@@ -799,47 +797,16 @@ DeviceResult DAQDeviceThread::executeOperation(const DeviceOperation& operation)
                 QString modeStr = operation.parameters.value("mode", "single").toString();
                 if (modeStr == "single") {
                     currentMode_ = AcquisitionMode::SINGLE_POINT;
+                    result.success = true;
                 } else if (modeStr == "multi" || modeStr == "finite") {
                     currentMode_ = AcquisitionMode::MULTI_POINT;
+                    result = configureMultiPointAcquisition(operation);
+                    qDebug() << "配置多点采集" << "设备" << deviceName_;
                 } else if (modeStr == "continuous") {
                     currentMode_ = AcquisitionMode::CONTINUOUS;
+                    result = configureContinuousAcquisition(operation);
                 }
-                
-                QVector<int> channels;
-                if (operation.channels.isEmpty()) {
-                    if (operation.channel >= 0) {
-                        channels.append(operation.channel);
-                }
-            } else {
-                    channels = operation.channels;
-                }
-                
-                qDebug() << deviceName_ << "CONFIGURE_CHANNEL:"
-                         << "mode=" << modeStr
-                         << "channels=" << channels
-                         << "samplesPerChannel=" << operation.samplesPerChannel
-                         << "sampleRate=" << operation.sampleRate;
-                
-                if (channels.isEmpty()) {
-                    result.error = "No channels specified for configuration";
-                    qDebug() << deviceName_ << result.error;
-                    break;
-                }
-                
-                result = configureChannels(channels, operation.inputRangeMin, operation.inputRangeMax);
-                if (result.success) {
-                    result = setSampleRate(operation.sampleRate);
-                    if (result.success) {
-                        result = setAcquisitionMode(currentMode_);
-                        if (result.success) {
-                            samplesPerChannel_ = operation.samplesPerChannel;
-                            qDebug() << deviceName_ << "successfully configured for" << acquisitionModeToString(currentMode_)
-                                   << "mode, channels:" << channels << ", sample rate:" << operation.sampleRate
-                                   << ", samplesPerChannel:" << samplesPerChannel_;
-                        }
-                    }
-                }
-            }
+            } 
             break;
             
         case DeviceCommand::START_MEASUREMENT:
@@ -1008,33 +975,16 @@ DeviceResult DAQDeviceThread::configureMultiPointAcquisition(const DeviceOperati
         JY5320_AI_Stop(deviceHandle_);
         acquisitionActive_ = false;
     }
-    
-    // 准备通道配置数组
-    enabledChannelCount_ = channels.size();
-    std::vector<unsigned char> channelArray(enabledChannelCount_);
-    std::vector<double> rangeLowArray(enabledChannelCount_);
-    std::vector<double> rangeHighArray(enabledChannelCount_);
-    std::vector<JY5320_AI_BandWidth> bandWidthArray(enabledChannelCount_);
-    
-    for (int i = 0; i < enabledChannelCount_; ++i) {
-        channelArray[i] = static_cast<unsigned char>(channels[i]);
-        rangeLowArray[i] = rangeMin;
-        rangeHighArray[i] = rangeMax;
-        bandWidthArray[i] = JY5320_AI_BandWidth_25K; // 默认带宽
-    }
+
     
     // 1. 启用通道 - 按照官方示例
-    int32_t apiResult = JY5320_AI_EnableChannel(deviceHandle_, enabledChannelCount_,
-                                               channelArray.data(), rangeLowArray.data(),
-                                               rangeHighArray.data(), bandWidthArray.data());
-    if (apiResult != 0) {
-        result.success = false;
-        result.error = QString("Failed to enable channels, error: %1").arg(apiResult);
+    result = configureChannels(channels, rangeMin, rangeMax);
+    if (!result.success) {
         return result;
     }
     
     // 2. 设置模式为有限模式（多点采集）- 按照官方示例
-    apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Finite);
+    int32_t apiResult = JY5320_AI_SetMode(deviceHandle_, JY5320_AI_Finite);
     if (apiResult != 0) {
         result.success = false;
         result.error = QString("Failed to set finite mode, error: %1").arg(apiResult);
@@ -1042,7 +992,7 @@ DeviceResult DAQDeviceThread::configureMultiPointAcquisition(const DeviceOperati
     }
     
     // 3. 设置采样数量 - 按照官方示例
-    apiResult = JY5320_AI_SetSamplesToAcquire(deviceHandle_, samplesPerChannel);
+    apiResult = JY5320_AI_SetSamplesToAcquire(deviceHandle_, samplesPerChannel * enabledChannelCount_);
     if (apiResult != 0) {
         result.success = false;
         result.error = QString("Failed to set samples to acquire, error: %1").arg(apiResult);
@@ -1074,7 +1024,7 @@ DeviceResult DAQDeviceThread::configureMultiPointAcquisition(const DeviceOperati
     
     result.success = true;
     result.data["actualSampleRate"] = actualSampleRate;
-    result.data["totalSamples"] = samplesPerChannel;
+    result.data["totalSamples"] = samplesPerChannel * enabledChannelCount_;
     result.data["channels"] = QVariant::fromValue(channels);
     
     return result;
@@ -1126,7 +1076,7 @@ DeviceResult DAQDeviceThread::startMultiPointAcquisition(const DeviceOperation& 
     
     // 启动数据读取定时器 - 确保在正确的线程中启动
     QMetaObject::invokeMethod(dataFetchTimer_, [this]() {
-        dataFetchTimer_->start(50); // 50ms间隔，与官方示例一致
+        dataFetchTimer_->start(50);
     }, Qt::QueuedConnection);
     
     result.success = true;
@@ -1170,8 +1120,8 @@ DeviceResult DAQDeviceThread::readMultiPointData(const DeviceOperation& operatio
             if (hasValidData) {
                 // 数据已准备好且有效，返回数据
                 result.success = true;
-                result.data["channelData"] = QVariant::fromValue(lastMultiPointData_);  // 修复：使用channelData键名
-                result.data["channels"] = QVariant::fromValue(lastMultiPointData_);     // 保持兼容性
+                result.data["channelData"] = QVariant::fromValue(lastMultiPointData_);
+                result.data["channels"] = QVariant::fromValue(lastMultiPointData_);
                 result.data["samplesPerChannel"] = lastMultiPointData_.isEmpty() ? 0 : lastMultiPointData_[0].size();
                 result.data["channelCount"] = lastMultiPointData_.size();
                 
@@ -1184,6 +1134,8 @@ DeviceResult DAQDeviceThread::readMultiPointData(const DeviceOperation& operatio
                 qDebug() << deviceName_ << "数据标记为准备好但实际为空，重置标志继续等待";
                 dataReadyFlag_ = false;  // 重置标志
             }
+        } else {
+            qDebug() << deviceName_ << "No new multi-point data available, waiting for next fetch";
         }
     }
     
@@ -1455,9 +1407,18 @@ DeviceResult DAQDeviceThread::setAcquisitionMode(AcquisitionMode mode)
 void DAQDeviceThread::onDataFetchTimer()
 {
     if (!acquisitionActive_ || !deviceHandle_) {
+        qDebug() << deviceName_ << "Data fetch timer triggered but acquisition is not active or device handle is null";
+        if(!acquisitionActive_) {
+            qDebug() << deviceName_ << "Acquisition is not active, stopping timer";
+            dataFetchTimer_->stop();
+        }
+        if(!deviceHandle_) {
+            qDebug() << deviceName_ << "Device handle is null, stopping timer";
+            dataFetchTimer_->stop();
+        }
         return;
     }
-    
+    qDebug() << deviceName_ << "Data fetch timer triggered, processing data...";
     if (currentMode_ == AcquisitionMode::CONTINUOUS) {
         processContinuousData();
     } else if (currentMode_ == AcquisitionMode::MULTI_POINT) {
@@ -1468,6 +1429,7 @@ void DAQDeviceThread::onDataFetchTimer()
 void DAQDeviceThread::processMultiPointData()
 {
     if (!deviceHandle_ || !acquisitionActive_ || currentMode_ != AcquisitionMode::MULTI_POINT) {
+        qDebug() << deviceName_ << "processMultiPointData called but device is not ready or acquisition is not active";
         return;
     }
     
@@ -1846,7 +1808,6 @@ DeviceResult DMMDeviceThread::configureContinuousResistanceMeasurement(const Dev
         return result;
     }
     
-    // 解析参数（参考DAQDeviceThread的configureMultiPointAcquisition）
     const QVariantMap& params = operation.parameters;
     QString rangeStr = params.value("range", "auto").toString();
     JY8902_DMM_2_Wire_ResistanceRange range = parseResistanceRange(rangeStr);
@@ -1948,14 +1909,6 @@ DeviceResult DMMDeviceThread::configureContinuousResistanceMeasurement(const Dev
     if (apiResult != 0) {
         result.success = false;
         result.error = QString("Failed to set multi-sample parameters, error: %1").arg(apiResult);
-        return result;
-    }
-    
-    // 7. 禁用校准（按照官方示例）
-    apiResult = JY8902_DMM_DisableCalibration(deviceHandle_, true);
-    if (apiResult != 0) {
-        result.success = false;
-        result.error = QString("Failed to disable calibration, error: %1").arg(apiResult);
         return result;
     }
     
@@ -2195,6 +2148,7 @@ void DMMDeviceThread::processContinuousResistanceData()
         return;
     }
     
+
     // 先检查缓冲区状态，确保数据确实可用（参考DAQDeviceThread的processMultiPointData）
     unsigned long long currentAvailable = 0;
     unsigned long long currentTransferred = 0;
@@ -2380,4 +2334,69 @@ JY8902_DMM_2_Wire_ResistanceRange DMMDeviceThread::parseResistanceRange(const QS
     if (range == "100M" || range == "100000000") return JY8902_2_Wire_Resistance_100M;
 
     return JY8902_2_Wire_Resistance_Auto;  // 默认自动量程
+}
+
+DeviceResult DAQDeviceThread::configureContinuousAcquisition(const DeviceOperation& operation)
+{
+    DeviceResult result;
+    result.command = operation.command;
+    if (!deviceHandle_) {
+        result.success = false;
+        result.error = "Device not initialized";
+        return result;
+    }
+    // 解析参数
+    const QVariantMap& params = operation.parameters;
+    QVector<int> channels = params.value("channels").value<QVector<int>>();
+    if (channels.isEmpty()) {
+        channels = operation.channels;
+    }
+    if (channels.isEmpty()) {
+        result.success = false;
+        result.error = "No channels specified";
+        return result;
+    }
+    double sampleRate = params.value("sampleRate", currentParams_.sampleRate).toDouble();
+    int bufferSize = params.value("bufferSize", currentParams_.bufferSize).toInt();
+    double rangeMin = params.value("rangeMin", currentParams_.rangeMin).toDouble();
+    double rangeMax = params.value("rangeMax", currentParams_.rangeMax).toDouble();
+    
+    qDebug() << deviceName_ << "Configuring continuous acquisition:" \
+             << "channels:" << channels \
+             << "sampleRate:" << sampleRate \
+             << "bufferSize:" << bufferSize \
+             << "range:" << rangeMin << "to" << rangeMax;
+    
+    // 停止任何正在进行的采集
+    if (acquisitionActive_) {
+        stopAcquisition();
+    }
+    
+    // 1. 配置通道
+    result = configureChannels(channels, rangeMin, rangeMax);
+    if (!result.success) {
+        return result;
+    }
+    // 2. 设置采样率
+    result = setSampleRate(sampleRate);
+    if (!result.success) {
+        return result;
+    }
+    // 3. 设置采集模式为连续
+    result = setAcquisitionMode(AcquisitionMode::CONTINUOUS);
+    if (!result.success) {
+        return result;
+    }
+    // 保存配置参数
+    currentParams_.channels = channels;
+    currentParams_.sampleRate = sampleRate;
+    currentParams_.bufferSize = bufferSize;
+    currentParams_.rangeMin = rangeMin;
+    currentParams_.rangeMax = rangeMax;
+    currentMode_ = AcquisitionMode::CONTINUOUS;
+    result.success = true;
+    result.data["channels"] = QVariant::fromValue(channels);
+    result.data["sampleRate"] = sampleRate;
+    result.data["bufferSize"] = bufferSize;
+    return result;
 }

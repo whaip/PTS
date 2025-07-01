@@ -30,7 +30,7 @@ public:
     QString getComponentTypeName() const override;
     QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const override;
     QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
-    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& ports) const override;
+    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
     TestData executeDataAcquisition(const ComponentTestConfig& config) override;
     ComponentDiagnosticResult analyzeFaults(const ComponentSpec& component, const TestData& testData) override;
     

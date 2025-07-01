@@ -45,9 +45,10 @@ public:
     // 获取配置结果
     WiringScheme getWiringScheme() const;
     bool isWiringCompleted() const { return wiringCompleted_; }
+    void setBatchWiring(const QVector<ComponentSpec>& batchComponentSpecs);
 
 signals:
-    void wiringCompleted(const WiringScheme& scheme);
+    void wiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void wiringCancelled();
 
 protected:
@@ -55,19 +56,13 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void onPortSelectionChanged();
     void onAutoAllocatePorts();
     void onManualAllocatePorts();
     void onValidateConnections(); // 保留声明，但实现已简化
-    void onStartWiring();
     void onNextStep();
     void onPreviousStep();
     void onResetWiring();
     void onGenerateScheme();
-    void updateWiringProgress();
-    void onConnectionCompleted();
-    void onShowPortDetails();
-    void onComponentTypeChanged();
 
 private:
     void setupUI();
@@ -81,7 +76,7 @@ private:
     void updateWiringInstructions();
     void updateConnectionDiagram();
     void updateValidationResults();
-    void generateWiringSteps(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts);
+    void generateWiringSteps(const ComponentSpec& component, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void createConnectionInstructions();
       // Add missing helper function declarations
     QString generateTestParametersDescription() const;
@@ -94,18 +89,15 @@ private:
     QString componentTypeToString(ComponentType type) const;
     double getTestVoltage() const;  // Removed parameter
     double getTestFrequency() const;  // Removed parameter
-      // Missing connection generation functions
-    QVector<ConnectionInfo> generateConnectionsForComponent(ComponentType type, const QVector<PortInfo>& ports);  // Match implementation
-    QVector<ConnectionInfo> generateResistorConnections(const QVector<PortInfo>& ports);  // Match implementation
-    QVector<ConnectionInfo> generateCapacitorConnections(const QVector<PortInfo>& ports);  // Match implementation
-    QVector<ConnectionInfo> generateInductorConnections(const QVector<PortInfo>& ports);  // Match implementation
-    QVector<ConnectionInfo> generateDiodeConnections(const QVector<PortInfo>& ports);  // Match implementation
-    QVector<ConnectionInfo> generateICConnections(const QVector<PortInfo>& ports);  // Match implementation
     QVector<ConnectionInfo> convertToConnectionInfo(const QVector<WiringConnection>& connections) const;
 
     // Missing UI update functions
     void updateWiringStepsList();
     bool validateCurrentConfiguration() const;
+
+    QVector<ComponentSpec> batchComponentSpecs_;
+    QMap<QString, QVector<PortInfo>> allocatedPorts_;
+    bool isBatchWiring_;
 
     ComponentSpec component_;
     PortManager* portManager_;
@@ -113,7 +105,6 @@ private:
     ComponentDiagnosticManager* diagnostic_manager_;
 
     bool wiringCompleted_;
-    bool isBatchWiring_;
     int currentStepIndex_;
     QVector<ConnectionInfo> wiringSteps_;
 

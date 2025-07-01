@@ -238,7 +238,7 @@ bool DeviceManager::submitOperation(const QString& deviceName, const DeviceOpera
         setError(QString("Device %1 not found").arg(deviceName));
         return false;
     }
-    
+
     deviceThreads_[deviceName]->submitOperation(operation);
     return true;
 }

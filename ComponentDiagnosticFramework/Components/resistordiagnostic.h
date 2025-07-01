@@ -7,7 +7,7 @@
  * @brief 电阻器诊断类
  * 
  * 实现电阻器的完整诊断流程，包括：
- * - 端口配置（电流源输出 + 电压测量输入）
+ * - 端口配置（JY5711模拟输出 + JY5322电压测量 + JY5323电流测量）
  * - 接线方案生成
  * - 数据采集配置
  * - 故障分析
@@ -30,7 +30,7 @@ protected:
     
     /**
      * @brief 获取电阻器测试的端口需求
-     * 需要：1个电流输出端口 + 1个电压测量端口（或2个端口用于4线法测量）
+     * 需要：1个模拟输出端口(JY5711) + 1个电压测量端口(JY5322) + 1个电流测量端口(JY5323)
      */
     QVector<PortRequirement> getPortRequirements(const ComponentSpec& component) const override;
 
@@ -42,27 +42,25 @@ protected:
 
     /**
      * @brief 生成电阻器接线方案
-     * 支持2线法和4线法测量
+     * 基于电压电流测量
      */
-    QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, 
-                                                  const QVector<PortInfo>& allocatedPorts) const override;
+    QVector<WiringConnection> generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
     
     /**
      * @brief 配置电阻器数据采集
-     * 设置电流源输出和电压测量参数
+     * 设置JY5711模拟输出、JY5322电压测量和JY5323电流测量参数
      */
-    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component,
-                                                const QVector<PortInfo>& ports) const override;
+    ComponentTestConfig configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const override;
     
     /**
      * @brief 执行电阻器数据采集
-     * 执行I-V特性测量
+     * 执行基于电压电流的电阻计算测量
      */
     TestData executeDataAcquisition(const ComponentTestConfig& config) override;
     
     /**
      * @brief 电阻器故障分析
-     * 分析开路、短路、阻值偏差等故障
+     * 基于电压电流计算的电阻值分析开路、短路、阻值偏差等故障
      */
     ComponentDiagnosticResult analyzeFaults(const ComponentSpec& component,
                                            const TestData& testData) override;

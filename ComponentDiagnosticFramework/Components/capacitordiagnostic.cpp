@@ -31,20 +31,10 @@ QVector<PortRequirement> CapacitorDiagnostic::getPortRequirements(const Componen
 {
     QVector<PortRequirement> requirements;
     
-    // 基本端口需求
-    requirements.append(PortRequirement(PortType::ANALOG_OUTPUT, 1, "交流激励信号输出"));
-    requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "电压测量输入"));
-    requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "电流测量输入"));
-    
-    // 如果需要测量漏电流，添加直流电源
-    if (component.max_leakage > 0) {
-        requirements.append(PortRequirement(PortType::POWER_OUTPUT, 1, "直流偏置电源"));
-    }
-    
-    // 对于大容值电容，可能需要万用表进行低频或直流测量
-    if (component.nominal_value > 1e-3) { // 大于1mF
-        requirements.append(PortRequirement(PortType::DMM_MEASUREMENT, 2, "万用表测量"));
-    }
+    // 基本端口需求（基于JY5711 + JY5322 + JY5323）
+    requirements.append(PortRequirement(PortType::ANALOG_OUTPUT, 1, "JY5711交流激励信号输出"));
+    requirements.append(PortRequirement(PortType::DIGITAL_INPUT, 1, "JY5322电压测量输入"));
+    requirements.append(PortRequirement(PortType::ANALOG_INPUT, 1, "JY5323电流测量输入"));
     
     return requirements;
 }
@@ -53,130 +43,130 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                                                                    const QVector<PortInfo>& allocatedPorts) const
 {
     QVector<WiringConnection> connections;
+
+    allocatedPorts_ = allocatedPorts;
     
     if (allocatedPorts.size() < 3) {
-        logError("分配的端口数量不足");
+        logError("分配的端口数量不足，需要3个端口");
         return connections;
     }
     
-    // 连接1：激励信号到电容正极
-    WiringConnection conn1;
-    conn1.componentPin = "正极";
-    conn1.targetPort = allocatedPorts[0]; // 交流激励输出
-    conn1.wireColor = "红色";
-    conn1.instruction = "将红色导线连接电容正极到交流信号输出";
-    conn1.isRequired = true;
-    connections.append(conn1);
-    
-    // 连接2：电容正极到电压测量
-    WiringConnection conn2;
-    conn2.componentPin = "正极";
-    conn2.targetPort = allocatedPorts[1]; // 电压测量输入
-    conn2.wireColor = "黄色";
-    conn2.instruction = "将黄色导线连接电容正极到电压测量输入";
-    conn2.isRequired = true;
-    connections.append(conn2);
-    
-    // 连接3：电容负极接地并连接到电流测量
-    WiringConnection conn3;
-    conn3.componentPin = "负极";
-    conn3.targetPort = allocatedPorts[2]; // 电流测量输入
-    conn3.wireColor = "黑色";
-    conn3.instruction = "将黑色导线连接电容负极到电流测量输入和地";
-    conn3.isRequired = true;
-    connections.append(conn3);
-    
-    // 如果有直流偏置电源
-    if (allocatedPorts.size() > 3) {
-        WiringConnection conn4;
-        conn4.componentPin = "正极";
-        conn4.targetPort = allocatedPorts[3]; // 直流偏置电源
-        conn4.wireColor = "橙色";
-        conn4.instruction = "将橙色导线连接电容正极到直流偏置电源正输出（用于漏电流测试）";
-        conn4.isRequired = false; // 可选连接
-        connections.append(conn4);
+    for(auto& port : allocatedPorts) {
+        switch (port.portType)
+        {
+            case PortType::ANALOG_OUTPUT:
+                {
+                    // 连接1：激励信号到电容正极
+                    WiringConnection conn1;
+                    conn1.componentPin = "正极";
+                    conn1.targetPort = port; // JY5711交流激励输出
+                    conn1.wireColor = "红色";
+                    conn1.instruction = QString("将电容连接到模拟输出端口%1").arg(port.portNumber);
+                    conn1.isRequired = true;
+                    connections.append(conn1);
+                }
+                break;
+            case PortType::DIGITAL_INPUT:
+                {
+                    // 连接2：电容正极到电压测量
+                    WiringConnection conn2;
+                    conn2.componentPin = "正极";
+                    conn2.targetPort = port; // JY5322电压测量输入
+                    conn2.wireColor = "黄色";
+                    conn2.instruction = QString("将数字输入端口%1 导线连接到电容正极").arg(port.portNumber);
+                    conn2.isRequired = true;
+                    connections.append(conn2);
+                }
+                break;
+            case PortType::ANALOG_INPUT:
+                {
+                    // 连接3：电容负极接地并连接到电流测量
+                    WiringConnection conn3;
+                    conn3.componentPin = "负极";
+                    conn3.targetPort = port; // JY5323电流测量输入
+                    conn3.wireColor = "黑色";
+                    conn3.instruction = QString("将模拟输入端口%1 串联到电容负极").arg(port.portNumber);
+                    conn3.isRequired = true;
+                    connections.append(conn3);
+                }
+                break;
+            default:
+                break;
+        }
     }
     
     return connections;
 }
 
-ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const ComponentSpec& component,
-                                                                 const QVector<PortInfo>& ports) const
+ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& ports) const
 {
     ComponentTestConfig config;
-    // config.testName = QString("电容器测试_%1").arg(component.reference);
+    config.testName = QString("电容器测试_%1").arg(component.reference);
     
-    // // 计算最优测试参数
-    // CapacitorTestParams testParams = calculateOptimalTestParams(component);
+    // 计算最优测试参数
+    CapacitorTestParams testParams = calculateOptimalTestParams(component);
     
-    // // 配置输出端口（交流激励）
-    // if (!ports.isEmpty()) {
-    //     PortConfig outputPort;
-    //     outputPort.deviceName = ports[0].deviceName;
-    //     outputPort.channel = ports[0].portNumber;
-    //     outputPort.signalType = SignalType::VOLTAGE_AC;
-    //     outputPort.signalName = "交流激励";
-    //     outputPort.amplitude = testParams.testVoltage;
-    //     outputPort.frequency = testParams.testFrequencies.first();
-    //     outputPort.isOutput = true;
-    //     outputPort.rangeMin = -testParams.testVoltage * 1.5;
-    //     outputPort.rangeMax = testParams.testVoltage * 1.5;
-        
-    //     config.portConfigs.append(outputPort);
-    // }
-    
-    // // 配置电压测量端口
-    // if (ports.size() > 1) {
-    //     PortConfig voltagePort;
-    //     voltagePort.deviceName = ports[1].deviceName;
-    //     voltagePort.channel = ports[1].portNumber;
-    //     voltagePort.signalType = SignalType::VOLTAGE_AC;
-    //     voltagePort.signalName = "电压测量";
-    //     voltagePort.isOutput = false;
-    //     voltagePort.rangeMin = -testParams.testVoltage * 2;
-    //     voltagePort.rangeMax = testParams.testVoltage * 2;
-    //     voltagePort.samplesPerChannel = testParams.measurementPoints;
-    //     voltagePort.sampleRate = 10000.0; // 10kHz采样率
-        
-    //     config.portConfigs.append(voltagePort);
-    // }
-    
-    // // 配置电流测量端口
-    // if (ports.size() > 2) {
-    //     PortConfig currentPort;
-    //     currentPort.deviceName = ports[2].deviceName;
-    //     currentPort.channel = ports[2].portNumber;
-    //     currentPort.signalType = SignalType::CURRENT_AC;
-    //     currentPort.signalName = "电流测量";
-    //     currentPort.isOutput = false;
-    //     // 根据容值估算电流范围
-    //     double expectedCurrent = 2 * M_PI * testParams.testFrequencies.first() *
-    //                             component.nominal_value * testParams.testVoltage;
-    //     currentPort.rangeMin = -expectedCurrent * 10;
-    //     currentPort.rangeMax = expectedCurrent * 10;
-    //     currentPort.samplesPerChannel = testParams.measurementPoints;
-    //     currentPort.sampleRate = 10000.0;
-        
-    //     config.portConfigs.append(currentPort);
-    // }
-    
-    // // 设置测试参数
-    // config.parameters["test_frequencies"] = QVariant::fromValue(testParams.testFrequencies);
-    // config.parameters["test_voltage"] = testParams.testVoltage;
-    // config.parameters["dc_bias_voltage"] = testParams.dcBiasVoltage;
-    // config.parameters["measurement_points"] = testParams.measurementPoints;
-    // config.parameters["settling_time"] = testParams.settlingTime;
-    // config.parameters["measure_leakage"] = testParams.measureLeakage;
-    // config.parameters["leakage_test_voltage"] = testParams.leakageTestVoltage;
-    // config.parameters["expected_capacitance"] = component.nominal_value;
-    // config.parameters["tolerance"] = component.tolerance_percent;
-    // config.parameters["max_esr"] = component.max_esr;
-    // config.parameters["max_leakage"] = component.max_leakage;
-    
-    // config.requiresSynchronization = true;
-    // config.syncGroup = "capacitor_measurement";
-    // config.timeout = 60000; // 60秒超时
-    
+    for(auto& port : ports) {
+        switch (port.portType)
+        {
+        case PortType::ANALOG_OUTPUT:
+            {
+                // 配置交流信号输出
+                DeviceOperation operation;
+                operation.command = DeviceCommand::CONFIGURE_CHANNEL;
+                operation.parameters["channelCount"] = 1;
+                operation.parameters["sampleRate"] = 1000000.0;
+                operation.parameters["samplesPerChannel"] = 1000000.0;
+                
+                QVariantList waveformConfigs;
+                QVariantMap channelConfig;
+                channelConfig["channel"] = port.portNumber;
+                channelConfig["type"] = static_cast<int>(PXIe5711_testtype::SineWave);
+                channelConfig["amplitude"] = 5;
+                channelConfig["frequency"] = testParams.testFrequencies.isEmpty() ? 1000.0 : testParams.testFrequencies.first();
+                channelConfig["lowRange"] = -10;
+                channelConfig["highRange"] = 10;
+                waveformConfigs.append(channelConfig);
+                
+                operation.parameters["waveforms"] = waveformConfigs;
+                config.parameters["JY5711"] = operation;
+            }
+            break;
+        case PortType::ANALOG_INPUT:
+            {
+                // 电流测量
+                DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+                configOp.parameters["mode"] = "multi";
+                configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
+                configOp.parameters["sampleRate"] = 200000.0;
+                configOp.parameters["samplesPerChannel"] = 200000;
+                configOp.parameters["rangeMin"] = -10;
+                configOp.parameters["rangeMax"] = 10;
+                configOp.timeout = 10000;
+
+                config.parameters["JY5323"] = configOp;
+            }
+            break;
+        case PortType::DIGITAL_INPUT:
+            {
+                DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
+                configOp.parameters["mode"] = "multi";
+                configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
+                configOp.parameters["sampleRate"] = 1000000.0;
+                configOp.parameters["samplesPerChannel"] = 1000000;
+                configOp.parameters["rangeMin"] = -10;
+                configOp.parameters["rangeMax"] = 10;
+                configOp.timeout = 10000;
+                
+                config.parameters["JY5322"] = configOp;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    config_ = config;
     return config;
 }
 
@@ -186,144 +176,174 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
     testData.testId = config.testName;
     testData.timestamp = QDateTime::currentDateTime();
     testData.valid = false;
+    QMap<QString, QVariant> measurement;
     
     if (!getDeviceManager() || !getDeviceManager()->isSystemReady()) {
         testData.errorMessage = "设备管理器未就绪";
         return testData;
     }
     
-    // try {
-    //     logInfo("开始执行电容器数据采集");
+    try {
+        logInfo("开始执行电容器数据采集");
         
-        // 获取测试参数
-        // QVector<double> testFrequencies = config.parameters.value("test_frequencies").value<QVector<double>>();
-        // double testVoltage = config.parameters.value("test_voltage", 1.0).toDouble();
-        // int measurementPoints = config.parameters.value("measurement_points", 10).toInt();
-        // double settlingTime = config.parameters.value("settling_time", 500).toDouble();
-        // bool measureLeakage = config.parameters.value("measure_leakage", true).toBool();
-        // double leakageTestVoltage = config.parameters.value("leakage_test_voltage", 10.0).toDouble();
+        // 配置设备
+        for (auto it = config.parameters.begin(); it != config.parameters.end(); ++it) {
+            if(!getDeviceManager()->submitOperation(it.key(), it.value())) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), getDeviceManager()->getLastError()).toStdString());
+            }
+            DeviceResult configResult = getDeviceManager()->waitForResult(it.key(), 10000);
+            if (!configResult.success) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), configResult.error).toStdString());
+            }
+        }
+
+        // 交流测量 - 输出交流信号并测量响应
+        // 写入交流波形数据
+        DeviceOperation outputOp;
+        outputOp.command = DeviceCommand::WRITE_DATA;
+        outputOp.parameters["waveforms"] = config.parameters["JY5711"].parameters["waveforms"];
+        outputOp.parameters["sampleRate"] = config.parameters["JY5711"].parameters["sampleRate"];
+        outputOp.parameters["samplesPerChannel"] = config.parameters["JY5711"].parameters["samplesPerChannel"];
+
+        getDeviceManager()->submitOperation("JY5711", outputOp);
+        DeviceResult outputResult = getDeviceManager()->waitForResult("JY5711", 15000);
+        if(!outputResult.success) {
+            throw std::runtime_error(QString("设备 %1 写入数据失败: %2").arg("JY5711", getDeviceManager()->getLastError()).toStdString());
+        }
+
+        // 创建同步组进行交流测量
+        const QString syncGroupName = "capacitor_test_group";
+        const QStringList deviceNames = {"JY5711", "JY5322", "JY5323"};
+        getDeviceManager()->createSyncGroup(syncGroupName, deviceNames);
+
+        QList<DeviceOperation> syncOperations;
         
-        // QVector<FrequencyResponse> frequencyResponses;
+        DeviceOperation triggerOp5711;
+        triggerOp5711.deviceName = "JY5711";
+        triggerOp5711.command = DeviceCommand::SYNC_TRIGGER;
+        triggerOp5711.syncGroup = syncGroupName;
+        syncOperations.append(triggerOp5711);
+
+        DeviceOperation daqStartOp;
+        daqStartOp.command = DeviceCommand::START_MEASUREMENT;
+        daqStartOp.deviceName = "JY5322";
+        daqStartOp.syncGroup = syncGroupName;
+        daqStartOp.syncDelay = 0;
+        daqStartOp.timeout = 5000;
+        syncOperations.append(daqStartOp);
+
+        daqStartOp.deviceName = "JY5323";
+        syncOperations.append(daqStartOp);
+
+        if (!getDeviceManager()->executeSync(syncGroupName, syncOperations, 5000)) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备同步执行失败");
+        }
+
+        // 等待结果
+        DeviceResult aoResult = getDeviceManager()->waitForResult("JY5711", 5000);
+        if (!aoResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5711 输出失败: " + aoResult.error.toStdString());
+        }
+
+        DeviceResult daqStartResult = getDeviceManager()->waitForResult("JY5322", 5000);
+        if (!daqStartResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5322 启动失败: " + daqStartResult.error.toStdString());
+        }
+
+        daqStartResult = getDeviceManager()->waitForResult("JY5323", 5000);
+        if (!daqStartResult.success) {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("设备 JY5323 启动失败: " + daqStartResult.error.toStdString());
+        }
+
+        // 获取电压测量数据
+        QVector<QVector<double>> voltageChannelData;
+        DeviceManager::WaitResult waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5322", voltageChannelData, 30, 200, 8000);
+        if( waitResult.success && !voltageChannelData.isEmpty() && !voltageChannelData[0].isEmpty())
+        {
+            for(double value : voltageChannelData[0]) {
+                logInfo(QString("电压测量值: %1 V").arg(value));
+            }
+            measurement["voltages"] = QVariant::fromValue(voltageChannelData[0]);
+        } else {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("电压测量数据为空或读取失败");
+        }
+
+        // 获取电流测量数据
+        QVector<QVector<double>> currentChannelData;
+        waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5323", currentChannelData, 30, 200, 8000);
+        if (waitResult.success && !currentChannelData.isEmpty() && !currentChannelData[0].isEmpty())
+        {
+            for(double value : currentChannelData[0]) {
+                logInfo(QString("电流测量值: %1 A").arg(value));
+            }
+            measurement["currents"] = QVariant::fromValue(currentChannelData[0]);
+        } else {
+            getDeviceManager()->removeSyncGroup(syncGroupName);
+            throw std::runtime_error("电流测量数据为空或读取失败");
+        }
+
+        // 停止所有设备
+        DeviceOperation stopOp(DeviceCommand::STOP_MEASUREMENT);
+        stopOp.timeout = 5000;
         
-        // 对每个频率进行测量
-    //     for (double frequency : testFrequencies) {
-    //         logInfo(QString("测量频率: %1Hz").arg(frequency));
+        QStringList stopDevices = {"JY5711", "JY5322", "JY5323"};
+        for (const QString& device : stopDevices) {
+            if (!getDeviceManager()->submitOperation(device, stopOp)) {
+                logWarning(QString("设备 %1 停止命令发送失败").arg(device));
+            } else {
+                DeviceResult stopResult = getDeviceManager()->waitForResult(device, 5000);
+                if (!stopResult.success) {
+                    logWarning(QString("设备 %1 停止失败: %2").arg(device, stopResult.error));
+                }
+            }
+        }
+
+        getDeviceManager()->removeSyncGroup(syncGroupName);
+
+        // 计算ESR和阻抗参数
+        QVector<double> voltages = measurement.value("voltages").value<QVector<double>>();
+        QVector<double> currents = measurement.value("currents").value<QVector<double>>();
+        
+        if (!voltages.isEmpty() && !currents.isEmpty()) {
+            // 计算平均电压和电流
+            double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
+            double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
             
-    //         // 设置激励频率
-    //         // 这里应该调用实际的设备配置函数
-    //         // 简化实现，假设设备配置成功
+            // 计算阻抗 Z = V/I
+            double impedance = (avgCurrent != 0) ? qAbs(avgVoltage / avgCurrent) : 0.0;
+            measurement["impedance"] = impedance;
             
-    //         // 等待稳定
-    //         QThread::msleep(settlingTime);
+            // 估算ESR（简化计算，实际ESR通常是阻抗的一部分）
+            double esr = impedance * 0.1; // 简化假设ESR为阻抗的10%
+            measurement["esr"] = esr;
             
-    //         QVector<double> voltages, currents, voltagePhases, currentPhases;
+            // 估算损耗角正切值
+            double tanDelta = 0.05; // 简化值，实际应该通过相位计算
+            measurement["tan_delta"] = tanDelta;
             
-    //         // 进行多点测量以提高精度
-    //         for (int i = 0; i < measurementPoints; ++i) {
-    //             // 模拟测量数据（实际应该从设备获取）
-    //             double freq = frequency;
-                
-    //             // 从配置中获取预期电容值
-    //             double expectedCapacitance = config.parameters.value("expected_capacitance", 1e-6).toDouble();
-                
-    //             // 模拟容抗计算：Xc = 1/(2πfC)
-    //             double Xc = 1.0 / (2.0 * M_PI * freq * expectedCapacitance);
-                
-    //             // 添加一些随机噪声模拟真实测量
-    //             double noise = (QRandomGenerator::global()->bounded(100) - 50) / 1000.0;
-    //             double impedance = Xc * (1.0 + noise);
-                
-    //             // 计算相位（理想电容为-90度）
-    //             double phase = -90.0 + (QRandomGenerator::global()->bounded(100) - 50) / 10.0;
-                
-    //             voltages.append(impedance * qCos(phase * M_PI / 180.0));
-    //             currents.append(impedance * qSin(phase * M_PI / 180.0));
-    //             voltagePhases.append(phase);
-    //             currentPhases.append(phase);
-    //         }
-            
-    //         // 计算平均值
-    //         double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
-    //         double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-    //         double avgVoltagePhase = std::accumulate(voltagePhases.begin(), voltagePhases.end(), 0.0) / voltagePhases.size();
-    //         double avgCurrentPhase = std::accumulate(currentPhases.begin(), currentPhases.end(), 0.0) / currentPhases.size();
-            
-    //         // 计算频率响应
-    //         FrequencyResponse response;
-    //         response.frequency = frequency;
-    //         response.impedance = avgVoltage / avgCurrent;
-    //         response.phase = avgCurrentPhase - avgVoltagePhase;
-    //         response.capacitance = calculateCapacitance(frequency, avgVoltage, avgCurrent, response.phase);
-    //         response.esr = calculateESR(avgVoltage, avgCurrent, response.phase);
-            
-    //         frequencyResponses.append(response);
-            
-    //         logInfo(QString("频率 %1Hz: Z=%2Ω, φ=%3°, C=%4F, ESR=%5Ω")
-    //                .arg(frequency)
-    //                .arg(response.impedance)
-    //                .arg(response.phase)
-    //                .arg(response.capacitance)
-    //                .arg(response.esr));
-    //     }
+            logInfo(QString("计算得到 阻抗: %1 Ω, ESR: %2 Ω, tan δ: %3")
+                   .arg(impedance).arg(esr).arg(tanDelta));
+        }
+
+        // 将测量数据添加到列表中
+        testData.measurements.append(measurement);
         
-    //     // 存储频率响应数据
-    //     QVector<double> frequencies, impedances, phases, capacitances, esrValues;
-    //     for (const FrequencyResponse& resp : frequencyResponses) {
-    //         frequencies.append(resp.frequency);
-    //         impedances.append(resp.impedance);
-    //         phases.append(resp.phase);
-    //         capacitances.append(resp.capacitance);
-    //         esrValues.append(resp.esr);
-    //     }
+        // 设置元数据
+        testData.metadata = config.parameters;
+        testData.valid = true;
         
-    //     testData.measurements.clear(); // 确保清空列表
+        logInfo("电容器数据采集完成");
         
-    //     // 存储测量数据 - 修复数据结构访问
-    //     QMap<QString, QVariant> measurement;
-    //     measurement["frequencies"] = QVariant::fromValue(frequencies);
-    //     measurement["impedances"] = QVariant::fromValue(impedances);
-    //     measurement["phases"] = QVariant::fromValue(phases);
-    //     measurement["capacitances"] = QVariant::fromValue(capacitances);
-    //     measurement["esr_values"] = QVariant::fromValue(esrValues);
-        
-    //     // 计算平均容值和ESR
-    //     double avgCapacitance = std::accumulate(capacitances.begin(), capacitances.end(), 0.0) / capacitances.size();
-    //     double avgESR = std::accumulate(esrValues.begin(), esrValues.end(), 0.0) / esrValues.size();
-        
-    //     measurement["avg_capacitance"] = avgCapacitance;
-    //     measurement["avg_esr"] = avgESR;
-        
-    //     // 漏电流测量
-    //     if (measureLeakage) {
-    //         logInfo("开始漏电流测量");
-            
-    //         // 施加直流电压并测量漏电流
-    //         // 这里应该调用实际的设备操作
-    //         // 简化实现，模拟漏电流测量
-            
-    //         QThread::msleep(1000); // 等待稳定
-            
-    //         double leakageCurrent = 1e-9 + (QRandomGenerator::global()->bounded(100) / 1e12); // 模拟1nA级别的漏电流
-    //         measurement["leakage_current"] = leakageCurrent;
-            
-    //         logInfo(QString("漏电流: %1A").arg(leakageCurrent));
-    //     }
-        
-    //     // 将测量数据添加到列表中
-    //     testData.measurements.append(measurement);
-        
-    //     // 设置元数据
-    //     testData.metadata = config.parameters;
-    //     testData.metadata["measurement_method"] = "AC_impedance";
-        
-    //     testData.valid = true;
-    //     logInfo(QString("电容器数据采集完成，平均容值: %1F, 平均ESR: %2Ω")
-    //            .arg(avgCapacitance).arg(avgESR));
-        
-    // } catch (const std::exception& e) {
-    //     testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
-    //     logError(testData.errorMessage);
-    // }
+    } catch (const std::exception& e) {
+        getDeviceManager()->initializeDeviceThreads();
+        testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
+        logError(testData.errorMessage);
+    }
     
     return testData;
 }
@@ -346,38 +366,66 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
     }
     
     try {
-        // 获取测量数据 - 修复访问方式
+        // 获取测量数据
         QMap<QString, QVariant> measurementData;
         if (!testData.measurements.isEmpty()) {
             measurementData = testData.measurements.first();
         }
         
-        double measuredCapacitance = measurementData.value("capacitance", 0.0).toDouble();
-        double measuredESR = measurementData.value("esr", 0.0).toDouble();
-        double measuredTanDelta = measurementData.value("tan_delta", 0.0).toDouble();
+        // 获取电压和电流测量数据
+        QVector<double> voltages = measurementData.value("voltages").value<QVector<double>>();
+        QVector<double> currents = measurementData.value("currents").value<QVector<double>>();
         
-        double leakageCurrent = measurementData.value("leakage_current", 0.0).toDouble();
+        if (voltages.isEmpty() || currents.isEmpty()) {
+            throw std::runtime_error("电压或电流测量数据为空");
+        }
         
-        // 获取频率响应数据
-        QVector<double> frequencies = measurementData.value("frequencies").value<QVector<double>>();
-        QVector<double> capacitances = measurementData.value("capacitances").value<QVector<double>>();
-        QVector<double> esrValues = measurementData.value("esr_values").value<QVector<double>>();
+        // 基于电压电流计算电容值和ESR
+        double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
+        double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
         
-        // 存储测量结果
-        result.measurements["measured_capacitance"] = measuredCapacitance;
-        result.measurements["expected_capacitance"] = component.nominal_value;
-        result.measurements["capacitance_deviation_percent"] = calculateDeviation(measuredCapacitance, component.nominal_value);
+        // 获取测试频率（使用第一个频率或默认1kHz）
+        double testFreq = component.params.value("测试频率/Hz", 1000.0).toDouble();
+        
+        // 计算阻抗 Z = V/I
+        double impedance = (avgCurrent != 0) ? avgVoltage / avgCurrent : 0.0;
+        
+        // 计算电容值 C = 1/(2πfZ) （假设纯容性）
+        double calculatedCapacitance = 0.0;
+        if (testFreq > 0 && impedance > 0) {
+            calculatedCapacitance = 1.0 / (2 * M_PI * testFreq * impedance);
+        }
+        
+        // 获取ESR（从测量数据中获取或使用估算值）
+        double measuredESR = measurementData.value("esr", impedance * 0.1).toDouble(); // 默认为阻抗的10%
+        double measuredTanDelta = measurementData.value("tan_delta", 0.05).toDouble();
+        
+        // 从component.params中获取规格参数
+        double nominalCapacitance = component.params.value("标称值", 1e-6).toDouble();
+        double tolerancePercent = component.params.value("容差/%", 10.0).toDouble();
+        double maxESR = component.params.value("最大ESR/Ω", 1.0).toDouble();
+        double ratedVoltage = component.params.value("额定电压/V", 16.0).toDouble();
+        
+        result.metameasurements = measurementData;
+        
+        // 存储计算结果
+        result.measurements["calculated_capacitance"] = calculatedCapacitance;
+        result.measurements["expected_capacitance"] = nominalCapacitance;
+        result.measurements["capacitance_deviation_percent"] = calculateDeviation(calculatedCapacitance, nominalCapacitance);
         result.measurements["measured_esr"] = measuredESR;
-        result.measurements["max_esr_spec"] = component.max_esr;
-        result.measurements["measured_leakage"] = leakageCurrent;
-        result.measurements["max_leakage_spec"] = component.max_leakage;
-        result.measurements["tolerance_percent"] = component.tolerance_percent;
-        
+        result.measurements["max_esr_spec"] = maxESR;
+        result.measurements["tolerance_percent"] = tolerancePercent;
+        result.measurements["tan_delta"] = measuredTanDelta;
+        result.measurements["test_frequency"] = testFreq;
+        result.measurements["calculated_impedance"] = impedance;
+        result.measurements["average_voltage"] = avgVoltage;
+        result.measurements["average_current"] = avgCurrent;
+
         // 故障分析
         bool hasFault = false;
         
         // 1. 检查开路
-        if (isOpenCircuit(measuredCapacitance, component.nominal_value)) {
+        if (isOpenCircuit(calculatedCapacitance, nominalCapacitance)) {
             result.faultTypes.append("OPEN_CIRCUIT");
             result.recommendations.append("检查元件引脚连接");
             result.recommendations.append("检查电容是否内部断路");
@@ -385,7 +433,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         }
         
         // 2. 检查短路
-        if (isShortCircuit(measuredCapacitance)) {
+        if (isShortCircuit(calculatedCapacitance)) {
             result.faultTypes.append("SHORT_CIRCUIT");
             result.recommendations.append("电容内部短路，需要更换");
             result.recommendations.append("检查是否有外部短路路径");
@@ -393,7 +441,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         }
         
         // 3. 检查容值偏差
-        if (!hasFault && !isWithinTolerance(measuredCapacitance, component.nominal_value, component.tolerance_percent)) {
+        if (!hasFault && !isWithinTolerance(calculatedCapacitance, nominalCapacitance, tolerancePercent)) {
             result.faultTypes.append("CAPACITANCE_OUT_OF_TOLERANCE");
             result.recommendations.append("电容值超出规定容差范围");
             result.recommendations.append("可能是老化或制造偏差导致");
@@ -401,38 +449,24 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         }
         
         // 4. 检查ESR
-        if (component.max_esr > 0 && isHighESR(measuredESR, component.max_esr)) {
+        if (maxESR > 0 && isHighESR(measuredESR, maxESR)) {
             result.faultTypes.append("HIGH_ESR");
             result.recommendations.append("等效串联电阻过高");
             result.recommendations.append("电容可能老化或品质降低");
             hasFault = true;
         }
         
-        // 5. 检查漏电流
-        if (component.max_leakage > 0 && isHighLeakage(leakageCurrent, component.max_leakage)) {
-            result.faultTypes.append("HIGH_LEAKAGE");
-            result.recommendations.append("漏电流过高");
-            result.recommendations.append("电容可能损坏或污染");
+        // 5. 检查损耗角正切值
+        if (measuredTanDelta > 0.1) { // tan δ > 0.1 认为损耗过大
+            result.faultTypes.append("HIGH_LOSS");
+            result.recommendations.append("损耗角正切值过高，介质损耗较大");
+            result.recommendations.append("电容可能老化或品质不良");
             hasFault = true;
         }
         
-        // 6. 检查频率稳定性
-        if (!capacitances.isEmpty()) {
-            double stability = calculateStability(capacitances);
-            result.measurements["capacitance_stability_percent"] = stability;
-            
-            if (stability > 5.0) { // 超过5%的频率变化认为不稳定
-                result.faultTypes.append("FREQUENCY_INSTABILITY");
-                result.recommendations.append("电容值在不同频率下变化较大");
-                result.recommendations.append("可能是介质损耗或寄生效应");
-                hasFault = true;
-            }
-        }
-        
-        // 7. 计算品质因数
-        if (!frequencies.isEmpty()) {
-            double testFreq = frequencies.first();
-            double qualityFactor = calculateQualityFactor(measuredCapacitance, measuredESR, testFreq);
+        // 6. 计算品质因数
+        if (testFreq > 0 && calculatedCapacitance > 0 && measuredESR > 0) {
+            double qualityFactor = calculateQualityFactor(calculatedCapacitance, measuredESR, testFreq);
             result.measurements["quality_factor"] = qualityFactor;
             
             if (qualityFactor < 10) { // Q值过低
@@ -440,7 +474,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
                 result.recommendations.append("品质因数过低，损耗较大");
             }
         }
-        
+
         // 设置总体结果
         result.isPassed = !hasFault;
         result.healthScore = calculateHealthScore(result.measurements, component);
@@ -457,7 +491,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
                .arg(component.reference)
                .arg(result.isPassed ? "通过" : "失败")
                .arg(result.healthScore));
-        
+
     } catch (const std::exception& e) {
         result.isPassed = false;
         result.healthScore = 0.0;
@@ -599,30 +633,178 @@ CapacitorDiagnostic::CapacitorTestParams CapacitorDiagnostic::calculateOptimalTe
 {
     CapacitorTestParams params;
     
+    // 从component.params中获取参数
+    double nominalCapacitance = component.params.value("标称值", 1e-6).toDouble();
+    double tolerancePercent = component.params.value("容差/%", 10.0).toDouble();
+    double ratedVoltage = component.params.value("额定电压/V", 16.0).toDouble();
+    double maxESR = component.params.value("最大ESR/Ω", 1.0).toDouble();
+    double maxLeakage = component.params.value("最大漏电流/A", 1e-9).toDouble();
+    
     // 根据电容值选择最优测试频率
-    params.testFrequencies = getOptimalTestFrequencies(component.nominal_value);
+    params.testFrequencies = getOptimalTestFrequencies(nominalCapacitance);
     
-    // 根据电容类型调整测试电压
-    if (component.value.contains("电解", Qt::CaseInsensitive)) {
-        params.testVoltage = 0.5; // 电解电容使用较低电压
-        params.dcBiasVoltage = 2.0; // 适当的直流偏置
-        params.leakageTestVoltage = qMin(component.max_voltage * 0.8, 10.0);
-    } else {
-        params.testVoltage = 1.0; // 其他电容使用标准电压
-        params.leakageTestVoltage = qMin(component.max_voltage * 0.9, 50.0);
+    // === 新增：预估电容阻抗范围计算 ===
+    QVector<double> impedanceRanges;
+    QVector<double> expectedCurrents;
+    
+    logInfo(QString("计算电容器 %1 的阻抗特性:").arg(component.reference));
+    logInfo(QString("  标称电容: %1F, 容差: ±%2%").arg(nominalCapacitance).arg(tolerancePercent));
+    
+    // 计算每个测试频率下的预期阻抗
+    for (double frequency : params.testFrequencies) {
+        // 电容容抗公式: Xc = 1/(2πfC)
+        double nominalReactance = 1.0 / (2 * M_PI * frequency * nominalCapacitance);
+        
+        // 考虑容差影响的阻抗范围
+        double minCapacitance = nominalCapacitance * (1.0 - tolerancePercent / 100.0);
+        double maxCapacitance = nominalCapacitance * (1.0 + tolerancePercent / 100.0);
+        double maxReactance = 1.0 / (2 * M_PI * frequency * minCapacitance); // 小电容 -> 大阻抗
+        double minReactance = 1.0 / (2 * M_PI * frequency * maxCapacitance); // 大电容 -> 小阻抗
+        
+        // 考虑ESR的影响，总阻抗 = sqrt(Xc² + ESR²)
+        double minImpedance = qSqrt(minReactance * minReactance + maxESR * maxESR);
+        double maxImpedance = qSqrt(maxReactance * maxReactance + maxESR * maxESR);
+        
+        impedanceRanges.append(minImpedance);
+        impedanceRanges.append(maxImpedance);
+        
+        logInfo(QString("  频率 %1Hz: 容抗 %2Ω - %3Ω, 总阻抗 %4Ω - %5Ω")
+               .arg(frequency)
+               .arg(minReactance, 0, 'e', 2)
+               .arg(maxReactance, 0, 'e', 2) 
+               .arg(minImpedance, 0, 'e', 2)
+               .arg(maxImpedance, 0, 'e', 2));
     }
     
-    // 根据容差要求调整测量点数
-    if (component.tolerance_percent < 5.0) {
-        params.measurementPoints = 20; // 高精度测量
-        params.settlingTime = 1000;    // 更长稳定时间
-    } else if (component.tolerance_percent < 20.0) {
-        params.measurementPoints = 10; // 中等精度
+    // 找到整体阻抗范围
+    double overallMinImpedance = *std::min_element(impedanceRanges.begin(), impedanceRanges.end());
+    double overallMaxImpedance = *std::max_element(impedanceRanges.begin(), impedanceRanges.end());
+    
+    logInfo(QString("  整体阻抗范围: %1Ω - %2Ω")
+           .arg(overallMinImpedance, 0, 'e', 2)
+           .arg(overallMaxImpedance, 0, 'e', 2));
+    
+    // === 基于阻抗范围优化测试电压 ===
+    // 选择合适的测试电压，确保测得的电流在合理范围内 (1μA - 10mA)
+    double targetMinCurrent = 1e-6;  // 1μA 最小电流（避免噪声影响）
+    double targetMaxCurrent = 10e-3; // 10mA 最大电流（避免器件损坏）
+    
+    // 根据最大阻抗确定最小所需电压: V_min = I_min * Z_max
+    double minRequiredVoltage = targetMinCurrent * overallMaxImpedance;
+    // 根据最小阻抗确定最大允许电压: V_max = I_max * Z_min  
+    double maxAllowedVoltage = targetMaxCurrent * overallMinImpedance;
+    
+    logInfo(QString("  基于阻抗的电压范围: %1V - %2V")
+           .arg(minRequiredVoltage, 0, 'e', 2)
+           .arg(maxAllowedVoltage, 0, 'e', 2));
+    
+    // 根据电容值和额定电压确定测试电压（结合阻抗考虑）
+    if (nominalCapacitance >= 1e-3) {
+        // 大电容（≥1mF）通常是电解电容，阻抗较小
+        params.testVoltage = qMin(qMin(0.5, ratedVoltage * 0.1), maxAllowedVoltage);
+        params.dcBiasVoltage = qMin(2.0, ratedVoltage * 0.2);
+        params.leakageTestVoltage = qMin(ratedVoltage * 0.8, 10.0);
+    } else if (nominalCapacitance >= 1e-6) {
+        // 中等电容（1μF-1mF）
+        params.testVoltage = qMin(qMin(1.0, ratedVoltage * 0.2), maxAllowedVoltage);
+        params.testVoltage = qMax(params.testVoltage, minRequiredVoltage);
+        params.dcBiasVoltage = 0.0;
+        params.leakageTestVoltage = qMin(ratedVoltage * 0.9, 25.0);
+    } else {
+        // 小电容（<1μF）阻抗较大，需要更高电压
+        params.testVoltage = qMin(qMin(2.0, ratedVoltage * 0.3), maxAllowedVoltage);
+        params.testVoltage = qMax(params.testVoltage, minRequiredVoltage);
+        params.dcBiasVoltage = 0.0;
+        params.leakageTestVoltage = qMin(ratedVoltage * 0.95, 50.0);
+    }
+    
+    // === 基于阻抗优化电流测量范围 ===
+    double expectedMinCurrent = params.testVoltage / overallMaxImpedance;
+    double expectedMaxCurrent = params.testVoltage / overallMinImpedance;
+    
+    logInfo(QString("  预期电流范围: %1A - %2A (RMS有效值)")
+           .arg(expectedMinCurrent, 0, 'e', 2)
+           .arg(expectedMaxCurrent, 0, 'e', 2));
+    
+    // 根据容差要求调整测量精度
+    if (tolerancePercent <= 1.0) {
+        // 高精度电容（≤1%）
+        params.measurementPoints = 50;  
+        params.settlingTime = 2000;     
+        params.measureLeakage = true;
+    } else if (tolerancePercent <= 5.0) {
+        // 精密电容（1%-5%）
+        params.measurementPoints = 20;
+        params.settlingTime = 1000;
+        params.measureLeakage = true;
+    } else if (tolerancePercent <= 20.0) {
+        // 标准电容（5%-20%）
+        params.measurementPoints = 10;
         params.settlingTime = 500;
+        params.measureLeakage = (maxLeakage > 0);
     } else {
-        params.measurementPoints = 5;  // 标准测量
+        // 低精度电容（>20%）
+        params.measurementPoints = 5;
         params.settlingTime = 200;
+        params.measureLeakage = false;
     }
+    
+    // 根据电容值优化ESR测试频率
+    if (nominalCapacitance >= 1e-3) {
+        // 大电容，ESR通常较大，需要低频测试
+        if (!params.testFrequencies.contains(10.0)) {
+            params.testFrequencies.prepend(10.0); // 添加10Hz测试点
+        }
+    } else if (nominalCapacitance <= 1e-9) {
+        // 小电容，ESR通常较小，需要高频测试  
+        if (!params.testFrequencies.contains(1e6)) {
+            params.testFrequencies.append(1e6); // 添加1MHz测试点
+        }
+    }
+    
+    // 确保测试电压在安全范围内
+    params.testVoltage = qMax(0.1, qMin(params.testVoltage, 5.0)); // 最终限制在0.1V-5V
+    params.leakageTestVoltage = qMax(1.0, qMin(params.leakageTestVoltage, ratedVoltage));
+    
+    // 存储阻抗信息供后续使用
+    params.expectedMinImpedance = overallMinImpedance;
+    params.expectedMaxImpedance = overallMaxImpedance;
+    params.expectedMinCurrent = expectedMinCurrent;
+    params.expectedMaxCurrent = expectedMaxCurrent;
+    
+    // === 根据阻抗范围选择合适的万用表range（参考电阻诊断器） ===
+    // 选择能覆盖最大阻抗的range
+    if (overallMaxImpedance < 100.0) {
+        params.impedanceRange = "100";     // 100Ω范围
+    } else if (overallMaxImpedance < 1000.0) {
+        params.impedanceRange = "1k";      // 1kΩ范围
+    } else if (overallMaxImpedance < 10000.0) {
+        params.impedanceRange = "10k";     // 10kΩ范围
+    } else if (overallMaxImpedance < 100000.0) {
+        params.impedanceRange = "100k";    // 100kΩ范围
+    } else if (overallMaxImpedance < 1e6) {
+        params.impedanceRange = "1M";      // 1MΩ范围
+    } else if (overallMaxImpedance < 1e7) {
+        params.impedanceRange = "10M";     // 10MΩ范围
+    } else {
+        params.impedanceRange = "100M";    // 100MΩ范围
+    }
+    
+    logInfo(QString("  万用表阻抗测量范围: %1").arg(params.impedanceRange));
+    
+    logInfo(QString("电容器 %1 测试参数优化完成:")
+           .arg(component.reference));
+    logInfo(QString("  最终测试电压: %1V (RMS)")
+           .arg(params.testVoltage));
+    logInfo(QString("  测试频率数量: %1个，范围: %2Hz - %3Hz")
+           .arg(params.testFrequencies.size())
+           .arg(params.testFrequencies.first())
+           .arg(params.testFrequencies.last()));
+    logInfo(QString("  测量点数: %1, 稳定时间: %2ms")
+           .arg(params.measurementPoints)
+           .arg(params.settlingTime));
+    logInfo(QString("  漏电流测试: %1")
+           .arg(params.measureLeakage ? "是" : "否"));
     
     return params;
 }
@@ -650,24 +832,18 @@ QString CapacitorDiagnostic::generateDiagnosticSummary(const ComponentSpec& comp
 {
     QString summary;
     
-    double measured = result.measurements.value("measured_capacitance", 0.0);
-    double expected = component.nominal_value;
+    double calculated = result.measurements.value("calculated_capacitance", 0.0);
+    double expected = component.params.value("标称值", 1e-6).toDouble();
     double deviation = result.measurements.value("capacitance_deviation_percent", 0.0);
     double measuredESR = result.measurements.value("measured_esr", 0.0);
-    double leakage = result.measurements.value("measured_leakage", 0.0);
+    double tolerancePercent = component.params.value("容差/%", 10.0).toDouble();
     
     summary += QString("电容器 %1 诊断结果:\n").arg(component.reference);
     summary += QString("标称值: %1\n").arg(formatValue(expected, "F"));
-    summary += QString("测量值: %1\n").arg(formatValue(measured, "F"));
+    summary += QString("计算值: %1\n").arg(formatValue(calculated, "F"));
     summary += QString("偏差: %1\n").arg(formatPercentage(deviation));
-    summary += QString("容差: ±%1\n").arg(formatPercentage(component.tolerance_percent));
+    summary += QString("容差: ±%1\n").arg(formatPercentage(tolerancePercent));
     summary += QString("ESR: %1\n").arg(formatValue(measuredESR, "Ω"));
-    
-    if (component.max_leakage > 0) {
-        summary += QString("漏电流: %1 (最大: %2)\n")
-                  .arg(formatValue(leakage, "A"))
-                  .arg(formatValue(component.max_leakage, "A"));
-    }
     
     if (result.isPassed) {
         summary += "结论: 电容器工作正常，所有参数在规定范围内。";
@@ -685,4 +861,21 @@ CapacitorDiagnostic::ComplexNumber CapacitorDiagnostic::calculateComplexImpedanc
     double impedanceMag = voltage / current;
     
     return ComplexNumber(impedanceMag * qCos(phaseDiff), impedanceMag * qSin(phaseDiff));
+}
+
+QMap<QString, QVariant> CapacitorDiagnostic::getRequiredParameters() const
+{
+    QMap<QString, QVariant> params;
+    
+    // 电容测试的标准参数
+    params["标称值"] = 1e-6;      // 默认标称值为1μF
+    params["容差/%"] = 10.0;      // 默认容差为10%
+    params["最大ESR/Ω"] = 1.0;    // 默认最大ESR为1Ω
+    params["最大漏电流/A"] = 1e-9; // 默认最大漏电流为1nA
+    params["额定电压/V"] = 16.0;   // 默认额定电压为16V
+    params["测试频率/Hz"] = 1000.0; // 默认测试频率为1kHz
+
+    logInfo("电容器测试所需标准参数已配置");
+    
+    return params;
 }

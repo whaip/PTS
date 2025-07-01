@@ -76,7 +76,7 @@ QVector<PortRequirement> ICDiagnostic::getPortRequirements(const ComponentSpec& 
     return requirements;
 }
 
-QVector<WiringConnection> ICDiagnostic::generateWiringScheme(const ComponentSpec& component, 
+QVector<WiringConnection> ICDiagnostic::generateWiringScheme(const ComponentSpec& component,
                                                                       const QVector<PortInfo>& allocatedPorts) const
 {
     QVector<WiringConnection> connections;
@@ -168,8 +168,7 @@ QVector<WiringConnection> ICDiagnostic::generateWiringScheme(const ComponentSpec
     return connections;
 }
 
-ComponentTestConfig ICDiagnostic::configureDataAcquisition(const ComponentSpec& component,
-                                                      const QVector<PortInfo>& ports) const
+ComponentTestConfig ICDiagnostic::configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& ports) const
 {
     ComponentTestConfig config;
     

@@ -57,14 +57,14 @@ int registerBuiltinDiagnostics(ComponentDiagnosticManager* manager, DeviceManage
     }
     
     // 注册电容器诊断器
-    // try {
-    //     auto capacitorDiagnostic = new CapacitorDiagnostic(deviceManager);
-    //     manager->registerDiagnostic(ComponentType::CAPACITOR, capacitorDiagnostic);
-    //     count++;
-    //     qInfo() << "已注册电容器诊断器";
-    // } catch (const std::exception& e) {
-    //     qWarning() << "注册电容器诊断器失败:" << e.what();
-    // }
+    try {
+        auto capacitorDiagnostic = new CapacitorDiagnostic(deviceManager);
+        manager->registerDiagnostic(ComponentType::CAPACITOR, capacitorDiagnostic);
+        count++;
+        qInfo() << "已注册电容器诊断器";
+    } catch (const std::exception& e) {
+        qWarning() << "注册电容器诊断器失败:" << e.what();
+    }
     
     // 未来可以添加更多诊断器
     /*
@@ -100,8 +100,8 @@ BaseComponentDiagnostic* createComponentDiagnostic(ComponentType type, DeviceMan
         case ComponentType::RESISTOR:
             return new ResistorDiagnostic(deviceManager, parent);
             
-        // case ComponentType::CAPACITOR:
-        //     return new CapacitorDiagnostic(deviceManager, parent);
+        case ComponentType::CAPACITOR:
+            return new CapacitorDiagnostic(deviceManager, parent);
             
         // 未来添加更多组件类型
         /*

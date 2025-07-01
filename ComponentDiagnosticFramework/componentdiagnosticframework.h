@@ -13,7 +13,6 @@
 #include "componentdiagnosticmanager.h"
 #include "Components/resistordiagnostic.h"
 #include "Components/capacitordiagnostic.h"
-// 未来可以添加更多组件诊断器
 // #include "Components/inductordiagnostic.h"
 // #include "Components/diodediagnostic.h"
 // #include "Components/icdiagnostic.h"

@@ -6,7 +6,6 @@ UESTCQCustomPlot::UESTCQCustomPlot(QWidget *parent)
     , maxX(0)
     , minX(0)
     , currentColorIndex(0)
-    , isUpdating(false)
     , legendToggleButton(nullptr)
     , isLegendExpanded(true)
 {
@@ -26,9 +25,9 @@ UESTCQCustomPlot::UESTCQCustomPlot(QWidget *parent)
     legend->setSelectableParts(QCPLegend::spItems);
 
     // 设置图例为多列显示
-    legend->setMaximumSize(QSize(QWIDGETSIZE_MAX, 1000));  // 设置最大高度
-    legend->setWrap(2);  // 每列最多显示20个项目
-    legend->setFillOrder(QCPLegend::foColumnsFirst);  // 按列优先填充
+    legend->setMaximumSize(QSize(QWIDGETSIZE_MAX, 1000));
+    legend->setWrap(2);
+    legend->setFillOrder(QCPLegend::foColumnsFirst);
 
     // 调整图例位置和大小
     axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop|Qt::AlignRight);
@@ -46,22 +45,11 @@ UESTCQCustomPlot::UESTCQCustomPlot(QWidget *parent)
     setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
     setMouseTracking(true);
 
-    // 设置线程池
-    threadPool.setMaxThreadCount(QThread::idealThreadCount());
-
-    // 设置定时器
-    updateTimer = new QTimer(this);
-    updateTimer->setSingleShot(true);
-    connect(updateTimer, &QTimer::timeout, this, &UESTCQCustomPlot::processQueuedUpdates);
-
     // 性能优化设置
     setOpenGl(true);
     setPlottingHints(QCP::phFastPolylines);
     setAntialiasedElements(QCP::aeNone);
     setNotAntialiasedElements(QCP::aeAll);
-
-    // 使用队列方式重绘
-    replot(QCustomPlot::rpQueuedReplot);
 
     // 创建图例切换按钮
     createLegendToggleButton();
@@ -69,116 +57,12 @@ UESTCQCustomPlot::UESTCQCustomPlot(QWidget *parent)
 
 UESTCQCustomPlot::~UESTCQCustomPlot()
 {
-    qDeleteAll(dataManagers);
-}
-
-QCPGraph* UESTCQCustomPlot::addLine(const QString& filePath)
-{
-    // 创建新的数据管理器
-    DataManager* manager = new DataManager(this);
-    if (!manager->loadFromBinaryFile(filePath)) {
-        delete manager;
-        return nullptr;
+    // 清理游标
+    for (auto& cursor : cursors) {
+        removeItem(cursor.tracer);
+        removeItem(cursor.label);
     }
-
-    // 创建新的图形
-    QCPGraph* newGraph = addGraph();
-
-    // 分配一个新颜色
-    QColor color = getNextColor();
-    newGraph->setPen(QPen(color));
-
-    // 设置图例
-    QFileInfo fileInfo(filePath);
-    newGraph->setName(fileInfo.baseName());
-
-    // 显示图例
-    legend->setVisible(true);
-    legend->setFont(QFont("Helvetica", 9));
-    legend->setBrush(QBrush(QColor(255,255,255,230)));
-
-    // 调整图例布局
-    axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop|Qt::AlignRight);
-    replot(QCustomPlot::rpQueuedReplot);
-
-    // 保存数据管理器和图形的关联
-    dataManagers[newGraph] = manager;
-
-    // 更新数据范围
-    int totalPoints = manager->getTotalSize();
-
-    if (totalPoints > 0) {
-        maxX = qMax(maxX, static_cast<double>(totalPoints));
-        setDataRange(0, maxX);
-    }
-
-    // 加载初始数据
-    updateGraphData(newGraph);
-
-    if (newGraph) {
-        // 为新曲线添加游标
-        addCursor(newGraph, color);
-    }
-
-    return newGraph;
-}
-
-void UESTCQCustomPlot::removeLine(std::vector<QCPGraph*> graphs)
-{
-    // 先停止所有更新操作
-    isUpdating = true;  // 防止新的更新开始
-
-    // 取消所有正在进行的异步操作，但不等待它们完成
-    for (auto it = dataWatchers.begin(); it != dataWatchers.end(); ++it) {
-        if (it.value()) {
-            disconnect(it.value(), nullptr, this, nullptr);  // 断开所有信号连接
-            it.value()->cancel();
-        }
-    }
-
-    QMutexLocker locker(&dataAccessMutex);
-
-    for (QCPGraph* graph : graphs) {
-        if (!graph) continue;
-
-        // 从dataWatchers中移除并清理
-        if (dataWatchers.contains(graph)) {
-            auto watcher = dataWatchers[graph];
-            if (watcher) {
-                watcher->cancel();
-                watcher->deleteLater();  // 使用deleteLater而不是直接删除
-            }
-            dataWatchers.remove(graph);
-        }
-
-        // 删除数据管理器
-        if (dataManagers.contains(graph)) {
-            auto manager = dataManagers[graph];
-            dataManagers.remove(graph);
-            delete manager;  // 数据管理器可以直接删除
-        }
-
-        // 删除游标
-        if (cursors.contains(graph)) {
-            removeCursor(graph);
-        }
-
-        // 删除图形
-        removeGraph(graph);
-    }
-
-    // 更新最大范围
-    updateMaxRange();
-
-    // 更新图例布局
-    axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop|Qt::AlignRight);
-
-    isUpdating = false;  // 恢复更新状态
-
-    // 使用定时器延迟重绘，给待取消的操作一些时间
-    QTimer::singleShot(100, this, [this]() {
-        replot(QCustomPlot::rpQueuedReplot);
-    });
+    cursors.clear();
 }
 
 void UESTCQCustomPlot::setHorizontalScrollBar(QScrollBar* scrollBar)
@@ -225,9 +109,6 @@ void UESTCQCustomPlot::onXRangeChanged(const QCPRange &range)
         }
         xAxis->setRange(boundedRange);
     }
-
-    // 更新所有图形的数据
-    updateAllGraphsData();
 }
 
 void UESTCQCustomPlot::onScrollBarValueChanged(int value)
@@ -279,13 +160,6 @@ void UESTCQCustomPlot::onLegendClick(QCPLegend* legend, QCPAbstractLegendItem* i
     }
 }
 
-void UESTCQCustomPlot::processQueuedUpdates()
-{
-    if (!isUpdating) {
-        updateAllGraphsData();
-    }
-}
-
 void UESTCQCustomPlot::leaveEvent(QEvent *event)
 {
     QCustomPlot::leaveEvent(event);
@@ -300,10 +174,7 @@ void UESTCQCustomPlot::leaveEvent(QEvent *event)
 void UESTCQCustomPlot::wheelEvent(QWheelEvent *event)
 {
     QCustomPlot::wheelEvent(event);
-
-    if (!dataManagers.isEmpty()) {
-        replot(QCustomPlot::rpQueuedReplot);
-    }
+    replot(QCustomPlot::rpQueuedReplot);
 }
 
 void UESTCQCustomPlot::setDataRange(double lower, double upper)
@@ -333,108 +204,6 @@ void UESTCQCustomPlot::updateScrollBar()
     } catch (...) {
         qDebug() << "Unknown error updating scrollbar";
     }
-}
-
-void UESTCQCustomPlot::updateMaxRange()
-{
-    maxX = 0;
-    for (DataManager* manager : dataManagers) {
-        maxX = qMax(maxX, static_cast<double>(manager->getTotalSize()));
-    }
-    setDataRange(0, maxX);
-}
-
-void UESTCQCustomPlot::updateGraphData(QCPGraph* graph)
-{
-    if (isUpdating) return;  // 如果正在删除过程中，不开始新的更新
-
-    QMutexLocker locker(&dataAccessMutex);
-
-    if (!graph || !dataManagers.contains(graph)) {
-        return;
-    }
-
-    // 如果已经有一个watcher在运行，先取消它
-    if (dataWatchers.contains(graph)) {
-        auto watcher = dataWatchers[graph];
-        if (watcher) {
-            disconnect(watcher, nullptr, this, nullptr);  // 断开所有信号连接
-            watcher->cancel();
-            watcher->deleteLater();
-        }
-        dataWatchers.remove(graph);
-    }
-
-    // 创建新的watcher
-    auto watcher = new QFutureWatcher<DataManager::DataBlock>(this);
-
-    // 使用QPointer来追踪graph对象
-    QPointer<QCPGraph> graphPtr(graph);
-    QPointer<UESTCQCustomPlot> thisPtr(this);  // 也追踪this指针
-
-    connect(watcher, &QFutureWatcher<DataManager::DataBlock>::finished, this,
-            [thisPtr, graphPtr, watcher]() {
-                if (!thisPtr || !graphPtr || thisPtr->isUpdating) {
-                    watcher->deleteLater();
-                    return;
-                }
-
-                QMutexLocker locker(&thisPtr->dataAccessMutex);
-
-                DataManager::DataBlock data = watcher->result();
-                if (!data.x.isEmpty() && !data.y.isEmpty()) {
-                    graphPtr->data()->clear();
-                    graphPtr->addData(data.x, data.y);
-                }
-
-                thisPtr->dataWatchers.remove(graphPtr);
-                watcher->deleteLater();
-
-                // 检查是否所有更新都完成
-                if (thisPtr->dataWatchers.isEmpty() && !thisPtr->updateTimer->isActive()) {
-                    thisPtr->replot(QCustomPlot::rpQueuedReplot);
-                }
-            });
-
-    // 启动异步加载
-    QCPRange range = xAxis->range();
-    DataManager* manager = dataManagers[graph];
-    QFuture<DataManager::DataBlock> future = QtConcurrent::run(&threadPool,
-                                                               [manager, range]() {
-                                                                   return manager->loadDataInRange(range.lower, range.upper);
-                                                               });
-
-    watcher->setFuture(future);
-    dataWatchers[graph] = watcher;
-}
-
-void UESTCQCustomPlot::updateAllGraphsData()
-{
-    // 如果已经在更新中，加入队列
-    if (isUpdating) {
-        if (!updateTimer->isActive()) {
-            updateTimer->start(100); // 100ms 后重试
-        }
-        return;
-    }
-
-    isUpdating = true;
-
-    // 取消所有正在进行的更新
-    for (auto watcher : dataWatchers) {
-        watcher->cancel();
-        delete watcher;
-    }
-    dataWatchers.clear();
-
-    // 更新所有图形
-    for (auto it = dataManagers.begin(); it != dataManagers.end(); ++it) {
-        if (it.key()->visible()) {  // 只更新可见的图形
-            updateGraphData(it.key());
-        }
-    }
-
-    isUpdating = false;
 }
 
 void UESTCQCustomPlot::addCursor(QCPGraph* graph, const QColor& color)
@@ -479,7 +248,7 @@ void UESTCQCustomPlot::updateCursors(QMouseEvent* event)
 
     // 获取绘图区域的边界
     QRect plotRect = axisRect()->rect();
-    bool isNearRightEdge = event->pos().x() > plotRect.right() - 150; // 距离右边界150像素
+    bool isNearRightEdge = event->pos().x() > plotRect.right() - 150;
 
     // 更新每个游标
     for (auto it = cursors.begin(); it != cursors.end(); ++it) {
@@ -520,12 +289,10 @@ void UESTCQCustomPlot::updateCursors(QMouseEvent* event)
 
             // 更新标签位置和对齐方式
             if (isNearRightEdge) {
-                // 靠近右边界时，将标签显示在左侧
                 cursor.label->setPositionAlignment(Qt::AlignRight|Qt::AlignBottom);
                 cursor.label->position->setParentAnchor(cursor.tracer->position);
-                cursor.label->position->setCoords(-10, 10);  // 向左偏移
+                cursor.label->position->setCoords(-10, 10);
             } else {
-                // 正常情况下显示在右侧
                 cursor.label->setPositionAlignment(Qt::AlignLeft|Qt::AlignBottom);
                 cursor.label->position->setParentAnchor(cursor.tracer->position);
                 cursor.label->position->setCoords(10, 10);
@@ -570,7 +337,7 @@ void UESTCQCustomPlot::initColorPool()
 QColor UESTCQCustomPlot::getNextColor()
 {
     if (colorPool.isEmpty()) {
-        initColorPool();  // 如果用完了就重新初始化
+        initColorPool();
     }
 
     QColor color = colorPool[currentColorIndex];
@@ -589,8 +356,8 @@ void UESTCQCustomPlot::createLegendToggleButton()
     QRect axisRect = this->axisRect()->rect();
 
     // 计算按钮位置（左上角）
-    double buttonX = axisRect.left() + 50;  // 距离左边界50像素
-    double buttonY = axisRect.top() + 20;   // 距离顶部20像素
+    double buttonX = axisRect.left() + 50;
+    double buttonY = axisRect.top() + 20;
 
     legendToggleButton->position->setType(QCPItemPosition::ptAbsolute);
     legendToggleButton->position->setCoords(buttonX, buttonY);
@@ -618,7 +385,7 @@ void UESTCQCustomPlot::updateLegendToggleButtonPosition()
     if (!legendToggleButton) return;
 
     QRect axisRect = this->axisRect()->rect();
-    double buttonX = axisRect.left() + 50;  // 保持与createLegendToggleButton一致
+    double buttonX = axisRect.left() + 50;
     double buttonY = axisRect.top() + 20;
 
     legendToggleButton->position->setCoords(buttonX, buttonY);
@@ -640,10 +407,10 @@ void UESTCQCustomPlot::mousePressEvent(QMouseEvent* event)
 
         // 扩大点击区域，适应新的按钮大小
         QRectF buttonRect(
-            buttonPos.x() - 40,  // 左边界
-            buttonPos.y() - 15,  // 上边界
-            100,                 // 宽度，增加以适应文本
-            30                  // 高度
+            buttonPos.x() - 40,
+            buttonPos.y() - 15,
+            100,
+            30
             );
 
         if (buttonRect.contains(event->pos())) {
@@ -669,14 +436,13 @@ QCPGraph* UESTCQCustomPlot::addRealTimeLine(const QString& name)
     legend->setFont(QFont("Helvetica", 9));
     legend->setBrush(QBrush(QColor(255,255,255,230)));
     axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop|Qt::AlignRight);
-    replot(QCustomPlot::rpQueuedReplot);
 
     addCursor(graph, color);
 
     return graph;
 }
 
-void UESTCQCustomPlot::updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QList<double>> data)
+void UESTCQCustomPlot::updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QVector<double>> data)
 {
     if (graphs.size() != data.size() || graphs.isEmpty())
         return;
@@ -690,13 +456,13 @@ void UESTCQCustomPlot::updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QL
             continue;
 
         // 为当前图生成对应的 keys 数组
-        QList<qreal> keys;
+        QVector<qreal> keys;
         int dataSize = data[i].size();
         for (int j = 0; j < dataSize; ++j) {
             keys.append(j);
         }
 
-        // 清空数据前先隐藏该图的游标，防止更新过程中触发 QCPItemTracer::updatePosition
+        // 清空数据前先隐藏该图的游标
         if (dataSize == 0 && cursors.contains(graphs[i])) {
             cursors[graphs[i]].tracer->setVisible(false);
             cursors[graphs[i]].label->setVisible(false);
@@ -704,7 +470,14 @@ void UESTCQCustomPlot::updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QL
 
         graphs[i]->data()->clear();
         if(dataSize > 0) {
-            graphs[i]->addData(keys, data[i]);
+            // 转换QVector<double>为QVector<qreal>
+            QVector<qreal> yData;
+            yData.reserve(dataSize);
+            for (double val : data[i]) {
+                yData.append(static_cast<qreal>(val));
+            }
+            
+            graphs[i]->addData(keys, yData);
             if(first) {
                 globalMin = keys.first();
                 globalMax = keys.last();
@@ -717,5 +490,25 @@ void UESTCQCustomPlot::updateRealTimeLines(QVector<QCPGraph*> graphs, QVector<QL
         maxX = dataSize;
     }
 
+    replot(QCustomPlot::rpQueuedReplot);
+}
+
+void UESTCQCustomPlot::removeAllLines()
+{
+    // 清除所有游标
+    for (auto& cursor : cursors) {
+        removeItem(cursor.tracer);
+        removeItem(cursor.label);
+    }
+    cursors.clear();
+
+    // 清除所有图形
+    clearGraphs();
+
+    // 重置数据范围
+    maxX = 0;
+    minX = 0;
+    
+    // 重绘
     replot(QCustomPlot::rpQueuedReplot);
 }
