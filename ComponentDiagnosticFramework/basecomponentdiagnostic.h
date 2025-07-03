@@ -29,6 +29,7 @@ struct WiringConnection {
 struct ComponentTestConfig {
     QString testName;              // 测试名称
     QMap<QString, DeviceOperation> parameters; // 测试参数
+    double TemperatureThreshold;
     int timeout;                   // 超时时间(ms)
     
     ComponentTestConfig() : timeout(30000) {}
@@ -50,6 +51,7 @@ struct ComponentDiagnosticResult {
     QStringList recommendations;   // 建议
     QDateTime timestamp;           // 时间戳
     QString notes;                 // 备注
+    ThermalData thermalData;
     
     // 新增字段以兼容现有代码
     QDateTime startTime;           // 开始时间

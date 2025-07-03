@@ -63,6 +63,7 @@ struct DiagnosticResult {
     QString notes;              // 备注信息
     QString diagnosticSummary; // 诊断摘要
     MeasurementResult measurementData; // 测量数据
+    ThermalData thermalData;
     QMap<QString, QVariant> metameasurementData; // 元测量数据
     DiagnosticResult() : result(ERROR), healthScore(0), confidence(0),
                         timestamp(QDateTime::currentDateTime()), expectedValue(0), tolerance(0) {}

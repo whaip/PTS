@@ -11,6 +11,7 @@
 #include <QtConcurrent/QtConcurrent>
 #include <QThread>
 #include <algorithm>
+#include "include/opencv2/opencv.hpp"
 
 // 静态常量定义
 const double PCBIdentifier::DEFAULT_MATCH_THRESHOLD = 0.3;
@@ -19,7 +20,6 @@ const QStringList PCBIdentifier::SUPPORTED_FORMATS = {"jpg", "jpeg", "png", "bmp
 
 PCBIdentifier::PCBIdentifier(QObject *parent)
     : QObject(parent)
-    , sift_matcher_(SiftMatcher::getInstance())
     , camera_manager_(nullptr)
     , realtime_timer_(new QTimer(this))
     , is_realtime_running_(false)
@@ -82,146 +82,6 @@ PCBIdentifier::~PCBIdentifier()
     }
 }
 
-PCBIdentificationResult PCBIdentifier::identifyPCB(const QString& imagePath)
-{
-    PCBIdentificationResult result;
-    
-    if (!is_initialized_) {
-        result.errorMessage = "PCB识别器未初始化";
-        return result;
-    }
-    
-    if (!validateImagePath(imagePath)) {
-        result.errorMessage = "无效的图片路径或格式不支持";
-        return result;
-    }
-    
-    try {        // 使用SIFT匹配器进行识别
-        auto matches = sift_matcher_.matchImage(imagePath.toStdString());
-        
-        if (matches.empty()) {
-            result.errorMessage = "未找到匹配的PCB模型";
-            return result;
-        }
-        
-        // 处理匹配结果
-        result = processMatchResults(matches);
-        result.isValid = true;
-        
-        qDebug() << "PCB identification completed:" << result.modelName 
-                 << "confidence:" << result.confidence;
-        
-    } catch (const std::exception& e) {
-        result.errorMessage = QString("识别过程中发生错误: %1").arg(e.what());
-        setError(result.errorMessage);
-    }
-    
-    return result;
-}
-
-PCBIdentificationResult PCBIdentifier::identifyPCBAsync(const QString& imagePath)
-{
-    // 创建异步任务
-    QFuture<PCBIdentificationResult> future = QtConcurrent::run([this, imagePath]() {
-        return identifyPCB(imagePath);
-    });
-    
-    // 创建监视器
-    QFutureWatcher<PCBIdentificationResult>* watcher = new QFutureWatcher<PCBIdentificationResult>(this);
-    
-    connect(watcher, &QFutureWatcher<PCBIdentificationResult>::finished, this, [this, watcher]() {
-        PCBIdentificationResult result = watcher->result();
-        emit identificationCompleted(result);
-        watcher->deleteLater();
-    });
-    
-    watcher->setFuture(future);
-    
-    // 返回临时结果（异步操作中）
-    PCBIdentificationResult tempResult;
-    tempResult.errorMessage = "异步识别进行中...";
-    return tempResult;
-}
-
-bool PCBIdentifier::addPCBModel(const QString& modelName, const QStringList& templatePaths)
-{
-    if (modelName.isEmpty()) {
-        setError("模型名称不能为空");
-        return false;
-    }
-    
-    // 验证所有模板图片
-    for (const QString& path : templatePaths) {
-        if (!validateTemplate(path)) {
-            setError(QString("无效的模板图片: %1").arg(path));
-            return false;
-        }
-    }
-    
-    // 复制模板图片到PCBimage文件夹
-    QString pcbImageDir = QDir::currentPath() + "/PCBimage";
-    QDir().mkpath(pcbImageDir);
-
-    QStringList copiedPaths;
-    for (const QString& templatePath : templatePaths) {
-        QFileInfo fileInfo(templatePath);
-        QString fileName = QString("%1_%2.%3")
-                          .arg(modelName.toUpper().replace(" ", "_"))
-                          .arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss"))
-                          .arg(fileInfo.suffix());
-        
-        QString destPath = pcbImageDir + "/" + fileName;
-        
-        if (QFile::copy(templatePath, destPath)) {
-            copiedPaths.append(destPath);
-            qDebug() << "Copied template to:" << destPath;
-        } else {
-            qWarning() << "Failed to copy template:" << templatePath << "to" << destPath;
-            // 使用原路径作为备用
-            copiedPaths.append(templatePath);
-        }
-    }
-
-    // 创建模型信息
-    PCBModelInfo modelInfo;
-    modelInfo.modelName = modelName;
-    modelInfo.modelCode = modelName.toUpper().replace(" ", "_");
-    modelInfo.templatePaths = copiedPaths;
-    modelInfo.description = QString("PCB模型: %1").arg(modelName);
-    modelInfo.lastUpdated = QDateTime::currentDateTime();
-    
-    // 检查是否已存在
-    auto it = std::find_if(pcb_models_.begin(), pcb_models_.end(),
-                          [&modelName](const PCBModelInfo& info) {
-                              return info.modelName == modelName;
-                          });
-    
-    if (it != pcb_models_.end()) {
-        // 更新现有模型
-        *it = modelInfo;
-        qDebug() << "Updated PCB model:" << modelName;
-    } else {
-        // 添加新模型
-        pcb_models_.append(modelInfo);
-        qDebug() << "Added new PCB model:" << modelName;
-    }
-    
-    // 更新SIFT数据库
-    try {
-        std::vector<std::string> stdTemplatePaths;
-        for (const QString& path : copiedPaths) {
-            stdTemplatePaths.push_back(path.toStdString());        }
-        sift_matcher_.appendToDatabase(stdTemplatePaths);
-        
-        emit databaseUpdated();
-        return true;
-        
-    } catch (const std::exception& e) {
-        setError(QString("更新SIFT数据库失败: %1").arg(e.what()));
-        return false;
-    }
-}
-
 bool PCBIdentifier::addPCBModel(const QString& modelName, const cv::Mat& imageData)
 {
     if (modelName.isEmpty()) {
@@ -277,7 +137,7 @@ bool PCBIdentifier::addPCBModel(const QString& modelName, const cv::Mat& imageDa
         std::vector<std::string> stdTemplatePaths;
         for (const QString& path : modelInfo.templatePaths) {
             stdTemplatePaths.push_back(path.toStdString());        }
-        sift_matcher_.appendToDatabase(stdTemplatePaths);
+        // SIFT_MATCHER->appendToDatabase(stdTemplatePaths);
         
         emit databaseUpdated();
         return true;
@@ -321,11 +181,11 @@ bool PCBIdentifier::removePCBModel(const QString& modelName)
     }
 }
 
-bool PCBIdentifier::updatePCBModel(const QString& modelName, const QStringList& templatePaths)
+bool PCBIdentifier::updatePCBModel(const QString& modelName, const cv::Mat& image)
 {
     // 先移除旧模型，再添加新模型
     if (removePCBModel(modelName)) {
-        return addPCBModel(modelName, templatePaths);
+        return addPCBModel(modelName, image);
     }
     return false;
 }
@@ -359,7 +219,7 @@ bool PCBIdentifier::createDatabase(const QString& templateDirectory)
             stdTemplateImages.push_back(path.toStdString());        }
         
         // 创建SIFT数据库
-        sift_matcher_.createDatabase(stdTemplateImages);
+        // SIFT_MATCHER->createDatabase(stdTemplateImages);
         
         // 分析模板图片并创建模型信息
         pcb_models_.clear();
@@ -446,11 +306,6 @@ void PCBIdentifier::setUseGPU(bool useGPU)
     Q_UNUSED(useGPU)
 }
 
-bool PCBIdentifier::isGPUEnabled() const
-{
-    return sift_matcher_.checkGPU();
-}
-
 QStringList PCBIdentifier::getSupportedImageFormats() const
 {
     return SUPPORTED_FORMATS;
@@ -468,45 +323,11 @@ bool PCBIdentifier::validateImagePath(const QString& imagePath) const
     return SUPPORTED_FORMATS.contains(suffix);
 }
 
-QVector<PCBIdentificationResult> PCBIdentifier::identifyBatch(const QStringList& imagePaths)
-{
-    QVector<PCBIdentificationResult> results;
-    
-    for (int i = 0; i < imagePaths.size(); ++i) {
-        emit identificationProgress((i * 100) / imagePaths.size());
-        
-        PCBIdentificationResult result = identifyPCB(imagePaths[i]);
-        results.append(result);
-        
-        // 处理应用程序事件，保持界面响应
-        QApplication::processEvents();
-    }
-    
-    emit identificationProgress(100);
-    return results;
-}
-
 void PCBIdentifier::setError(const QString& error)
 {
     last_error_ = error;
     qDebug() << "PCBIdentifier Error:" << error;
     emit errorOccurred(error);
-}
-
-bool PCBIdentifier::initializeMatcher()
-{    try {
-        // 检查GPU是否可用
-        if (sift_matcher_.checkGPU()) {
-            qDebug() << "PCB Identifier: GPU acceleration enabled";
-        } else {
-            qDebug() << "PCB Identifier: Using CPU implementation";
-        }
-        
-        return true;
-    } catch (const std::exception& e) {
-        setError(QString("初始化匹配器失败: %1").arg(e.what()));
-        return false;
-    }
 }
 
 QString PCBIdentifier::extractModelNameFromPath(const QString& imagePath) const
@@ -651,10 +472,7 @@ PCBIdentificationResult PCBIdentifier::processMatchResults(const std::vector<Sif
         return result;
     }
     
-    // 从图片路径提取模型名称
-    QString imagePath = QString::fromStdString(bestMatch.imagePath);
-    result.modelName = extractModelNameFromPath(imagePath);
-    result.imagePath = imagePath;
+    result.modelName = QString::fromStdString(bestMatch.boardId);
     result.matchCount = bestMatch.goodMatchCount;
     result.matchScore = bestMatch.matchScore;
     
@@ -832,8 +650,7 @@ RealtimeIdentificationResult PCBIdentifier::processRealtimeMatchResults(
     }
     
     // 从图片路径提取模型名称
-    QString imagePath = QString::fromStdString(bestMatch.imagePath);
-    result.modelName = extractModelNameFromPath(imagePath);
+    result.modelName = QString::fromStdString(bestMatch.boardId);
     result.matchCount = bestMatch.goodMatchCount;
     result.matchScore = bestMatch.matchScore;
     
@@ -938,12 +755,9 @@ RealtimeIdentificationResult PCBIdentifier::identifyPCBFromImageThreaded(const c
     }
     
     try {
-        // 保存临时图像文件用于SIFT匹配
-        QString tempImagePath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/temp_pcb_image.jpg";
-        cv::imwrite(tempImagePath.toStdString(), image);
         
         // 使用SIFT匹配器进行识别
-        auto matches = sift_matcher_.matchImage(tempImagePath.toStdString());
+        auto matches = SIFT_MATCHER->matchImage(image);
         
         if (matches.empty()) {
             result.isValid = false;
@@ -951,9 +765,6 @@ RealtimeIdentificationResult PCBIdentifier::identifyPCBFromImageThreaded(const c
             // 处理匹配结果
             result = processRealtimeMatchResults(matches, image);
         }
-        
-        // 删除临时文件
-        QFile::remove(tempImagePath);
         
         qDebug() << "Threaded real-time PCB identification completed:" << result.modelName 
                  << "confidence:" << result.confidence;
@@ -999,13 +810,9 @@ void PCBIdentifier::processImageInBackground(const cv::Mat& image)
         }
         
         try {
-            // 保存临时图像文件用于SIFT匹配
-            QString tempImagePath = QStandardPaths::writableLocation(QStandardPaths::TempLocation) 
-                                   + QString("/temp_pcb_bg_%1.jpg").arg(QDateTime::currentMSecsSinceEpoch());
-            cv::imwrite(tempImagePath.toStdString(), processingImage);
             
             // 使用SIFT匹配器进行识别
-            auto matches = sift_matcher_.matchImage(tempImagePath.toStdString());
+            auto matches = SIFT_MATCHER->matchImage(current_image_);
             
             if (!matches.empty()) {
                 // 处理匹配结果
@@ -1013,9 +820,6 @@ void PCBIdentifier::processImageInBackground(const cv::Mat& image)
             } else {
                 result.isValid = false;
             }
-            
-            // 删除临时文件
-            QFile::remove(tempImagePath);
             
         } catch (const std::exception& e) {
             qDebug() << "Background identification error:" << e.what();
@@ -1058,4 +862,24 @@ void PCBIdentifier::onIdentificationFinished()
             is_processing_ = false;
         }
     }
+}
+
+//=============================================================================
+// 初始化匹配器
+//=============================================================================
+bool PCBIdentifier::initializeMatcher()
+{
+    // 初始化 SiftMatcher 实例并检查 GPU 支持
+    bool gpuOk = SIFT_MATCHER->checkGPU();
+    qDebug() << "PCBIdentifier: SIFT matcher GPU support:" << gpuOk;
+    return true;
+}
+
+//=============================================================================
+// 检查是否启用 GPU
+//=============================================================================
+bool PCBIdentifier::isGPUEnabled() const
+{
+    // 返回底层 SiftMatcher 的 GPU 支持状态
+    return SIFT_MATCHER->checkGPU();
 }

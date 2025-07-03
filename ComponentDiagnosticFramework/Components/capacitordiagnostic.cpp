@@ -264,9 +264,9 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
         DeviceManager::WaitResult waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5322", voltageChannelData, 30, 200, 8000);
         if( waitResult.success && !voltageChannelData.isEmpty() && !voltageChannelData[0].isEmpty())
         {
-            for(double value : voltageChannelData[0]) {
-                logInfo(QString("电压测量值: %1 V").arg(value));
-            }
+            // for(double value : voltageChannelData[0]) {
+            //     logInfo(QString("电压测量值: %1 V").arg(value));
+            // }
             measurement["voltages"] = QVariant::fromValue(voltageChannelData[0]);
         } else {
             getDeviceManager()->removeSyncGroup(syncGroupName);
@@ -278,9 +278,9 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
         waitResult = getDeviceManager()->waitForDataWithEventLoop("JY5323", currentChannelData, 30, 200, 8000);
         if (waitResult.success && !currentChannelData.isEmpty() && !currentChannelData[0].isEmpty())
         {
-            for(double value : currentChannelData[0]) {
-                logInfo(QString("电流测量值: %1 A").arg(value));
-            }
+            // for(double value : currentChannelData[0]) {
+            //     logInfo(QString("电流测量值: %1 A").arg(value));
+            // }
             measurement["currents"] = QVariant::fromValue(currentChannelData[0]);
         } else {
             getDeviceManager()->removeSyncGroup(syncGroupName);

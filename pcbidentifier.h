@@ -75,8 +75,6 @@ class PCBIdentifier : public QObject
 public:
     explicit PCBIdentifier(QObject *parent = nullptr);
     ~PCBIdentifier();    // 基础识别功能
-    PCBIdentificationResult identifyPCB(const QString& imagePath);
-    PCBIdentificationResult identifyPCBAsync(const QString& imagePath);
     
     // 实时摄像头识别功能
     RealtimeIdentificationResult identifyPCBFromImage(const cv::Mat& image);
@@ -90,10 +88,9 @@ public:
     CameraManager* getCameraManager() const;
     
     // 模板管理
-    bool addPCBModel(const QString& modelName, const QStringList& templatePaths);
     bool addPCBModel(const QString& modelName, const cv::Mat& imageData);
     bool removePCBModel(const QString& modelName);
-    bool updatePCBModel(const QString& modelName, const QStringList& templatePaths);
+    bool updatePCBModel(const QString& modelName, const cv::Mat& image);
     QVector<PCBModelInfo> getAvailableModels() const;
     
     // 数据库管理
@@ -115,9 +112,6 @@ public:
     QStringList getSupportedImageFormats() const;
     bool validateImagePath(const QString& imagePath) const;
     
-    // 批量处理
-    QVector<PCBIdentificationResult> identifyBatch(const QStringList& imagePaths);
-    
 signals:
     void identificationCompleted(const PCBIdentificationResult& result);
     void realtimeIdentificationCompleted(const RealtimeIdentificationResult& result);
@@ -133,8 +127,6 @@ private slots:
     void processRealtimeIdentification();
 
 private:
-    // 核心组件
-    SiftMatcher& sift_matcher_;
       // 摄像头管理
     CameraManager* camera_manager_;
     QTimer* realtime_timer_;

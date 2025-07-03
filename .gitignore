@@ -8,6 +8,7 @@ debug/
 JYDevice/
 release/
 lib/
+PCBimage/
 .qmake.stash
 *.pro.user
 *.pro.user.*

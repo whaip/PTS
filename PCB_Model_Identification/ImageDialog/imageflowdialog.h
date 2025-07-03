@@ -53,9 +53,10 @@ class AnimatedPixmapItem : public QObject, public QGraphicsPixmapItem {
     Q_PROPERTY(qreal scale READ scale WRITE setScale)
 
 public:
-    AnimatedPixmapItem(const QPixmap& pixmap, const QString& originalPath = QString(), QGraphicsItem* parent = nullptr)
+    AnimatedPixmapItem(const QPixmap& pixmap, const QString& originalPath = QString(), const QString& name = QString(), QGraphicsItem* parent = nullptr)
         : QGraphicsPixmapItem(pixmap, parent)
-        , m_originalPath(originalPath) {
+        , m_originalPath(originalPath)
+        , m_name(name) {
         borderRect = new QGraphicsEllipseItem(this);
         updateBorder();
     }
@@ -88,6 +89,7 @@ public:
     }
     
     QString originalPath() const { return m_originalPath; }
+    QString name() const { return m_name; }
 
 protected:
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override {
@@ -103,6 +105,7 @@ private:
     qreal m_rotation = 0;
     QGraphicsEllipseItem* borderRect = nullptr;  // 使用 EllipseItem
     QString m_originalPath;
+    QString m_name;
 };
 
 class ImageFlowDialog : public QDialog
@@ -113,7 +116,7 @@ public:
     explicit ImageFlowDialog(QWidget *parent = nullptr);
     ~ImageFlowDialog();
 
-    void loadImages(const QStringList& imagePaths);  // 加载图片列表
+    void loadImages(const QStringList& imagePaths, const QStringList& board_name); 
     void showPreviousImage();
     void showNextImage();
     void animateToIndex(int index);

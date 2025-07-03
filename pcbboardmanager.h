@@ -19,6 +19,7 @@
 #include <QFile>
 #include <opencv2/opencv.hpp>
 #include "PCB_Components_Detect/ClassList.h"
+#include "PCB_Model_Identification/siftmatcher.h"
 
 // 前向声明
 class YOLOModel;
@@ -41,36 +42,6 @@ struct FeatureKeyPoint {
     }
 };
 
-// 单张图像的特征信息
-struct ImageFeatureInfo {
-    QString imagePath;            // 图像路径
-    int rotation;                 // 旋转角度 (0, 90, 180, 270)
-    std::vector<FeatureKeyPoint> keypoints;  // 特征点
-    std::vector<float> descriptors;          // 描述符(展平的数据)
-    int descriptorRows;           // 描述符行数
-    int descriptorCols;           // 描述符列数
-    QDateTime extractTime;        // 提取时间
-    
-    ImageFeatureInfo() : rotation(0), descriptorRows(0), descriptorCols(0) {}
-    
-    // 转换为OpenCV格式
-    std::vector<cv::KeyPoint> getCvKeypoints() const;
-    cv::Mat getCvDescriptors() const;
-    
-    // 从OpenCV格式设置
-    void setFromCv(const std::vector<cv::KeyPoint>& kps, const cv::Mat& desc);
-};
-
-// 板卡的完整特征信息
-struct BoardFeatureInfo {
-    QString boardId;              // 板卡ID
-    std::vector<ImageFeatureInfo> imageFeatures;  // 4个旋转角度的特征
-    QDateTime lastUpdate;         // 最后更新时间
-    
-    BoardFeatureInfo() {}
-    explicit BoardFeatureInfo(const QString& id) : boardId(id) {}
-};
-
 // PCB板卡信息结构体
 struct PCBBoardInfo {
     QString boardId;              // 板卡唯一ID
@@ -86,6 +57,7 @@ struct PCBBoardInfo {
     int componentCount;           // 元器件数量
     bool isActive;                // 是否激活
     bool hasFeatures;             // 是否已提取特征
+    double matchScore;
     
     PCBBoardInfo() : componentCount(0), isActive(true), hasFeatures(false) {}
     
@@ -105,6 +77,7 @@ struct ComponentInfo {
     QString partNumber;           // 器件编号
     QString description;          // 描述
     bool isRequired;              // 是否必需
+    QMap<QString, QVariant> parameters;
     
     ComponentInfo() : isRequired(true) {}
     ComponentInfo(const Label& label) : labelInfo(label), isRequired(true) {}
@@ -156,14 +129,13 @@ public:
     // 异步元器件检测
     void detectComponentsAsync(const cv::Mat& boardImage, const QString& boardId = "");
     void cancelComponentDetection();
-      // 异步板卡创建
+      // 异步板卡创建（非阻塞）
     void createBoardAsync(const QString& boardName, const QString& boardModel, 
                          const cv::Mat& boardImage, const QString& description = "");
     void cancelBoardCreation();
     
     // 特征管理
     bool extractAndSaveFeatures(const QString& boardId);
-    bool loadBoardFeatures(const QString& boardId, BoardFeatureInfo& features) const;
     bool deleteBoardFeatures(const QString& boardId);
     QString getFeatureFilePath(const QString& boardId) const;
     bool hasFeatureFile(const QString& boardId) const;
@@ -216,18 +188,6 @@ private:
     void loadBoardsFromDatabase();
     bool saveBoardsToDatabase();
     QString createImageFileName(const QString& prefix, const QString& extension = ".jpg") const;
-      // 板卡识别辅助方法
-    double calculateSimilarity(const cv::Mat& image1, const cv::Mat& image2);
-    double calculateSimilarityWithFeatures(const cv::Mat& inputImage, const BoardFeatureInfo& boardFeatures);
-    std::vector<cv::KeyPoint> extractKeypoints(const cv::Mat& image);
-    cv::Mat extractDescriptors(const cv::Mat& image, std::vector<cv::KeyPoint>& keypoints);
-      // 特征处理方法
-    cv::Mat rotateImage(const cv::Mat& image, int angle);
-    bool extractImageFeatures(const cv::Mat& image, ImageFeatureInfo& featureInfo);
-    bool saveBoardFeaturesToFile(const BoardFeatureInfo& features, const QString& filePath);
-    bool loadBoardFeaturesFromFile(const QString& filePath, BoardFeatureInfo& features) const;
-    void writeFeatureKeyPoint(QDataStream& stream, const FeatureKeyPoint& kp) const;
-    FeatureKeyPoint readFeatureKeyPoint(QDataStream& stream) const;
     
     // 多线程辅助方法
     void initializeWatchers();
@@ -239,10 +199,6 @@ private:
     QString features_storage_path_;
     QList<PCBBoardInfo> boards_;
     mutable QMutex boards_mutex_;
-    
-    // OpenCV特征检测器
-    cv::Ptr<cv::SIFT> sift_detector_;
-    cv::Ptr<cv::BFMatcher> matcher_;
     
     // YOLO元件检测模型
     std::shared_ptr<YOLOModel> yolo_model_;

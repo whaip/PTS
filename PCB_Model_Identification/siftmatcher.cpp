@@ -3,13 +3,13 @@
 
 void SiftMatcher::saveDescriptors(const std::string& filename,
                                   const std::vector<cv::Mat>& descriptors,
-                                  const std::vector<std::string>& imageNames) {
+                                  const std::vector<std::string>& board_id) {
     cv::FileStorage fs(filename, cv::FileStorage::WRITE);
 
     fs << "image_count" << (int)descriptors.size();
 
     for (size_t i = 0; i < descriptors.size(); i++) {
-        fs << "image_name_" + std::to_string(i) << imageNames[i];
+        fs << "image_name_" + std::to_string(i) << board_id[i];
         fs << "descriptor_" + std::to_string(i) << descriptors[i];
     }
 
@@ -18,7 +18,7 @@ void SiftMatcher::saveDescriptors(const std::string& filename,
 
 void SiftMatcher::loadDescriptors(const std::string& filename,
                                   std::vector<cv::Mat>& descriptors,
-                                  std::vector<std::string>& imageNames) {
+                                  std::vector<std::string>& board_id) {
     cv::FileStorage fs(filename, cv::FileStorage::READ);
 
     int image_count;
@@ -32,7 +32,7 @@ void SiftMatcher::loadDescriptors(const std::string& filename,
         fs["descriptor_" + std::to_string(i)] >> descriptor;
 
         descriptors.push_back(descriptor);
-        imageNames.push_back(name);
+        board_id.push_back(name);
     }
 
     fs.release();
@@ -92,12 +92,7 @@ bool SiftMatcher::checkGPU() {
     }
 }
 
-cv::Mat SiftMatcher::extractDescriptor(const std::string& imagePath, int rotation) {
-    cv::Mat image = cv::imread(imagePath);
-    if (image.empty()) {
-        std::cout << "Failed to load image: " << imagePath << std::endl;
-        return cv::Mat();
-    }
+cv::Mat SiftMatcher::extractDescriptor(const cv::Mat& image, int rotation) {
 
     // 转换为灰度图
     cv::Mat gray;
@@ -140,38 +135,9 @@ cv::Mat SiftMatcher::extractDescriptor(const std::string& imagePath, int rotatio
     return descriptors;
 }
 
-void SiftMatcher::createDatabase(const std::vector<std::string>& imageFiles) {
-    std::vector<cv::Mat> descriptors;
-    std::vector<std::string> imageNames;
-
-    for (const auto& imagePath : imageFiles) {
-        for (int rotation = -1; rotation < 3; rotation++) {
-            cv::Mat desc = extractDescriptor(imagePath, rotation);
-            if (!desc.empty()) {
-                descriptors.push_back(desc);
-                imageNames.push_back(imagePath);
-
-                std::string rotationStr;
-                switch(rotation) {
-                case -1: rotationStr = "Original"; break;
-                case 0: rotationStr = "90°"; break;
-                case 1: rotationStr = "180°"; break;
-                case 2: rotationStr = "270°"; break;
-                }
-                std::cout << "Added: " << imagePath << " (" << rotationStr << ")" << std::endl;
-            }
-        }
-    }
-
-    saveDescriptors("descriptors_database.yml", descriptors, imageNames);
-    std::cout << "Database created successfully!" << std::endl;
-    std::cout << "Total descriptors saved: " << descriptors.size()
-              << " (4 rotations for each of " << imageFiles.size() << " images)" << std::endl;
-}
-
 SiftMatcher::MatchResult SiftMatcher::computeMatchScore(const cv::Mat& queryDesc,
                                                         const cv::Mat& trainDesc,
-                                                        const std::string& trainImagePath) {
+                                                        const std::string& board_id) {
     std::vector<cv::DMatch> matches;
     
     try {
@@ -190,7 +156,7 @@ SiftMatcher::MatchResult SiftMatcher::computeMatchScore(const cv::Mat& queryDesc
         }
     } catch (const cv::Exception& e) {
         std::cout << "Matching failed: " << e.what() << std::endl;
-        return {trainImagePath, 0, 0.0};
+        return {board_id, 0, 0};
     }
 
     double minDist = 100000, maxDist = 0;
@@ -217,58 +183,60 @@ SiftMatcher::MatchResult SiftMatcher::computeMatchScore(const cv::Mat& queryDesc
         }
     }
 
-    return {trainImagePath, (int)goodMatches.size(), matchScore};
+    return {board_id, (int)goodMatches.size(), matchScore};
 }
 
-std::vector<SiftMatcher::MatchResult> SiftMatcher::matchImage(const std::string& queryImagePath) {
+std::vector<SiftMatcher::MatchResult> SiftMatcher::matchImage(const cv::Mat& inputImage) {
     std::vector<cv::Mat> loadedDescriptors;
     std::vector<std::string> loadedNames;
     loadDescriptors("descriptors_database.yml", loadedDescriptors, loadedNames);
 
-    cv::Mat queryDesc = extractDescriptor(queryImagePath);
+    cv::Mat queryDesc = extractDescriptor(inputImage);
     if (queryDesc.empty()) {
         return {};
     }
 
-    std::vector<MatchResult> results;
+    std::vector<MatchResult> matchResults;
     for (size_t i = 0; i < loadedDescriptors.size(); i++) {
-        results.push_back(computeMatchScore(queryDesc, loadedDescriptors[i], loadedNames[i]));
+        matchResults.push_back(computeMatchScore(queryDesc, loadedDescriptors[i], loadedNames[i]));
     }
 
-    std::sort(results.begin(), results.end());
+    std::sort(matchResults.begin(), matchResults.end());
+    std::vector<MatchResult> results;
+    for(auto& result : matchResults) {
+        auto it = std::find_if(results.begin(), results.end(), [result](const MatchResult& mr) {
+            return result.boardId == mr.boardId;
+        });
+        if(it == results.end()) {
+            results.push_back(result);
+        }
+    }
     return results;
+    
 }
 
-void SiftMatcher::appendToDatabase(const std::vector<std::string>& imageFiles) {
+void SiftMatcher::appendToDatabase(const std::vector<std::string>& boardid, const std::vector<cv::Mat>& images) {
     // 首先加载现有数据库
     std::vector<cv::Mat> descriptors;
-    std::vector<std::string> imageNames;
+    std::vector<std::string> boardids;
     
+    if(boardid.size() != images.size()) return;
     try {
-        loadDescriptors("descriptors_database.yml", descriptors, imageNames);
+        loadDescriptors("descriptors_database.yml", descriptors, boardids);
     } catch (const cv::Exception& e) {
-        // 如果文件不存在或无法读取，就从空开始
         std::cout << "Creating new database" << std::endl;
     }
 
     // 添加新图片的描述符
-    for (const auto& imagePath : imageFiles) {
+    for(int i = 0; i < boardid.size(); ++i)
+    {
         for (int rotation = -1; rotation < 3; rotation++) {
-            cv::Mat desc = extractDescriptor(imagePath, rotation);
+            cv::Mat desc = extractDescriptor(images[i], rotation);
             if (!desc.empty()) {
                 descriptors.push_back(desc);
-                
-                // 获取文件名（不含路径和扩展名）
-                std::string filename = imagePath;
-                size_t lastSlash = filename.find_last_of("/\\");
-                if (lastSlash != std::string::npos) {
-                    filename = filename.substr(lastSlash + 1);
-                }
-                size_t lastDot = filename.find_last_of(".");
-                if (lastDot != std::string::npos) {
-                    filename = filename.substr(0, lastDot);
-                }
-                imageNames.push_back(filename);
+
+                std::string board_id = boardid[i];
+                boardids.push_back(board_id);
 
                 std::string rotationStr;
                 switch(rotation) {
@@ -277,19 +245,14 @@ void SiftMatcher::appendToDatabase(const std::vector<std::string>& imageFiles) {
                 case 1: rotationStr = "180°"; break;
                 case 2: rotationStr = "270°"; break;
                 }
-                std::cout << "Added: " << imagePath << " (" << rotationStr << ")" << std::endl;
             }
         }
     }
 
-    // 保存更新后的数据库
-    saveDescriptors("descriptors_database.yml", descriptors, imageNames);
-    std::cout << "Database updated successfully!" << std::endl;
-    std::cout << "Total descriptors saved: " << descriptors.size() 
-              << " (including " << imageFiles.size() << " new images)" << std::endl;
+    saveDescriptors("descriptors_database.yml", descriptors, boardids);
 }
 
-bool SiftMatcher::removeFromDatabase(const std::string& DeleteImage) {
+bool SiftMatcher::removeFromDatabase(const std::string& board_id) {
     std::vector<cv::Mat> descriptors;
     std::vector<std::string> imageNames;
     bool found = false;
@@ -304,21 +267,12 @@ bool SiftMatcher::removeFromDatabase(const std::string& DeleteImage) {
 
         // 遍历所有条目，跳过要删除的图片
         for (size_t i = 0; i < imageNames.size(); i++) {
-            if (imageNames[i] != DeleteImage) {
+            if (imageNames[i] != board_id) {
                 newDescriptors.push_back(descriptors[i]);
                 newImageNames.push_back(imageNames[i]);
             } else {
                 found = true;
             }
-        }
-
-        // 如果找到并删除了图片，保存更新后的数据库
-        if (found) {
-            saveDescriptors("descriptors_database.yml", newDescriptors, newImageNames);
-            std::cout << "Successfully removed " << DeleteImage << " from database" << std::endl;
-            std::cout << "Remaining entries: " << newDescriptors.size() << std::endl;
-        } else {
-            std::cout << "Image " << DeleteImage << " not found in database" << std::endl;
         }
 
         return found;

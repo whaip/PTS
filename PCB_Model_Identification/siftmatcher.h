@@ -15,7 +15,7 @@ class SiftMatcher {
 public:
     // 匹配结果结构体
     struct MatchResult {
-        std::string imagePath;
+        std::string boardId;
         int goodMatchCount;
         double matchScore;
 
@@ -25,9 +25,9 @@ public:
     };
 
     // 构造函数和析构函数
-    static SiftMatcher& getInstance() {
+    static SiftMatcher* getInstance() {
         static SiftMatcher instance;
-        return instance;
+        return &instance;
     }
 
     SiftMatcher(const SiftMatcher&) = delete;
@@ -35,27 +35,23 @@ public:
     // 保存描述符到文件
     static void saveDescriptors(const std::string& filename,
                                 const std::vector<cv::Mat>& descriptors,
-                                const std::vector<std::string>& imageNames);
+                                const std::vector<std::string>& board_id);
 
     // 从文件加载描述符
     static void loadDescriptors(const std::string& filename,
                                 std::vector<cv::Mat>& descriptors,
-                                std::vector<std::string>& imageNames);
+                                std::vector<std::string>& board_id);
 
     // 提取特征描述符
-    cv::Mat extractDescriptor(const std::string& imagePath, int rotation = -1);
+    cv::Mat extractDescriptor(const cv::Mat& image, int rotation = -1);
 
-    // 创建描述符数据库
-    void createDatabase(const std::vector<std::string>& imageFiles);
-
-    // 匹配图像
-    std::vector<MatchResult> matchImage(const std::string& queryImagePath);
+    std::vector<MatchResult> matchImage(const cv::Mat& inputImage);
 
     // 检查GPU是否可用
     bool checkGPU();
 
     // 添加新的函数来追加图片到数据库
-    void appendToDatabase(const std::vector<std::string>& imageFiles);
+    void appendToDatabase(const std::vector<std::string>& boardid, const std::vector<cv::Mat>& images);
 
     // 从数据库中删除指定图片的描述符
     static bool removeFromDatabase(const std::string& DeleteImage);

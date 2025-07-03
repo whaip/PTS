@@ -34,7 +34,6 @@
 #include "PCB_Components_Detect/yolomodel.h"
 #include "PCB_Components_Detect/ClassList.h"
 #include "pcbdetectionmanager.h"
-#include "pcbdetectionhistorywidget.h"
 
 // PCB综合分析结果结构体
 struct PCBAnalysisResult {
@@ -96,7 +95,6 @@ public slots:
     void clearResults();
     
     // 数据管理
-    void showDetectionHistory();
     void onAutoSaveResult(const PCBAnalysisResult& result);
     void exportResults();
     void deleteOldRecords();
@@ -151,7 +149,6 @@ private:    // 核心组件
     CameraManager* camera_manager_;
     std::shared_ptr<YOLOModel> yolo_model_;
     PCBDetectionManager* detection_manager_;
-    PCBDetectionHistoryWidget* history_widget_;
     
     // 分析状态
     std::atomic<bool> is_running_;

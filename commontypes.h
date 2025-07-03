@@ -8,7 +8,7 @@
 #include <QVector>
 #include <QDateTime>
 #include <QDebug>
-
+#include <opencv2/opencv.hpp>
 
 // 设备操作命令枚举
 enum class DeviceCommand {
@@ -294,6 +294,24 @@ struct PortMapping {
     PortMapping() : channel(0) {}
 };
 
+// 红外温度数据结构
+struct ThermalData {
+    cv::Mat thermalImage;        // 原始红外图像 (for display)
+    cv::Mat thermalColorMap;     // JET热图 (for thermal analysis)
+    cv::Mat temperatureMap;      // 温度映射数据
+    uint16_t* rawTempData;       // 原始温度数据
+    uint32_t width;
+    uint32_t height;
+    double minTemp;              // 最低温度
+    double maxTemp;              // 最高温度
+    double avgTemp;              // 平均温度
+    QDateTime timestamp;
+    bool isValid;
+
+    ThermalData() : rawTempData(nullptr), width(0), height(0),
+        minTemp(0), maxTemp(0), avgTemp(0), isValid(false) {}
+};
+
 // 测试配置结构体（统一定义）
 struct TestConfiguration {
     QString testId;                                 // 测试ID
@@ -319,6 +337,7 @@ struct TestData {
     QString testId;                                 // 测试ID
     QDateTime timestamp;                            // 时间戳
     QVector<QMap<QString, QVariant>> measurements;  // 测量数据集合
+    ThermalData thermalidata;                        //温度数据
     bool valid;                                     // 数据有效性
     QString errorMessage;                           // 错误信息
     QMap<QString, DeviceOperation> metadata;               // 元数据

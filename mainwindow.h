@@ -29,6 +29,7 @@
 #include <QCheckBox>
 #include <QMap>
 #include <QVariant>
+#include "commontypes.h"
 #include "devicemanager.h"
 #include "faultdiagnostic.h"
 #include "testsequencemanager.h"
@@ -37,7 +38,6 @@
 #include "pcbidentificationdialog.h"
 #include "cameracontrolwidget.h"
 #include "realtimepcbanalyzerwidget.h"
-#include "pcbdetectionhistorywidget.h"
 #include "pcbdetectionmanager.h"
 #include "pcbboardmanagementwidget.h"
 #include "pcbboardmanager.h"
@@ -47,6 +47,7 @@
 #include "WiringGuide/wiringresourcemanager.h"
 #include "WiringGuide/wiringtaskgenerator.h"
 #include "UESTCQCustomPlot.h"
+#include "Camera/Infrared/irimagedisplay.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -74,6 +75,7 @@ private slots:
     void onErrorOccurred(const QString& error);
     void addComponent();
     void removeComponent();
+    void removeAllComponents();
     void loadTestSequence();
     void saveTestSequence();
     void exportResults();
@@ -81,18 +83,14 @@ private slots:
     void updateSystemStatus();
     void runNextTest();
     void finishBatchTest();
-    void stopBatchTest();               // 停止批量测试
-    void openPCBIdentification();  // 新增：打开PCB识别界面
-    void openCameraControl();      // 新增：打开相机控制界面
-    void openPCBAnalyzer();         // 新增：打开PCB综合分析器
-    void openDetectionHistory();    // 新增：打开检测历史管理
+    void stopBatchTest();
+    void openCameraControl();
+    void openPCBAnalyzer();
     void openBoardManagement();
-    void openDeviceManagerTest();   // 新增：打开设备管理器测试窗口
-    void startWiringGuide();        // 开始接线引导
+    void openDeviceManagerTest();   
+    void startWiringGuide();
     void onWiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
-    // void showPortConfigurationForComponent(const ComponentSpec& component);  // 为特定元件显示端口配置
-    // void executeTestWithWiringGuide(const ComponentSpec& component);  // 使用接线引导执行测试（批量测试用）
     void proceedToNextBatchTest();  // 继续下一个批量测试
 
 private:
@@ -103,10 +101,8 @@ private:
     TestSequenceManager* sequence_manager_;
     ResultExporter* result_exporter_;
     PCBIdentifier* pcb_identifier_;           // 新增：PCB识别器
-    PCBIdentificationDialog* pcb_dialog_;     // 新增：PCB识别对话框
     CameraControlWidget* camera_control_;     // 新增：相机控制组件
     RealtimePCBAnalyzerWidget* pcb_analyzer_; // 新增：PCB综合分析器
-    PCBDetectionHistoryWidget* history_widget_; // 新增：检测历史管理窗口
     PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器
     PCBBoardManagementWidget* board_management_widget_; // 新增：PCB板卡管理窗口
     PCBBoardManager* board_manager_;            // 新增：PCB板卡管理器
@@ -139,6 +135,8 @@ private:
     QSpinBox* channel_spin_;
     QPushButton* single_test_button_;
     UESTCQCustomPlot* single_measurement_plot_;
+    IRImageDisplay* single_thermal_display_;
+    IRImageDisplay* batch_thermal_display_;
     QTextEdit* single_result_text_;
     QTabWidget* single_param_tabs_;                                    
     QMap<ComponentType, QList<QWidget*>> single_param_widgets_map_;
@@ -148,6 +146,7 @@ private:
     QTableWidget* component_table_;
     QPushButton* add_component_button_;
     QPushButton* remove_component_button_;
+    QPushButton* remove_all_components_button_;
     QPushButton* load_sequence_button_;
     QPushButton* save_sequence_button_;
     QPushButton* batch_test_button_;
@@ -164,8 +163,7 @@ private:
     // 状态栏
     QLabel* system_status_label_;
     QLabel* test_count_label_;
-    QProgressBar* status_progress_;    // 数据
-    QVector<ComponentSpec> test_components_;
+    QProgressBar* status_progress_;
     QList<DiagnosticResult> test_results_;
     TestSequence current_sequence_;
     int current_test_index_;
@@ -191,6 +189,8 @@ private:
     QString getStatusIcon(DeviceStatus status);
     void updateMeasurementPlot(const QMap<QString, QVariant>& measurementData);
     void updateSingleTestMeasurementPlot(const QMap<QString, QVariant>& measurementData);
+    void updateSingleTestThermalDisplay(const ThermalData& thermalData);
+    void updateBatchTestThermalDisplay(const ThermalData& thermalData);
 
     // 批量测试的统一接线方案管理方法
     QVector<ComponentSpec> createBatchComponentSpec();

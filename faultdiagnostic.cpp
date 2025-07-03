@@ -224,6 +224,7 @@ DiagnosticResult FaultDiagnostic::convertFromComponentDiagnosticResult(const Com
     diagnosticResult.componentId = result.componentId;
     diagnosticResult.componentType = result.componentType;
     diagnosticResult.metameasurementData = result.metameasurements;
+    diagnosticResult.thermalData = result.thermalData;
     diagnosticResult.timestamp = result.endTime.isValid() ? result.endTime : result.startTime;
     
     // 转换测试结果

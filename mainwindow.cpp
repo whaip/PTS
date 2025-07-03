@@ -13,6 +13,9 @@
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QDialogButtonBox>
+#include <opencv2/opencv.hpp>
+#include <opencv2/imgproc.hpp>
+#include <algorithm>
 #include "ComponentDiagnosticFramework/componentdiagnosticframework.h"
 #include "ComponentDiagnosticFramework/componentdiagnosticmanager.h"
 
@@ -25,10 +28,8 @@ MainWindow::MainWindow(QWidget *parent)
     , result_exporter_(nullptr)
     , pcb_identifier_(nullptr)
     , current_task_id_(QString())  // 初始化任务ID为空
-    , pcb_dialog_(nullptr)
     , camera_control_(nullptr)
     , pcb_analyzer_(nullptr)
-    , history_widget_(nullptr)
     , detection_manager_(nullptr)
     , board_management_widget_(nullptr)
     , board_manager_(nullptr)
@@ -45,16 +46,13 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     // 初始化核心组件
-    device_manager_ = new DeviceManager(this);
+    camera_control_ = new CameraControlWidget();
+    device_manager_ = new DeviceManager(camera_control_->getCameraManager(), this);
     diagnostic_manager = ComponentDiagnosticFramework::createDiagnosticManager(device_manager_, this);
     fault_diagnostic_ = new FaultDiagnostic(device_manager_, diagnostic_manager, this);
     sequence_manager_ = new TestSequenceManager(this);
     result_exporter_ = new ResultExporter(this);
     pcb_identifier_ = new PCBIdentifier(this);
-      // 初始化PCB识别对话框
-    pcb_dialog_ = new PCBIdentificationDialog(this);
-    pcb_dialog_->setPCBIdentifier(pcb_identifier_);    // 初始化相机控制组件 - 作为独立窗口
-    camera_control_ = new CameraControlWidget();
       // 初始化PCB综合分析器 - 作为独立窗口
     pcb_analyzer_ = new RealtimePCBAnalyzerWidget();
     pcb_analyzer_->setPCBIdentifier(pcb_identifier_);
@@ -65,7 +63,6 @@ MainWindow::MainWindow(QWidget *parent)
         QMessageBox::warning(this, "警告", "端口系统初始化失败");
     }
 
-    // 新增：初始化接线引导资源管理器
     wiring_resource_manager_ = new WiringResourceManager(port_manager_, this);
 
     // 初始化任务生成器
@@ -218,20 +215,20 @@ MainWindow::~MainWindow()
         single_measurement_plot_->deleteLater();
         single_measurement_plot_ = nullptr;
     }
-      // 清理PCB识别对话框
-    if (pcb_dialog_) {
-        disconnect(pcb_dialog_, nullptr, this, nullptr);
-        pcb_dialog_->close();
-        pcb_dialog_->deleteLater();
-        pcb_dialog_ = nullptr;
+      // 清理单元件测试红外图像显示
+    if (single_thermal_display_) {
+        single_thermal_display_->clear();
+        single_thermal_display_->deleteLater();
+        single_thermal_display_ = nullptr;
     }
 
-    // 清理检测历史管理窗口
-    if (history_widget_) {
-        disconnect(history_widget_, nullptr, this, nullptr);
-        history_widget_->close();        history_widget_->deleteLater();
-        history_widget_ = nullptr;
-    }    // 清理设备管理器测试窗口
+   // 清理批量测试红外图像显示
+   if (batch_thermal_display_) {
+       batch_thermal_display_->clear();
+       batch_thermal_display_->deleteLater();
+       batch_thermal_display_ = nullptr;
+   }
+
     if (device_test_window_) {
         disconnect(device_test_window_, nullptr, this, nullptr);
         device_test_window_->close();
@@ -454,15 +451,34 @@ void MainWindow::setupSingleTestPage()
     
     result_splitter->addWidget(chart_group);
 
-    // 下部分：文本结果
+    // 下部分：使用水平分割器分为左右两部分
+    QSplitter* bottom_splitter = new QSplitter(Qt::Horizontal);
+    
+    // 左侧：文本结果
     QGroupBox* text_group = new QGroupBox("测试结果");
     QVBoxLayout* text_layout = new QVBoxLayout(text_group);
-
+    
     single_result_text_ = new QTextEdit();
     single_result_text_->setReadOnly(true);
     text_layout->addWidget(single_result_text_);
     
-    result_splitter->addWidget(text_group);
+    bottom_splitter->addWidget(text_group);
+    
+    // 右侧：红外图像显示
+    QGroupBox* thermal_group = new QGroupBox("红外热成像");
+    QVBoxLayout* thermal_layout = new QVBoxLayout(thermal_group);
+    
+    single_thermal_display_ = new IRImageDisplay();
+    single_thermal_display_->setMinimumSize(320, 240);
+    single_thermal_display_->setMouseTracking(true);
+    thermal_layout->addWidget(single_thermal_display_);
+    
+    bottom_splitter->addWidget(thermal_group);
+    
+    // 设置水平分割器的初始大小比例（文本占60%，图像占40%）
+    bottom_splitter->setSizes({360, 240});
+    
+    result_splitter->addWidget(bottom_splitter);
     
     // 设置分割器的初始大小比例（图表占40%，文本占60%）
     result_splitter->setSizes({200, 300});
@@ -484,6 +500,7 @@ void MainWindow::setupBatchTestPage()
 
     add_component_button_ = new QPushButton("添加元件");
     remove_component_button_ = new QPushButton("删除元件");
+    remove_all_components_button_ = new QPushButton("删除所有元件");
     load_sequence_button_ = new QPushButton("加载序列");
     save_sequence_button_ = new QPushButton("保存序列");
     batch_test_button_ = new QPushButton("开始批量测试");
@@ -491,6 +508,7 @@ void MainWindow::setupBatchTestPage()
 
     toolbar_layout->addWidget(add_component_button_);
     toolbar_layout->addWidget(remove_component_button_);
+    toolbar_layout->addWidget(remove_all_components_button_);
     toolbar_layout->addWidget(load_sequence_button_);
     toolbar_layout->addWidget(save_sequence_button_);
     toolbar_layout->addStretch();
@@ -514,6 +532,7 @@ void MainWindow::setupBatchTestPage()
     // 连接信号
     connect(add_component_button_, &QPushButton::clicked, this, &MainWindow::addComponent);
     connect(remove_component_button_, &QPushButton::clicked, this, &MainWindow::removeComponent);
+    connect(remove_all_components_button_, &QPushButton::clicked, this, &MainWindow::removeAllComponents);
     connect(load_sequence_button_, &QPushButton::clicked, this, &MainWindow::loadTestSequence);
     connect(save_sequence_button_, &QPushButton::clicked, this, &MainWindow::saveTestSequence);
     connect(batch_test_button_, &QPushButton::clicked, this, &MainWindow::startBatchTest);
@@ -546,10 +565,10 @@ void MainWindow::setupResultsPage()
     measurement_plot_->setMinimumHeight(300);
     main_splitter->addWidget(measurement_plot_);
     
-    // 下部分：使用水平分割器放置表格和详细信息
+    // 下部分：使用水平分割器放置三个部分：表格、详细信息、红外图像
     QSplitter* bottom_splitter = new QSplitter(Qt::Horizontal);
 
-    // 结果表格
+    // 左侧：结果表格
     results_table_ = new QTableWidget();
     results_table_->setColumnCount(8);
     QStringList headers = {"测试ID", "组件类型", "组件ID", "测试结果", "健康度", "置信度", "故障类型", "时间戳"};
@@ -559,13 +578,24 @@ void MainWindow::setupResultsPage()
 
     bottom_splitter->addWidget(results_table_);
 
-    // 详细信息
+    // 中间：详细信息
     detail_text_ = new QTextEdit();
     detail_text_->setReadOnly(true);
-    detail_text_->setMaximumWidth(400);
-
     bottom_splitter->addWidget(detail_text_);
-    bottom_splitter->setSizes({800, 400});
+    
+    // 右侧：红外图像显示
+    QGroupBox* batch_thermal_group = new QGroupBox("红外热成像");
+    QVBoxLayout* batch_thermal_layout = new QVBoxLayout(batch_thermal_group);
+    
+    batch_thermal_display_ = new IRImageDisplay();
+    batch_thermal_display_->setMinimumSize(320, 240);
+    batch_thermal_display_->setMouseTracking(true);
+    batch_thermal_layout->addWidget(batch_thermal_display_);
+    
+    bottom_splitter->addWidget(batch_thermal_group);
+    
+    // 设置水平分割器的大小比例（表格50%，详细信息30%，红外图像20%）
+    bottom_splitter->setSizes({500, 300, 200});
     
     main_splitter->addWidget(bottom_splitter);
     
@@ -616,14 +646,10 @@ void MainWindow::setupMenuBar()
 
     // 工具菜单
     QMenu* tools_menu = menu_bar->addMenu("工具");
-    tools_menu->addAction("PCB板卡识别", this, &MainWindow::openPCBIdentification);
     tools_menu->addAction("相机控制", this, &MainWindow::openCameraControl);
-    tools_menu->addAction("PCB综合分析器", this, &MainWindow::openPCBAnalyzer);
-    tools_menu->addAction("检测历史管理", this, &MainWindow::openDetectionHistory);
     tools_menu->addAction("PCB板卡管理", this, &MainWindow::openBoardManagement);
     tools_menu->addAction("PCB综合分析", this, &MainWindow::openPCBAnalyzer);
     tools_menu->addSeparator();
-    tools_menu->addAction("检测历史管理", this, &MainWindow::openDetectionHistory);
 
     // 帮助菜单
     QMenu* help_menu = menu_bar->addMenu("帮助");
@@ -827,12 +853,15 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
         task_generator_->finalizeTaskExecution(current_task_id_, success, resultString);
         current_task_id_.clear();  // 清除任务ID
     }
-    // 注意：在批量测试中，不清除 current_task_id_，因为所有步骤共享主任务
 
     // 在单元件测试时更新结果显示
     if (main_tabs_->currentWidget() == single_test_page_) {
         single_result_text_->append(result.diagnosticSummary);
         updateSingleTestMeasurementPlot(result.metameasurementData);
+        // 显示红外数据
+        if (result.thermalData.isValid) {
+            updateSingleTestThermalDisplay(result.thermalData);
+        }
         single_result_text_->append("\n测试完成。");
 
         // Re-enable the single test button
@@ -1017,16 +1046,14 @@ void MainWindow::addComponent()
         QMessageBox::warning(this, "输入错误", "请输入元件标识！");
         return;
     }
-    for (auto& ex : test_components_) {
-        if (ex.reference == component.reference) {
+    for (auto& ex : current_sequence_.steps) {
+        if (ex.component == component.reference) {
             QMessageBox::warning(this, "输入错误",
                 QString("元件标识 '%1' 已存在，请使用不同的标识！").arg(component.reference));
             return;
         }
     }
 
-    // 添加到列表并生成测试步骤
-    test_components_.append(component);
     TestStep step = createTestStepFromComponent(component);
     // 添加重复检查，避免相同组件的测试步骤被重复加入
     for (const TestStep &existingStep : current_sequence_.steps) {
@@ -1072,42 +1099,29 @@ void MainWindow::removeComponent()
     // 1. 从测试序列中删除
     sequence_manager_->removeTestStep(current_sequence_, row);
 
-    // 2. 从组件列表中删除（如果存在对应的项）
-    // 通过匹配reference找到对应的ComponentSpec
-    for (int i = 0; i < test_components_.size(); ++i) {
-        // 创建期望的测试名称来匹配
-        QString expectedTestName;
-        switch (test_components_[i].type) {
-            case ComponentType::RESISTOR:
-                expectedTestName = QString("电阻测试 - %1").arg(test_components_[i].reference);
-                break;
-            case ComponentType::CAPACITOR:
-                expectedTestName = QString("电容测试 - %1").arg(test_components_[i].reference);
-                break;
-            case ComponentType::INDUCTOR:
-                expectedTestName = QString("电感测试 - %1").arg(test_components_[i].reference);
-                break;
-            case ComponentType::DIODE:
-                expectedTestName = QString("二极管测试 - %1").arg(test_components_[i].reference);
-                break;
-            case ComponentType::IC:
-                expectedTestName = QString("集成电路测试 - %1").arg(test_components_[i].reference);
-                break;            default:
-                expectedTestName = QString("未知组件测试 - %1").arg(test_components_[i].reference);
-                break;
-        }
-
-        if (expectedTestName == stepToRemove.testName) {
-            test_components_.removeAt(i);
-            break;
-        }
-    }
-
     // 刷新表格显示
     populateComponentTable();
 
     // 显示成功消息
     statusBar()->showMessage(QString("已删除测试步骤: %1").arg(componentRef), 3000);
+}
+
+void MainWindow::removeAllComponents()
+{
+    if (current_sequence_.steps.isEmpty()) {
+        QMessageBox::information(this, "提示", "没有元件可以删除");
+        return;
+    }
+
+    int result = QMessageBox::question(this, "确认删除",
+        "确定要删除所有测试步骤吗？",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (result == QMessageBox::Yes) {
+        sequence_manager_->removeAllTestStep(current_sequence_);
+        populateComponentTable();
+        statusBar()->showMessage("已清除所有测试步骤", 3000);
+    }
 }
 
 void MainWindow::loadTestSequence()
@@ -1187,19 +1201,6 @@ void MainWindow::clearResults()
     detail_text_->clear();
 }
 
-void MainWindow::openPCBIdentification()
-{
-    if (!pcb_dialog_) {
-        QMessageBox::warning(this, "错误", "PCB识别对话框未初始化");
-        return;
-    }
-
-    // 显示PCB识别对话框
-    pcb_dialog_->show();
-    pcb_dialog_->raise();
-    pcb_dialog_->activateWindow();
-}
-
 void MainWindow::openCameraControl()
 {
     if (!camera_control_) {
@@ -1228,26 +1229,6 @@ void MainWindow::openPCBAnalyzer()
     pcb_analyzer_->show();
     pcb_analyzer_->raise();
     pcb_analyzer_->activateWindow();
-}
-
-void MainWindow::openDetectionHistory()
-{
-    if (!history_widget_) {
-        history_widget_ = new PCBDetectionHistoryWidget();
-        history_widget_->setDetectionManager(detection_manager_);
-        history_widget_->setAttribute(Qt::WA_DeleteOnClose, false);
-
-        // 连接信号，当历史窗口关闭时重置指针
-        connect(history_widget_, &QWidget::destroyed, this, [this]() {
-            history_widget_ = nullptr;
-        });
-    }
-
-    // 设置为独立窗口并显示
-    history_widget_->setWindowTitle("PCB检测历史管理");
-    history_widget_->setMinimumSize(1200, 800);    history_widget_->show();
-    history_widget_->raise();
-    history_widget_->activateWindow();    history_widget_->refreshRecordsList();
 }
 
 void MainWindow::openBoardManagement()
@@ -1592,6 +1573,11 @@ void MainWindow::updateDetailText(int currentRow, int currentColumn, int previou
         const DiagnosticResult& result = test_results_[currentRow];
         detail_text_->setText(result.diagnosticSummary);
         updateMeasurementPlot(result.metameasurementData);
+
+       // 更新批量测试结果页面的红外图像显示
+       if (batch_thermal_display_ && result.thermalData.isValid) {
+           updateBatchTestThermalDisplay(result.thermalData);
+       }
     }
 }
 
@@ -1888,4 +1874,154 @@ void MainWindow::updateSingleTestMeasurementPlot(const QMap<QString, QVariant>& 
     single_measurement_plot_->xAxis->rescale();
     single_measurement_plot_->yAxis->rescale();
     single_measurement_plot_->replot();
+}
+
+void MainWindow::updateSingleTestThermalDisplay(const ThermalData& thermalData)
+{
+    if (!single_thermal_display_ || !thermalData.isValid) {
+        qWarning() << "红外图像显示组件无效或热数据无效";
+        return;
+    }
+
+    // 数据转换：从ThermalData转换为IRImageDisplay需要的格式
+    // 检查图像和原始温度数据
+    if (thermalData.thermalImage.empty() || !thermalData.rawTempData
+        || thermalData.width == 0 || thermalData.height == 0) {
+        qWarning() << "无效的红外图像或温度数据";
+        return;
+    }
+
+    // 将 cv::Mat 热图转换为 QImage（BGR/GRAY -> RGB）
+    cv::Mat rgbMat;
+    if (thermalData.thermalImage.channels() == 3) {
+        cv::cvtColor(thermalData.thermalImage, rgbMat, cv::COLOR_BGR2RGB);
+    } else if (thermalData.thermalImage.channels() == 1) {
+        cv::cvtColor(thermalData.thermalImage, rgbMat, cv::COLOR_GRAY2RGB);
+    } else {
+        rgbMat = thermalData.thermalImage;
+    }
+    QImage thermalImage(
+        rgbMat.data,
+        rgbMat.cols,
+        rgbMat.rows,
+        static_cast<int>(rgbMat.step),
+        QImage::Format_RGB888
+    );
+    thermalImage = thermalImage.copy();  // 拷贝数据以防止悬空
+
+    // 原始温度数据直接拷贝到 vector<uint16_t>
+    uint32_t width  = thermalData.width;
+    uint32_t height = thermalData.height;
+    
+    if (!thermalData.rawTempData) {
+        qWarning() << "rawTempData指针为空，无法转换温度数据";
+        return;
+    }
+    
+    // 准备温度数据：优先使用 temperatureMap 拷贝，避免野指针
+    std::vector<uint16_t> tempData;
+    int w = 0, h = 0;
+    if (!thermalData.temperatureMap.empty()) {
+        h = thermalData.temperatureMap.rows;
+        w = thermalData.temperatureMap.cols;
+        const uint16_t* p = thermalData.temperatureMap.ptr<uint16_t>();
+        tempData.assign(p, p + static_cast<size_t>(w) * h);
+    } else if (thermalData.rawTempData && thermalData.width > 0 && thermalData.height > 0) {
+        // 兼容旧接口
+        w = thermalData.width;
+        h = thermalData.height;
+        size_t dataSize = static_cast<size_t>(w) * h;
+        tempData.assign(thermalData.rawTempData, thermalData.rawTempData + dataSize);
+    }
+    
+    // 检查数据大小是否合理（防止过大的内存分配）
+    size_t count = static_cast<size_t>(width) * height;
+    if (count > 10000000) { // 10M像素限制
+        qWarning() << "温度数据大小异常:" << count << "像素，可能存在数据错误";
+        return;
+    }
+
+    // 验证转换后的数据
+    if (tempData.empty()) {
+        qWarning() << "温度数据转换后为空";
+        return;
+    }
+    
+    // 更新显示组件
+    single_thermal_display_->setImage(thermalImage, tempData, width, height);
+    batch_thermal_display_->MarkMaxTemp(true);
+        
+}
+
+void MainWindow::updateBatchTestThermalDisplay(const ThermalData& thermalData)
+{
+    if (!batch_thermal_display_ || !thermalData.isValid) {
+        qWarning() << "批量测试红外图像显示组件无效或热数据无效";
+        return;
+    }
+
+    if (thermalData.thermalImage.empty() || !thermalData.rawTempData
+        || thermalData.width == 0 || thermalData.height == 0) {
+        qWarning() << "无效的红外图像或温度数据";
+        return;
+    }
+
+    // 将 cv::Mat 热图转换为 QImage（BGR/GRAY -> RGB）
+    cv::Mat rgbMat;
+    if (thermalData.thermalImage.channels() == 3) {
+        cv::cvtColor(thermalData.thermalImage, rgbMat, cv::COLOR_BGR2RGB);
+    } else if (thermalData.thermalImage.channels() == 1) {
+        cv::cvtColor(thermalData.thermalImage, rgbMat, cv::COLOR_GRAY2RGB);
+    } else {
+        rgbMat = thermalData.thermalImage;
+    }
+    QImage thermalImage(
+        rgbMat.data,
+        rgbMat.cols,
+        rgbMat.rows,
+        static_cast<int>(rgbMat.step),
+        QImage::Format_RGB888
+    );
+    thermalImage = thermalImage.copy();  // 拷贝数据以防止悬空
+
+    // 原始温度数据直接拷贝到 vector<uint16_t>
+    uint32_t width  = thermalData.width;
+    uint32_t height = thermalData.height;
+    
+    if (!thermalData.rawTempData) {
+        qWarning() << "rawTempData指针为空，无法转换温度数据";
+        return;
+    }
+    
+    // 准备温度数据：优先使用 temperatureMap 拷贝，避免野指针
+    std::vector<uint16_t> tempData;
+    int w = 0, h = 0;
+    if (!thermalData.temperatureMap.empty()) {
+        h = thermalData.temperatureMap.rows;
+        w = thermalData.temperatureMap.cols;
+        const uint16_t* p = thermalData.temperatureMap.ptr<uint16_t>();
+        tempData.assign(p, p + static_cast<size_t>(w) * h);
+    } else if (thermalData.rawTempData && thermalData.width > 0 && thermalData.height > 0) {
+        // 兼容旧接口
+        w = thermalData.width;
+        h = thermalData.height;
+        size_t dataSize = static_cast<size_t>(w) * h;
+        tempData.assign(thermalData.rawTempData, thermalData.rawTempData + dataSize);
+    }
+    
+    // 检查数据大小是否合理（防止过大的内存分配）
+    size_t count = static_cast<size_t>(width) * height;
+    if (count > 10000000) { // 10M像素限制
+        qWarning() << "温度数据大小异常:" << count << "像素，可能存在数据错误";
+        return;
+    }
+
+    // 验证转换后的数据
+    if (tempData.empty()) {
+        qWarning() << "温度数据转换后为空";
+        return;
+    }
+        
+    batch_thermal_display_->setImage(thermalImage, tempData, width, height);
+    batch_thermal_display_->MarkMaxTemp(true);
 }

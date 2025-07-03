@@ -193,13 +193,13 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     
     QLabel* sizeLabel = new QLabel("图像尺寸:");
     sizeLabel->setStyleSheet("font-weight: bold; color: #555;");
-    QLabel* sizeValueLabel = new QLabel("未加载");
+    sizeValueLabel = new QLabel("未加载");
     sizeValueLabel->setObjectName("imageSizeLabel");
     sizeValueLabel->setStyleSheet("color: #333;");
     
     QLabel* formatLabel = new QLabel("图像格式:");
     formatLabel->setStyleSheet("font-weight: bold; color: #555;");
-    QLabel* formatValueLabel = new QLabel("未知");
+    formatValueLabel = new QLabel("未知");
     formatValueLabel->setObjectName("imageFormatLabel");
     formatValueLabel->setStyleSheet("color: #333;");
     
@@ -230,24 +230,6 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     QWidget* statsWidget = new QWidget();
     QHBoxLayout* statsLayout = new QHBoxLayout(statsWidget);
     statsLayout->setContentsMargins(5, 5, 5, 5);
-    
-    QLabel* candidatesCountLabel = new QLabel("候选板卡:");
-    candidatesCountLabel->setStyleSheet("font-weight: bold; color: #555;");
-    QLabel* candidatesCountValue = new QLabel("0");
-    candidatesCountValue->setObjectName("candidatesCountLabel");
-    candidatesCountValue->setStyleSheet("color: #2196F3; font-weight: bold;");
-    
-    QLabel* confidenceLabel = new QLabel("最高相似度:");
-    confidenceLabel->setStyleSheet("font-weight: bold; color: #555;");
-    QLabel* confidenceValue = new QLabel("--");
-    confidenceValue->setObjectName("confidenceLabel");
-    confidenceValue->setStyleSheet("color: #4CAF50; font-weight: bold;");
-    
-    statsLayout->addWidget(candidatesCountLabel);
-    statsLayout->addWidget(candidatesCountValue);
-    statsLayout->addStretch();
-    statsLayout->addWidget(confidenceLabel);
-    statsLayout->addWidget(confidenceValue);
     
     resultsLayout->addWidget(statsWidget);
     
@@ -330,16 +312,9 @@ void PCBBoardManagementWidget::setupIdentificationTab()
         confirm_identification_button_->setEnabled(false);
         identification_image_label_->clear();
         identification_image_label_->setText("点击\"从文件识别\"选择图片\n或点击\"摄像头识别\"使用摄像头");
+        sizeValueLabel->setText("未加载");
+        formatValueLabel->setText("未知");
         
-        // 重置统计信息
-        QLabel* countLabel = findChild<QLabel*>("candidatesCountLabel");
-        if (countLabel) countLabel->setText("0");
-        QLabel* confLabel = findChild<QLabel*>("confidenceLabel");
-        if (confLabel) confLabel->setText("--");
-        QLabel* sizeLabel = findChild<QLabel*>("imageSizeLabel");
-        if (sizeLabel) sizeLabel->setText("未加载");
-        QLabel* formatLabel = findChild<QLabel*>("imageFormatLabel");
-        if (formatLabel) formatLabel->setText("未知");
     });
     
     buttonLayout->addStretch();
@@ -374,9 +349,8 @@ void PCBBoardManagementWidget::setupBoardListPanel()
     buttonLayout1->addWidget(export_board_button_);
     layout->addLayout(buttonLayout1);
     
-    // 第二行按钮：编辑、删除
+    // 第二行按钮：删除
     QHBoxLayout* buttonLayout2 = new QHBoxLayout();
-    buttonLayout2->addWidget(edit_board_button_);
     buttonLayout2->addWidget(delete_board_button_);
     layout->addLayout(buttonLayout2);
     
@@ -412,14 +386,6 @@ void PCBBoardManagementWidget::setupImageDisplayPanel()
     // 图像工具栏
     QHBoxLayout* imageToolLayout = new QHBoxLayout();
     
-    auto_detect_button_ = new QPushButton("自动检测元器件");
-    detect_labels_button_ = new QPushButton("检测标签");
-    show_components_checkbox_ = new QCheckBox("显示元器件");
-    show_components_checkbox_->setChecked(true);
-    
-    imageToolLayout->addWidget(auto_detect_button_);
-    imageToolLayout->addWidget(detect_labels_button_);
-    imageToolLayout->addWidget(show_components_checkbox_);
     imageToolLayout->addStretch();
     
     layout->addLayout(imageToolLayout);
@@ -449,20 +415,6 @@ void PCBBoardManagementWidget::setupImageDisplayPanel()
     imageSplitter->setSizes({600, 300});
     
     layout->addWidget(imageSplitter);
-    
-    // 缩放控制
-    QHBoxLayout* zoomLayout = new QHBoxLayout();
-    QLabel* zoomLabel = new QLabel("缩放:");
-    zoom_slider_ = new QSlider(Qt::Horizontal);
-    zoom_slider_->setRange(10, 500);
-    zoom_slider_->setValue(100);
-    zoom_slider_->setFixedWidth(150);
-    
-    zoomLayout->addWidget(zoomLabel);
-    zoomLayout->addWidget(zoom_slider_);
-    zoomLayout->addStretch();
-    
-    layout->addLayout(zoomLayout);
 }
 
 void PCBBoardManagementWidget::setupToolbar()
@@ -470,7 +422,6 @@ void PCBBoardManagementWidget::setupToolbar()
     create_board_button_ = new QPushButton("新建板卡");
     import_board_button_ = new QPushButton("导入");
     export_board_button_ = new QPushButton("导出");
-    edit_board_button_ = new QPushButton("编辑");
     delete_board_button_ = new QPushButton("删除");
     duplicate_board_button_ = new QPushButton("复制");
     export_all_button_ = new QPushButton("导出全部");
@@ -487,18 +438,6 @@ void PCBBoardManagementWidget::setupToolbar()
         "QPushButton:pressed { background-color: #c62828; } "
         "QPushButton:disabled { background-color: #ccc; color: #666; }"
     );
-    
-    // 为编辑按钮设置蓝色样式
-    edit_board_button_->setStyleSheet(
-        "QPushButton { "
-        "   font-size: 12px; font-weight: bold; "
-        "   background-color: #2196F3; color: white; "
-        "   border: none; border-radius: 4px; "
-        "   padding: 6px 12px; "
-        "} "
-        "QPushButton:hover { background-color: #1976D2; } "
-        "QPushButton:pressed { background-color: #1565C0; }"
-    );
 }
 
 void PCBBoardManagementWidget::setupStatisticsPanel()
@@ -507,12 +446,8 @@ void PCBBoardManagementWidget::setupStatisticsPanel()
     QFormLayout* statsLayout = new QFormLayout(statistics_group_);
     
     total_boards_label_ = new QLabel("0");
-    total_components_label_ = new QLabel("0");
-    active_boards_label_ = new QLabel("0");
     
     statsLayout->addRow("总板卡数:", total_boards_label_);
-    statsLayout->addRow("总元器件数:", total_components_label_);
-    statsLayout->addRow("活跃板卡:", active_boards_label_);
 }
 
 void PCBBoardManagementWidget::setupIdentificationPanel()
@@ -526,7 +461,6 @@ void PCBBoardManagementWidget::connectSignals()
     connect(create_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onCreateBoard);
     connect(import_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onImportBoard);
     connect(export_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onExportBoard);
-    connect(edit_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onEditBoard);    
     connect(delete_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onDeleteBoard);
     
     // 板卡识别按钮
@@ -551,9 +485,6 @@ void PCBBoardManagementWidget::connectSignals()
     // 搜索
     connect(search_edit_, &QLineEdit::textChanged, this, &PCBBoardManagementWidget::onSearchTextChanged);
     
-    // 缩放控制
-    connect(zoom_slider_, &QSlider::valueChanged, this, &PCBBoardManagementWidget::onImageZoomChanged);
-    connect(show_components_checkbox_, &QCheckBox::toggled, this, &PCBBoardManagementWidget::onShowComponentsToggled);
       // 右键菜单
     connect(board_table_, &QTableWidget::customContextMenuRequested, this, &PCBBoardManagementWidget::onContextMenuRequested);
 }
@@ -590,7 +521,8 @@ void PCBBoardManagementWidget::onBoardSelectionChanged(QTableWidgetItem* current
             }
         }
         
-        if (boardId != current_board_id_) {            current_board_id_ = boardId;
+        if (boardId != current_board_id_) {
+            current_board_id_ = boardId;
             qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 更新当前板卡ID为:" << current_board_id_;
             displayBoardImage(boardId);
         }
@@ -617,29 +549,20 @@ void PCBBoardManagementWidget::displayBoardImage(const QString& boardId)
     
     PCBBoardInfo board = board_manager_->getBoardById(boardId);
     if (board.boardId.isEmpty()) {
-        qDebug() << "PCBBoardManagementWidget::displayBoardImage - 未找到板卡信息";
         current_board_image_ = cv::Mat();
         current_components_.clear();
         updateImageDisplay();
         return;
     }
     
-    qDebug() << "PCBBoardManagementWidget::displayBoardImage - 板卡信息: 名称=" << board.boardName 
-             << "图片路径=" << board.imagePath;
-    
     current_board_image_ = board_manager_->loadImage(board.imagePath);
     
     if (current_board_image_.empty()) {
-        qDebug() << "PCBBoardManagementWidget::displayBoardImage - 图片加载失败";
         current_components_.clear();
     } else {
-        qDebug() << "PCBBoardManagementWidget::displayBoardImage - 图片加载成功，尺寸:" 
-                 << current_board_image_.cols << "x" << current_board_image_.rows;
         
         // 加载组件数据
-        qDebug() << "PCBBoardManagementWidget::displayBoardImage - 加载组件数据...";
         current_components_ = board_manager_->getComponents(boardId);
-        qDebug() << "PCBBoardManagementWidget::displayBoardImage - 组件数量:" << current_components_.size();
     }
     
     updateImageDisplay();
@@ -669,7 +592,7 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
         return;
     }
       // 转换Mat为QImage - 使用标准化的颜色转换
-    QPixmap pixmap = matToQPixmapStandard(current_board_image_);
+    QPixmap pixmap = matToQPixmapStandard(current_board_image_, false);
     if (pixmap.isNull()) {
         qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 图像转换失败";
         return;
@@ -704,44 +627,34 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
     if (!imageSplitter) {
         qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 找不到分割器";
         return;
-    }    // 安全地清除旧的LabelEditing
+    }    // 地清除旧的LabelEditing
     if (label_editing_) {
-        qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 删除旧的LabelEditing";
         label_editing_->setParent(nullptr);
         label_editing_->deleteLater();
         label_editing_ = nullptr;
     }
     
-    // 创建新的LabelEditing
-    qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 开始创建LabelEditing";
-    qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 图片尺寸:" << qimage.width() << "x" << qimage.height();
-    qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 标签数量:" << existingLabels.size();
-      try {        label_editing_ = new LabelEditing(this, qimage, existingLabels, 
+      try {        
+        label_editing_ = new LabelEditing(this, qimage, existingLabels, 
                                         newLabels, deleteIds, label_table_);
         
-        // 连接标签操作信号到数据库同步
         connect(label_editing_, &LabelEditing::labelAdded, 
                 this, &PCBBoardManagementWidget::onLabelAdded);
         connect(label_editing_, &LabelEditing::labelUpdated, 
                 this, &PCBBoardManagementWidget::onLabelUpdated);
         connect(label_editing_, &LabelEditing::labelDeleted, 
                 this, &PCBBoardManagementWidget::onLabelDeleted);
+    
         
-        qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 标签信号已连接";
-        
-        // 确保分割器中有正确的widget数量和顺序
         if (imageSplitter->count() >= 2) {
-            // 如果已经有两个widget，只替换第一个（图像显示区域）
             QWidget* oldWidget = imageSplitter->widget(0);
             imageSplitter->replaceWidget(0, label_editing_);
             if (oldWidget && oldWidget->objectName() == "imageEditingWidget") {
                 oldWidget->deleteLater();
             }
         } else if (imageSplitter->count() == 1) {
-            // 如果只有一个widget，在前面插入LabelEditing
             imageSplitter->insertWidget(0, label_editing_);
         } else {
-            // 如果没有widget，先添加LabelEditing，再确保label_table_在第二个位置
             imageSplitter->addWidget(label_editing_);
             if (imageSplitter->indexOf(label_table_) == -1) {
                 imageSplitter->addWidget(label_table_);
@@ -750,18 +663,13 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
         
         label_editing_->setMinimumSize(400, 300);
         
-        // 确保label_table_在正确的位置
         if (imageSplitter->indexOf(label_table_) != 1) {
-            // 如果label_table_不在第二个位置，移动它
             label_table_->setParent(nullptr);
             imageSplitter->addWidget(label_table_);
         }
         
-        // 重新设置分割器比例
         imageSplitter->setSizes({600, 300});
         
-        qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - LabelEditing创建完成";
-        qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 分割器widget数量:" << imageSplitter->count();
     } catch (const std::exception& e) {
         qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 创建LabelEditing时出错:" << e.what();
     } catch (...) {
@@ -985,7 +893,10 @@ void PCBBoardManagementWidget::onCreateBoard()
                 imageFilePath = fileName;
                 
                 // 更新预览
-                QPixmap pixmap = matToQPixmapStandard(selectedImage);
+                cv::Mat rgbMat;
+                cv::cvtColor(selectedImage, rgbMat, cv::COLOR_BGR2RGB);
+                selectedImage = rgbMat;
+                QPixmap pixmap = matToQPixmapStandard(selectedImage, false);
                 if (!pixmap.isNull()) {
                     QSize previewSize = imagePreview->size();
                     pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1199,7 +1110,7 @@ void PCBBoardManagementWidget::onCreateBoard()
             imageFilePath.clear(); // 摄像头拍摄的图像没有文件路径
             
             // 更新预览
-            QPixmap pixmap = matToQPixmapStandard(selectedImage);
+            QPixmap pixmap = matToQPixmapStandard(selectedImage, false);
             if (!pixmap.isNull()) {
                 QSize previewSize = imagePreview->size();
                 pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1220,71 +1131,54 @@ void PCBBoardManagementWidget::onCreateBoard()
         captureDialog->deleteLater();
     });
     
-    // 创建板卡按钮事件
     connect(createButton, &QPushButton::clicked, [&]() {
         QString boardName = nameEdit->text().trimmed();
         QString boardModel = modelEdit->text().trimmed();
         QString description = descEdit->toPlainText().trimmed();
-        
+
         if (boardName.isEmpty() || boardModel.isEmpty() || selectedImage.empty()) {
             QMessageBox::warning(createDialog, "错误", "请填写完整的板卡信息并选择图像！");
             return;
         }
-        
-        // 创建进度对话框
+
+        // 创建并显示进度对话框
         QProgressDialog* progressDialog = new QProgressDialog("正在创建板卡...", nullptr, 0, 100, createDialog);
         progressDialog->setWindowModality(Qt::WindowModal);
         progressDialog->setMinimumDuration(0);
         progressDialog->setValue(20);
         progressDialog->show();
-        
-        // 使用定时器模拟进度
-        QTimer* progressTimer = new QTimer();
-        connect(progressTimer, &QTimer::timeout, [progressDialog, progressTimer]() {
-            int currentValue = progressDialog->value();
-            if (currentValue < 90) {
-                progressDialog->setValue(currentValue + 10);
-            } else {
-                progressTimer->stop();
-                progressTimer->deleteLater();
-            }
-        });
-        progressTimer->start(100);
-        
-        try {
-            // 创建板卡
-            QString boardId = board_manager_->createBoard(boardName, boardModel, selectedImage, description);
-            
-            progressDialog->setValue(100);
-            progressDialog->close();
-            progressDialog->deleteLater();
-            progressTimer->stop();
-            progressTimer->deleteLater();
-            
-            if (!boardId.isEmpty()) {
-                QMessageBox::information(createDialog, "成功", 
-                    QString("板卡 \"%1\" 创建成功！\n板卡ID: %2").arg(boardName).arg(boardId));
-                
-                qDebug() << "板卡创建成功 - 名称:" << boardName << "型号:" << boardModel << "ID:" << boardId;
-                
-                // 更新板卡列表
+        createButton->setEnabled(false);
+
+        // 连接进度信号
+        QMetaObject::Connection connProgress = connect(board_manager_, &PCBBoardManager::boardCreationProgress,
+            progressDialog, [progressDialog](int pct, const QString& msg) {
+                progressDialog->setValue(pct);
+                progressDialog->setLabelText(msg);
+            });
+
+        // 连接完成和错误信号
+        QMetaObject::Connection connFinished, connError;
+        connFinished = connect(board_manager_, &PCBBoardManager::boardCreationFinished,
+            this, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& createdBoardId) {
+                // 关闭进度对话框并显示结果
+                progressDialog->close();
+                QMessageBox::information(createDialog, "成功",
+                    QString("板卡 \"%1\" 创建成功！\n板卡ID: %2").arg(boardName).arg(createdBoardId));
+                qDebug() << "板卡创建成功 - 名称:" << boardName << "型号:" << boardModel << "ID:" << createdBoardId;
                 updateBoardList();
-                
-                // 关闭对话框
                 createDialog->accept();
-            } else {
-                QMessageBox::warning(createDialog, "错误", "板卡创建失败！\n请检查输入信息或联系管理员。");
-            }
-            
-        } catch (const std::exception& e) {
-            progressDialog->close();
-            progressDialog->deleteLater();
-            progressTimer->stop();
-            progressTimer->deleteLater();
-            
-            QMessageBox::critical(createDialog, "错误", 
-                QString("创建板卡时发生错误：\n%1").arg(e.what()));
-        }
+            });
+        connError = connect(board_manager_, &PCBBoardManager::boardCreationError,
+            this, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& errorMsg) {
+                // 关闭进度对话框并提示错误
+                progressDialog->close();
+                QMessageBox::warning(createDialog, "错误",
+                    QString("板卡创建失败：%1").arg(errorMsg));
+                createButton->setEnabled(true);
+            });
+
+        // 发起异步创建
+        board_manager_->createBoardAsync(boardName, boardModel, selectedImage, description);
     });
     
     // 取消按钮事件
@@ -1335,11 +1229,6 @@ void PCBBoardManagementWidget::onExportBoard()
             QMessageBox::warning(this, "错误", "板卡导出失败！");
         }
     }
-}
-
-void PCBBoardManagementWidget::onEditBoard()
-{
-    QMessageBox::information(this, "提示", "编辑板卡功能开发中...");
 }
 
 void PCBBoardManagementWidget::onDeleteBoard()
@@ -1408,6 +1297,8 @@ void PCBBoardManagementWidget::onIdentifyFromFile()
             pixmap = pixmap.scaled(QSize(400, 300), Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
         identification_image_label_->setPixmap(pixmap);
+        sizeValueLabel->setText(QString("图像尺寸: %1x%2").arg(pixmap.width()).arg(pixmap.height()));
+        formatValueLabel->setText(QString("格式: %1").arg(fileName.split('.').last()));
     }
     
     // 切换到识别标签页
@@ -1653,6 +1544,8 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
             pixmap = pixmap.scaled(QSize(400, 300), Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
         identification_image_label_->setPixmap(pixmap);
+        sizeValueLabel->setText(QString("图像尺寸: %1x%2").arg(pixmap.width()).arg(pixmap.height()));
+        formatValueLabel->setText(QString("格式: %1").arg("CV::Mat"));
     }
     
     // 切换到识别标签页
@@ -1674,7 +1567,7 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
     
     // 创建新的工作线程
     identification_worker_thread_ = new QThread(this);
-    IdentificationWorker* worker = new IdentificationWorker(board_manager_, capturedImage, 0.7);
+    IdentificationWorker* worker = new IdentificationWorker(board_manager_, capturedImage, 5);
     worker->moveToThread(identification_worker_thread_);
     
     // 连接信号槽
@@ -1808,7 +1701,10 @@ void PCBBoardManagementWidget::onConfirmIdentification()
         confirm_identification_button_->setEnabled(false);
         identification_image_label_->clear();
         identification_image_label_->setText("选择图片或使用摄像头进行识别");
+        sizeValueLabel->setText("未加载");
+        formatValueLabel->setText("未知");
         
+
         QMessageBox::information(this, "成功", 
             QString("已选择板卡：%1\n现在可以查看和编辑该板卡的详细信息。")
             .arg(selectedBoard.boardName));
@@ -1839,12 +1735,6 @@ void PCBBoardManagementWidget::onImageZoomChanged(int value)
 {
     zoom_factor_ = value / 100.0;
     // LabelEditing有自己的缩放控制
-}
-
-void PCBBoardManagementWidget::onShowComponentsToggled(bool enabled)
-{
-    Q_UNUSED(enabled)
-    // LabelEditing中的标签显示由其内部控制
 }
 
 void PCBBoardManagementWidget::onBoardAdded(const QString& boardId)
@@ -1894,6 +1784,7 @@ void PCBBoardManagementWidget::updateBoardList()
         board_table_->setItem(i, 1, modelItem);
         board_table_->setItem(i, 2, countItem);
     }
+    total_boards_label_->setText(QString::number(boards.size()));
 }
 
 void PCBBoardManagementWidget::updateBoardDetails()
@@ -1913,8 +1804,6 @@ void PCBBoardManagementWidget::updateStatistics()
     }
     
     total_boards_label_->setText(QString::number(boards.size()));
-    total_components_label_->setText(QString::number(totalComponents));
-    active_boards_label_->setText(current_board_id_.isEmpty() ? "0" : "1");
 }
 
 void PCBBoardManagementWidget::displayIdentificationResults(const QList<PCBBoardInfo>& candidates)
@@ -1922,14 +1811,17 @@ void PCBBoardManagementWidget::displayIdentificationResults(const QList<PCBBoard
     identification_candidates_ = candidates;
     candidates_table_->setRowCount(candidates.size());
     
+    QStringList imagePaths;
+    QStringList board_name;
     for (int i = 0; i < candidates.size(); ++i) {
         const PCBBoardInfo& candidate = candidates[i];
-        
+        imagePaths << candidate.imagePath;
+        board_name << candidate.boardName;
         QTableWidgetItem* nameItem = new QTableWidgetItem(candidate.boardName);
         nameItem->setData(Qt::UserRole, candidate.boardId);
         
         QTableWidgetItem* modelItem = new QTableWidgetItem(candidate.boardModel);
-        QTableWidgetItem* similarityItem = new QTableWidgetItem("85%");
+        QTableWidgetItem* similarityItem = new QTableWidgetItem(QString::number(candidate.matchScore));
         QTableWidgetItem* descItem = new QTableWidgetItem(candidate.description);
         
         candidates_table_->setItem(i, 0, nameItem);
@@ -1939,12 +1831,53 @@ void PCBBoardManagementWidget::displayIdentificationResults(const QList<PCBBoard
     }
     
     confirm_identification_button_->setEnabled(!candidates.isEmpty());
+    if(imagePaths.size() > 0){
+        ImageFlowDialog *imageFlowDialog = new ImageFlowDialog(this);
+        imageFlowDialog->loadImages(imagePaths, board_name);
+        connect(imageFlowDialog, &ImageFlowDialog::imageSelected, this, [this](const QString& board_name) {
+                int selectrow = 0;
+                for(int i = 0; i < identification_candidates_.size(); i++){
+                    if(identification_candidates_[i].boardName == board_name){
+                        selectrow = i;
+                        break;
+                    }
+                }
+                const PCBBoardInfo& selectedBoard = identification_candidates_[selectrow];
+                main_tabs_->setCurrentWidget(board_management_tab_);
+                
+                // 在板卡列表中选中该板卡
+                for (int i = 0; i < board_table_->rowCount(); ++i) {
+                    QTableWidgetItem* item = board_table_->item(i, 0);
+                    qDebug() << "板卡：" << item->data(Qt::UserRole).toString() << "行" << i;
+                    qDebug() << "选中板卡：" << selectedBoard.boardId << "行" << i;
+                    if (item && item->data(Qt::UserRole).toString() == selectedBoard.boardId) {
+                        board_table_->selectRow(i);
+                        qDebug() << "选中板卡：" << selectedBoard.boardName << "行" << i;
+                        board_table_->setCurrentItem(item);
+                        break;
+                    }
+                }
+                
+                // 清空识别结果
+                candidates_table_->setRowCount(0);
+                identification_candidates_.clear();
+                confirm_identification_button_->setEnabled(false);
+                identification_image_label_->clear();
+                identification_image_label_->setText("选择图片或使用摄像头进行识别");
+                sizeValueLabel->setText("未加载");
+                formatValueLabel->setText("未知");
+                
+
+        });
+        imageFlowDialog->exec();
+        imageFlowDialog->deleteLater();
+    }
 }
 
 QPixmap PCBBoardManagementWidget::matToQPixmap(const cv::Mat& mat)
 {
     // 使用标准化的颜色转换方法
-    return matToQPixmapStandard(mat);
+    return matToQPixmapStandard(mat, false);
 }
 
 cv::Mat PCBBoardManagementWidget::qPixmapToMat(const QPixmap& pixmap)

@@ -83,6 +83,12 @@ void TestSequenceManager::removeTestStep(TestSequence& sequence, int index)
     }
 }
 
+void TestSequenceManager::removeAllTestStep(TestSequence& sequence)
+{
+    sequence.steps.clear();
+    sequence.modifiedDate = QDateTime::currentDateTime().toString(Qt::ISODate);
+}
+
 void TestSequenceManager::moveTestStep(TestSequence& sequence, int from, int to)
 {
     if (from >= 0 && from < sequence.steps.size() && 

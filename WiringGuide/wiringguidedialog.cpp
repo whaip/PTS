@@ -347,9 +347,22 @@ void WiringGuideDialog::updatePortTable()
     QVector<PortInfo> selectedPorts;
 
     // 找出已分配给当前元件的端口
-    for (const PortInfo& port : allPorts) {
-        if (!port.isAvailable && port.allocatedTo == component_.reference) {
-            selectedPorts.append(port);
+    if (isBatchWiring_) {
+        // 批量模式：展平所有组件的已分配端口
+        for (auto it = allocatedPorts_.constBegin(); it != allocatedPorts_.constEnd(); ++it) {
+            const QVector<PortInfo>& portsList = it.value();
+            for (const PortInfo& port : portsList) {
+                selectedPorts.append(port);
+            }
+        }
+    } else {
+        // 单组件模式：获取当前组件的已分配端口
+        const QString& key = component_.reference;
+        if (allocatedPorts_.contains(key)) {
+            const QVector<PortInfo>& portsList = allocatedPorts_.value(key);
+            for (const PortInfo& port : portsList) {
+                selectedPorts.append(port);
+            }
         }
     }
 

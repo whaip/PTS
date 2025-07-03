@@ -385,7 +385,8 @@ void CameraControlWidget::connectSignals()
     connect(realtimeThresholdSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &CameraControlWidget::onRealtimeThresholdChanged);
     
     // 红外摄像头信号
-    connect(startIRButton_, &QPushButton::clicked, this, &CameraControlWidget::onStartIRCamera);    connect(stopIRButton_, &QPushButton::clicked, this, &CameraControlWidget::onStopIRCamera);
+    connect(startIRButton_, &QPushButton::clicked, this, &CameraControlWidget::onStartIRCamera);
+    connect(stopIRButton_, &QPushButton::clicked, this, &CameraControlWidget::onStopIRCamera);
     connect(saveThermalButton_, &QPushButton::clicked, this, &CameraControlWidget::onSaveThermalImage);
     connect(measureTempButton_, &QPushButton::clicked, this, &CameraControlWidget::onMeasureTemperature);
     connect(applyIRParamsButton_, &QPushButton::clicked, this, &CameraControlWidget::onApplyIRParams);
@@ -407,7 +408,8 @@ void CameraControlWidget::connectSignals()
     connect(cameraManager_, &CameraManager::pcbDetectionCompleted,
             this, &CameraControlWidget::onPCBDetectionCompleted);
     connect(cameraManager_, &CameraManager::pcbModelIdentified,
-            this, &CameraControlWidget::onPCBModelIdentified);    connect(cameraManager_, &CameraManager::temperatureAlert,
+            this, &CameraControlWidget::onPCBModelIdentified);    
+            connect(cameraManager_, &CameraManager::temperatureAlert,
             this, &CameraControlWidget::onTemperatureAlert);
     connect(cameraManager_, &CameraManager::errorOccurred,
             this, &CameraControlWidget::onCameraError);
@@ -886,7 +888,6 @@ void CameraControlWidget::onTemperatureAlert(double temperature, const cv::Point
 {
     QString message = QString("温度警报！位置(%1,%2)的温度 %3°C 超过阈值")
                         .arg(location.x).arg(location.y).arg(temperature, 0, 'f', 1);
-    QMessageBox::warning(this, "温度警报", message);
     addLogMessage(message);
 }
 

@@ -22,6 +22,7 @@
 #include "include/JY5320Core.h"
 #include "include/JY5710.h"
 #include "include/JY8902.h"
+#include "ch340.h"
 #include "5711waveformconfig.h"
 #include "commontypes.h"
 

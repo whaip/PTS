@@ -21,7 +21,6 @@ RealtimePCBAnalyzerWidget::RealtimePCBAnalyzerWidget(QWidget *parent)
     , camera_manager_(nullptr)
     , yolo_model_(YOLOModel::getInstance())
     , detection_manager_(new PCBDetectionManager(this))
-    , history_widget_(nullptr)
     , is_running_(false)
     , stop_analysis_(false)
     , analysis_mode_(COMPREHENSIVE_ANALYSIS)
@@ -126,13 +125,6 @@ RealtimePCBAnalyzerWidget::~RealtimePCBAnalyzerWidget()
       // 清理资源
     pcb_identifier_ = nullptr;
     camera_manager_ = nullptr;
-    
-    // 清理历史管理窗口
-    if (history_widget_) {
-        history_widget_->close();
-        history_widget_->deleteLater();
-        history_widget_ = nullptr;
-    }
     
     addLogMessage("PCB综合分析组件已完全关闭");
     
@@ -426,13 +418,11 @@ void RealtimePCBAnalyzerWidget::setupResultsPanel()
     auto* button_layout = new QHBoxLayout;
     save_result_button_ = new QPushButton("保存当前结果");
     clear_log_button_ = new QPushButton("清空日志");
-    history_button_ = new QPushButton("检测历史");
     export_button_ = new QPushButton("导出数据");
     cleanup_button_ = new QPushButton("清理旧数据");
     
     button_layout->addWidget(save_result_button_);
     button_layout->addWidget(clear_log_button_);
-    button_layout->addWidget(history_button_);
     button_layout->addWidget(export_button_);
     button_layout->addWidget(cleanup_button_);
     button_layout->addStretch();
@@ -487,7 +477,6 @@ void RealtimePCBAnalyzerWidget::connectSignals()
       // 操作按钮信号
     connect(save_result_button_, &QPushButton::clicked, this, &RealtimePCBAnalyzerWidget::saveCurrentResult);
     connect(clear_log_button_, &QPushButton::clicked, this, &RealtimePCBAnalyzerWidget::clearResults);
-    connect(history_button_, &QPushButton::clicked, this, &RealtimePCBAnalyzerWidget::showDetectionHistory);
     connect(export_button_, &QPushButton::clicked, this, &RealtimePCBAnalyzerWidget::exportResults);
     connect(cleanup_button_, &QPushButton::clicked, this, &RealtimePCBAnalyzerWidget::deleteOldRecords);
 }
@@ -1098,27 +1087,6 @@ void RealtimePCBAnalyzerWidget::clearResults()
     session_start_time_ = QDateTime::currentDateTime();
     updateAnalysisStatistics();
     addLogMessage("日志和统计已清空");
-}
-
-// 数据管理功能实现
-void RealtimePCBAnalyzerWidget::showDetectionHistory()
-{
-    if (!history_widget_) {
-        history_widget_ = new PCBDetectionHistoryWidget(nullptr);
-        history_widget_->setDetectionManager(detection_manager_);
-        history_widget_->setAttribute(Qt::WA_DeleteOnClose, false);
-        
-        // 连接信号，当历史窗口关闭时重置指针
-        connect(history_widget_, &QWidget::destroyed, this, [this]() {
-            history_widget_ = nullptr;
-        });
-    }
-      history_widget_->show();
-    history_widget_->raise();
-    history_widget_->activateWindow();
-    history_widget_->refreshRecordsList();
-    
-    addLogMessage("已打开检测历史管理窗口");
 }
 
 void RealtimePCBAnalyzerWidget::onAutoSaveResult(const PCBAnalysisResult& result)

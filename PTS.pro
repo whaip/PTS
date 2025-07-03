@@ -1,4 +1,4 @@
-QT       += core gui printsupport concurrent opengl openglwidgets
+QT       += core gui printsupport concurrent opengl openglwidgets serialport
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -40,6 +40,7 @@ win32 {
 }
 
 SOURCES += \
+    PCB_Model_Identification/ImageDialog/imageflowdialog.cpp \
     main.cpp \
     mainwindow.cpp \
     devicemanager.cpp \
@@ -51,6 +52,7 @@ SOURCES += \
     faultanalysis.cpp \
     testsequencemanager.cpp \    
     resultexporter.cpp \
+    ch340.cpp \
     ComponentDiagnosticFramework/basecomponentdiagnostic.cpp \
     ComponentDiagnosticFramework/componentdiagnosticframework.cpp \
     ComponentDiagnosticFramework/componentdiagnosticmanager.cpp \
@@ -74,7 +76,6 @@ SOURCES += \
     PCB_Components_Detect/labelediting.cpp \
     PCB_Components_Detect/labelrectitem.cpp \
     pcbdetectionmanager.cpp \    
-    pcbdetectionhistorywidget.cpp \
     pcbboardmanager.cpp \    
     pcbboardmanagementwidget.cpp \
     PCB_Components_Detect/staticlabelviewdialog.cpp \
@@ -86,6 +87,8 @@ SOURCES += \
     WiringGuide/wiringtaskgenerator.cpp
 
 HEADERS += \
+    PCB_Model_Identification/ImageDialog/imagedialog.h \
+    PCB_Model_Identification/ImageDialog/imageflowdialog.h \
     mainwindow.h \
     devicemanager.h \
     devicethread.h \
@@ -97,6 +100,7 @@ HEADERS += \
     faultanalysis.h \
     testsequencemanager.h \    
     resultexporter.h \
+    ch340.h \
     ComponentDiagnosticFramework/basecomponentdiagnostic.h \
     ComponentDiagnosticFramework/componentdiagnosticframework.h \
     ComponentDiagnosticFramework/componentdiagnosticmanager.h \
@@ -121,7 +125,6 @@ HEADERS += \
     PCB_Components_Detect/labelediting.h \
     PCB_Components_Detect/labelrectitem.h \
     pcbdetectionmanager.h \    
-    pcbdetectionhistorywidget.h \
     pcbboardmanager.h \    
     pcbboardmanagementwidget.h \
     5711waveformconfig.h \

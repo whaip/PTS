@@ -31,6 +31,7 @@
 #include "pcbboardmanager.h"
 #include "cameramanager.h"
 #include "PCB_Components_Detect/labelediting.h"
+#include "PCB_Model_Identification/ImageDialog/imageflowdialog.h"
 
 class ComponentImageSelector;
 
@@ -49,7 +50,6 @@ public slots:
     // 板卡管理
     void onCreateBoard();
     void onImportBoard();
-    void onEditBoard();
     void onDeleteBoard();
     void onDuplicateBoard();
     void onExportBoard();
@@ -65,8 +65,7 @@ public slots:
     // 界面更新
     void onBoardSelectionChanged(QTableWidgetItem* current, QTableWidgetItem* previous);
     void onImageZoomChanged(int value);
-    void onShowComponentsToggled(bool enabled);
-      // 数据更新
+    // 数据更新
     void onBoardAdded(const QString& boardId);
     void onBoardUpdated(const QString& boardId);
     void onBoardDeleted(const QString& boardId);
@@ -144,9 +143,9 @@ private:
     QWidget* board_list_panel_;
     QLineEdit* search_edit_;
     QComboBox* model_filter_combo_;
-    QTableWidget* board_table_;    QPushButton* create_board_button_;
+    QTableWidget* board_table_;    
+    QPushButton* create_board_button_;
     QPushButton* import_board_button_;
-    QPushButton* edit_board_button_;
     QPushButton* delete_board_button_;
     QPushButton* duplicate_board_button_;
     QPushButton* export_board_button_;
@@ -160,9 +159,6 @@ private:
     QTableWidget* label_table_;
     QSlider* zoom_slider_;
     QCheckBox* show_components_checkbox_;
-    QPushButton* auto_detect_button_;
-    QPushButton* detect_labels_button_;
-      // 删除了元器件列表面板相关成员变量
     
     // 板卡识别标签页
     QWidget* identification_tab_;
@@ -172,12 +168,11 @@ private:
     QLabel* identification_image_label_;
     QTableWidget* candidates_table_;
     QPushButton* confirm_identification_button_;
-    
+    QLabel* sizeValueLabel;
+    QLabel* formatValueLabel;
     // 统计信息面板
     QGroupBox* statistics_group_;
     QLabel* total_boards_label_;
-    QLabel* total_components_label_;
-    QLabel* active_boards_label_;
       // 状态信息
     QString current_board_id_;
     QList<ComponentInfo> current_components_;

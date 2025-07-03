@@ -61,9 +61,6 @@ signals:
     void portAllocated(const QString& deviceName, int portNumber, const QString& allocatedTo);
     void portReleased(const QString& deviceName, int portNumber);
     void portStatusChanged(const QString& deviceName, int portNumber, bool available);
-
-public slots:
-    void updateDeviceStatus();
     
 private slots:
     void onDeviceStatusChanged(const QString& device, DeviceStatus status);

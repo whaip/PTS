@@ -65,7 +65,7 @@ struct TestStep {
     bool enabled;             // 是否启用此测试步骤
     int timeoutMs;            // 超时时间
     QVector<PortInfo> allocatedPorts;
-    QString component;
+    QString component; // component reference (e.g., "R1", "C2")
 };
 
 struct TestSequence {
@@ -92,6 +92,7 @@ public:
     // 序列操作
     void addTestStep(TestSequence& sequence, const TestStep& step);
     void removeTestStep(TestSequence& sequence, int index);
+    void removeAllTestStep(TestSequence& sequence);
     void moveTestStep(TestSequence& sequence, int from, int to);
     void updateTestStep(TestSequence& sequence, int index, const TestStep& step);
     

@@ -129,66 +129,7 @@ ComponentInfo ComponentInfo::fromJson(const QJsonObject& json) {
     component.partNumber = json["partNumber"].toString();
     component.description = json["description"].toString();
     component.isRequired = json["isRequired"].toBool();
-      return component;
-}
-
-//=============================================================================
-// ImageFeatureInfo 实现
-//=============================================================================
-
-std::vector<cv::KeyPoint> ImageFeatureInfo::getCvKeypoints() const {
-    std::vector<cv::KeyPoint> cvKeypoints;
-    cvKeypoints.reserve(keypoints.size());
-    
-    for (const auto& kp : keypoints) {
-        cvKeypoints.push_back(kp.toCvKeyPoint());
-    }
-    
-    return cvKeypoints;
-}
-
-cv::Mat ImageFeatureInfo::getCvDescriptors() const {
-    if (descriptors.empty() || descriptorRows == 0 || descriptorCols == 0) {
-        return cv::Mat();
-    }
-    
-    cv::Mat desc(descriptorRows, descriptorCols, CV_32F);
-    std::memcpy(desc.data, descriptors.data(), descriptors.size() * sizeof(float));
-    
-    return desc;
-}
-
-void ImageFeatureInfo::setFromCv(const std::vector<cv::KeyPoint>& kps, const cv::Mat& desc) {
-    // 设置特征点
-    keypoints.clear();
-    keypoints.reserve(kps.size());
-    for (const auto& kp : kps) {
-        keypoints.emplace_back(kp);
-    }
-    
-    // 设置描述符
-    if (!desc.empty()) {
-        descriptorRows = desc.rows;
-        descriptorCols = desc.cols;
-        
-        // 确保数据类型为float
-        cv::Mat floatDesc;
-        if (desc.type() != CV_32F) {
-            desc.convertTo(floatDesc, CV_32F);
-        } else {
-            floatDesc = desc;
-        }
-        
-        // 复制数据
-        descriptors.resize(floatDesc.rows * floatDesc.cols);
-        std::memcpy(descriptors.data(), floatDesc.data, descriptors.size() * sizeof(float));
-    } else {
-        descriptorRows = 0;
-        descriptorCols = 0;
-        descriptors.clear();
-    }
-    
-    extractTime = QDateTime::currentDateTime();
+    return component;
 }
 
 PCBBoardManager::PCBBoardManager(QObject *parent)
@@ -200,24 +141,14 @@ PCBBoardManager::PCBBoardManager(QObject *parent)
     , detection_cancelled_(false)
     , creation_cancelled_(false)
 {    // 设置默认路径 - 使用PCBimage文件夹以保持一致性
-    QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    image_storage_path_ = documentsPath + "/PCBimage";
+    QString documentsPath = QDir::currentPath() + "/../..";
+    image_storage_path_ = documentsPath+ "/PCBimage";
     features_storage_path_ = documentsPath + "/PCBimage/features";
     database_path_ = documentsPath + "/PCBimage/PCB_Boards_Database.json";
     
     // 确保目录存在
     ensureDirectoryExists(image_storage_path_);
     ensureDirectoryExists(features_storage_path_);
-      // 初始化OpenCV特征检测器
-    try {
-        sift_detector_ = cv::SIFT::create();
-        matcher_ = cv::BFMatcher::create();
-        qDebug() << "PCBBoardManager: OpenCV特征检测器初始化成功";
-    } catch (const cv::Exception& e) {
-        qDebug() << "PCBBoardManager: OpenCV特征检测器初始化失败:" << e.what();
-        sift_detector_ = nullptr;
-        matcher_ = nullptr;
-    }
     
     // 初始化YOLO模型 
     yolo_model_ = nullptr;
@@ -297,8 +228,14 @@ QString PCBBoardManager::createBoard(const QString& boardName, const QString& bo
     qDebug() << "PCBBoardManager::createBoard - 检测到" << board.components.size() << "个元器件";
     
     boards_.append(board);
+    // 将新板卡图像加入 SIFT 特征数据库
+    try {
+        SIFT_MATCHER->appendToDatabase({ board.boardId.toStdString() }, { cv::imread(board.imagePath.toStdString())});
+        qDebug() << "PCBBoardManager: 已将新板卡图像添加到特征数据库:" << board.imagePath;
+    } catch (const std::exception& e) {
+        qDebug() << "PCBBoardManager: 特征数据库追加失败:" << e.what();
+    }
     qDebug() << "PCBBoardManager::createBoard - 板卡创建成功，ID:" << board.boardId;
-    
     locker.unlock();
     emit boardAdded(board.boardId);
     return board.boardId;
@@ -450,26 +387,18 @@ bool PCBBoardManager::removeComponent(const QString& boardId, int componentId) {
 QList<ComponentInfo> PCBBoardManager::getComponents(const QString& boardId) const {
     QMutexLocker locker(&boards_mutex_);
     
-    qDebug() << "PCBBoardManager::getComponents - 查找板卡ID:" << boardId;
-    qDebug() << "PCBBoardManager::getComponents - 总板卡数量:" << boards_.size();
-    
     QList<ComponentInfo> result;
     for (const auto& board : boards_) {
-        qDebug() << "PCBBoardManager::getComponents - 检查板卡:" << board.boardId << "元器件数量:" << board.components.size();
         if (board.boardId == boardId) {
-            qDebug() << "PCBBoardManager::getComponents - 找到匹配的板卡，元器件数量:" << board.components.size();
             for (const auto& label : board.components) {
                 ComponentInfo component(label);
                 component.componentName = label.label.isEmpty() ? QString("Component_%1").arg(label.id) : label.label;
                 result.append(component);
-                qDebug() << "PCBBoardManager::getComponents - 添加元器件:" << component.componentName 
-                         << "位置:" << label.x << "," << label.y << "尺寸:" << label.w << "x" << label.h;
             }
             break;
         }
     }
     
-    qDebug() << "PCBBoardManager::getComponents - 返回元器件数量:" << result.size();
     return result;
 }
 
@@ -494,37 +423,22 @@ QList<PCBBoardInfo> PCBBoardManager::identifyBoard(const cv::Mat& inputImage, do
     if (inputImage.empty()) {
         return QList<PCBBoardInfo>();
     }
-    
     QMutexLocker locker(&boards_mutex_);
-    
-    QList<QPair<double, PCBBoardInfo>> matches;
-    
-    for (const auto& board : boards_) {
-        if (!board.isActive || board.templatePath.isEmpty()) {
-            continue;
-        }
-        
-        cv::Mat templateImage = loadImage(board.templatePath);
-        if (templateImage.empty()) {
-            continue;
-        }
-        
-        double similarity = calculateSimilarity(inputImage, templateImage);
-        if (similarity >= threshold) {
-            matches.append(qMakePair(similarity, board));
-        }
-    }
-    
-    // 按相似度排序
-    std::sort(matches.begin(), matches.end(), [](const QPair<double, PCBBoardInfo>& a, const QPair<double, PCBBoardInfo>& b) {
-        return a.first > b.first;
-    });
-    
+    // 使用 SIFT_MATCHER 识别并匹配已知板卡图像
+    std::vector<SiftMatcher::MatchResult> matchResults = SIFT_MATCHER->matchImage(inputImage);
     QList<PCBBoardInfo> result;
-    for (const auto& match : matches) {
-        result.append(match.second);
+    for (const auto& mr : matchResults) {
+        // 阈值过滤
+        if (mr.matchScore < threshold) break;
+        QString id = QString::fromStdString(mr.boardId);
+        // 在已加载板卡中查找匹配的图像路径
+        for (const auto& board : boards_) {
+            if (board.boardId == id) {
+                result.append(board);
+                break;
+            }
+        }
     }
-    
     return result;
 }
 
@@ -607,9 +521,6 @@ QString PCBBoardManager::saveImage(const cv::Mat& image, const QString& prefix) 
     
     QString filename = createImageFileName(prefix);
     QString fullPath = image_storage_path_ + "/" + filename;
-    
-    qDebug() << "PCBBoardManager::saveImage - 保存路径:" << fullPath;
-    qDebug() << "PCBBoardManager::saveImage - 图片尺寸:" << image.cols << "x" << image.rows;
     
     // 确保目录存在
     if (!ensureDirectoryExists(image_storage_path_)) {
@@ -702,7 +613,6 @@ bool PCBBoardManager::importBoard(const QString& filePath) {
             QMutexLocker locker(&boards_mutex_);
             boards_.append(board);
         }
-        // 发射信号需要在mutex外执行
         emit boardAdded(board.boardId);
         return true;
     }
@@ -841,106 +751,6 @@ QString PCBBoardManager::createImageFileName(const QString& prefix, const QStrin
     return QString("%1_%2%3").arg(prefix).arg(timestamp).arg(extension);
 }
 
-double PCBBoardManager::calculateSimilarity(const cv::Mat& image1, const cv::Mat& image2) {
-    if (image1.empty() || image2.empty()) {
-        return 0.0;
-    }
-    
-    // 如果SIFT检测器不可用，使用简单的模板匹配作为回退
-    if (!sift_detector_ || !matcher_) {
-        try {
-            cv::Mat result;
-            cv::matchTemplate(image1, image2, result, cv::TM_CCOEFF_NORMED);
-            double minVal, maxVal;
-            cv::minMaxLoc(result, &minVal, &maxVal);
-            return maxVal;
-        } catch (const cv::Exception& e) {
-            qDebug() << "PCBBoardManager::calculateSimilarity - 模板匹配失败:" << e.what();
-            return 0.0;
-        }
-    }
-    
-    try {
-        // 使用SIFT特征匹配计算相似度
-        std::vector<cv::KeyPoint> keypoints1, keypoints2;
-        cv::Mat descriptors1, descriptors2;
-        
-        // 提取特征点和描述符
-        sift_detector_->detectAndCompute(image1, cv::noArray(), keypoints1, descriptors1);
-        sift_detector_->detectAndCompute(image2, cv::noArray(), keypoints2, descriptors2);
-        
-        if (descriptors1.empty() || descriptors2.empty()) {
-            return 0.0;
-        }
-        
-        // 特征匹配
-        std::vector<cv::DMatch> matches;
-        matcher_->match(descriptors1, descriptors2, matches);
-        
-        if (matches.empty()) {
-            return 0.0;
-        }
-        
-        // 计算好匹配的数量
-        double goodMatchThreshold = 75.0;
-        int goodMatches = 0;
-        
-        for (const auto& match : matches) {
-            if (match.distance < goodMatchThreshold) {
-                goodMatches++;
-            }
-        }
-        
-        // 计算相似度分数
-        double similarity = static_cast<double>(goodMatches) / qMax(keypoints1.size(), keypoints2.size());
-        return qMin(1.0, similarity);
-        
-    } catch (const cv::Exception& e) {
-        qDebug() << "PCBBoardManager::calculateSimilarity - SIFT匹配失败:" << e.what();
-        return 0.0;
-    } catch (const std::exception& e) {
-        qDebug() << "PCBBoardManager::calculateSimilarity - 异常:" << e.what();
-        return 0.0;
-    }
-}
-
-std::vector<cv::KeyPoint> PCBBoardManager::extractKeypoints(const cv::Mat& image) {
-    std::vector<cv::KeyPoint> keypoints;
-    
-    if (image.empty() || !sift_detector_) {
-        return keypoints;
-    }
-    
-    try {
-        sift_detector_->detect(image, keypoints);
-    } catch (const cv::Exception& e) {
-        qDebug() << "PCBBoardManager::extractKeypoints - 异常:" << e.what();
-        keypoints.clear();
-    }
-    
-    return keypoints;
-}
-
-cv::Mat PCBBoardManager::extractDescriptors(const cv::Mat& image, std::vector<cv::KeyPoint>& keypoints) {
-    cv::Mat descriptors;
-    
-    if (image.empty() || !sift_detector_ || keypoints.empty()) {
-        return descriptors;
-    }
-    
-    try {
-        sift_detector_->compute(image, keypoints, descriptors);
-    } catch (const cv::Exception& e) {
-        qDebug() << "PCBBoardManager::extractDescriptors - 异常:" << e.what();
-        descriptors = cv::Mat();
-    }
-    
-    return descriptors;
-}
-
-//=============================================================================
-// 多线程相关实现
-//=============================================================================
 
 void PCBBoardManager::initializeWatchers()
 {
@@ -952,6 +762,14 @@ void PCBBoardManager::initializeWatchers()
             this, [this]() {
                 if (!identification_cancelled_) {
                     QList<PCBBoardInfo> result = identification_watcher_->result();
+                    for (auto& board : result) {
+                        auto it = std::find_if(boards_.begin(), boards_.end(), [board](const PCBBoardInfo& b) {
+                            return b.imagePath == board.imagePath;
+                        });
+                        if (it != boards_.end()) {
+                            board = *it;
+                        }
+                    }
                     emit boardIdentificationProgress(100, "识别完成");
                     emit boardIdentificationFinished(result);
                 } else {
@@ -1086,7 +904,7 @@ void PCBBoardManager::identifyBoardAsync(const cv::Mat& inputImage, double thres
             
             qDebug() << "开始异步板卡识别，图片尺寸:" << inputImage.cols << "x" << inputImage.rows;
             
-            QList<PCBBoardInfo> result = identifyBoard(inputImage, threshold);
+            std::vector<SiftMatcher::MatchResult> matchResults = SIFT_MATCHER->matchImage(inputImage);
             
             // 再次检查是否取消
             {
@@ -1094,6 +912,10 @@ void PCBBoardManager::identifyBoardAsync(const cv::Mat& inputImage, double thres
                 if (identification_cancelled_) {
                     return QList<PCBBoardInfo>();
                 }
+            }
+            QList<PCBBoardInfo> result;
+            for (const auto& match : matchResults) {
+                result.append(getBoardById(QString::fromStdString(match.boardId)));
             }
             
             qDebug() << "异步板卡识别完成，找到" << result.size() << "个候选项";
@@ -1234,25 +1056,23 @@ void PCBBoardManager::cancelComponentDetection()
 }
 
 void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& boardModel, 
-                                      const cv::Mat& boardImage, const QString& description)
+                                          const cv::Mat& boardImage, const QString& description)
 {
     if (creation_watcher_ && creation_watcher_->isRunning()) {
         qDebug() << "PCBBoardManager::createBoardAsync - 创建任务正在进行中";
         return;
     }
-    
-    qDebug() << "PCBBoardManager::createBoardAsync - 开始异步板卡创建:" << boardName;
-    
+
     // 重置取消标志
     {
         QMutexLocker locker(&cancel_mutex_);
         creation_cancelled_ = false;
     }
-    
+
     // 创建进度报告定时器
     QTimer* progressTimer = new QTimer(this);
     progressTimer->setInterval(500);
-    
+
     // 进度报告
     int progressValue = 20;
     connect(progressTimer, &QTimer::timeout, [this, progressTimer, &progressValue]() {
@@ -1261,25 +1081,23 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
             progressTimer->deleteLater();
             return;
         }
-        
         progressValue = qMin(progressValue + 8, 80);
         emit boardCreationProgress(progressValue, "正在创建板卡...");
-        
         if (progressValue >= 80) {
             progressTimer->stop();
         }
     });
-    
+
     // 启动定时器
     progressTimer->start();
-    
-    // 在清理定时器的连接中添加自动删除
+
+    // 清理定时器连接
     connect(creation_watcher_, &QFutureWatcher<QString>::finished,
             progressTimer, [progressTimer]() {
                 progressTimer->stop();
                 progressTimer->deleteLater();
             });
-    
+
     // 启动异步任务
     auto future = QtConcurrent::run([this, boardName, boardModel, boardImage, description]() -> QString {
         try {
@@ -1290,11 +1108,10 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
                     return QString();
                 }
             }
-            
+
             qDebug() << "开始异步板卡创建，图片尺寸:" << boardImage.cols << "x" << boardImage.rows;
-            
             QString result = createBoard(boardName, boardModel, boardImage, description);
-            
+
             // 再次检查是否取消
             {
                 QMutexLocker locker(&cancel_mutex_);
@@ -1302,10 +1119,9 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
                     return QString();
                 }
             }
-            
+
             qDebug() << "异步板卡创建完成，ID:" << result;
             return result;
-            
         } catch (const cv::Exception& e) {
             qDebug() << "异步板卡创建OpenCV异常:" << QString::fromStdString(e.what());
             emit boardCreationError(QString("图像处理错误: %1").arg(QString::fromStdString(e.what())));
@@ -1320,9 +1136,8 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
             return QString();
         }
     });
-    
+
     creation_watcher_->setFuture(future);
-    
     emit boardCreationProgress(20, "开始板卡创建...");
 }
 

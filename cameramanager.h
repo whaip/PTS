@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <queue>
+#include "commontypes.h"
 
 // 摄像头类型枚举
 enum class CameraType {
@@ -36,24 +37,6 @@ struct ImageData {
     bool isValid;
     
     ImageData() : isValid(false) {}
-};
-
-// 红外温度数据结构
-struct ThermalData {
-    cv::Mat thermalImage;        // 原始红外图像 (for display)
-    cv::Mat thermalColorMap;     // JET热图 (for thermal analysis)
-    cv::Mat temperatureMap;      // 温度映射数据
-    uint16_t* rawTempData;       // 原始温度数据
-    uint32_t width;
-    uint32_t height;
-    double minTemp;              // 最低温度
-    double maxTemp;              // 最高温度
-    double avgTemp;              // 平均温度
-    QDateTime timestamp;
-    bool isValid;
-    
-    ThermalData() : rawTempData(nullptr), width(0), height(0), 
-                   minTemp(0), maxTemp(0), avgTemp(0), isValid(false) {}
 };
 
 // PCB检测结果结构
@@ -94,11 +77,11 @@ public:
     
     // 相机诊断
     QString getCameraDiagnosticInfo(CameraType type) const;
-      // 图像获取
+    // 图像获取
     ImageData getLatestImage(CameraType type) const;
     ThermalData getLatestThermalData() const;
     cv::Mat getThermalColorMap() const;  // 获取JET热图
-      // 温度测量
+    // 温度测量
     double getTemperatureAt(int x, int y) const;
     double getAverageTemperature(const cv::Rect& region) const;
     double getMaxTemperature(const cv::Rect& region) const;
@@ -121,7 +104,6 @@ signals:
     // 摄像头状态变化
     void cameraStatusChanged(CameraType type, CameraStatus status);
     
-    // 新图像数据
     void newImageAvailable(CameraType type, const ImageData& data);
     void newThermalDataAvailable(const ThermalData& data);
     

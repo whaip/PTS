@@ -12,15 +12,24 @@ class IdentificationWorker : public QObject
     Q_OBJECT
 
 public:
-    explicit IdentificationWorker(PCBBoardManager* manager, const cv::Mat& image, double threshold, QObject *parent = nullptr)
-        : QObject(parent), board_manager_(manager), input_image_(image.clone()), threshold_(threshold) {}
+    explicit IdentificationWorker(PCBBoardManager* manager, const cv::Mat& image, int maxnumb, QObject *parent = nullptr)
+        : QObject(parent), board_manager_(manager), input_image_(image.clone()), maxnumb_(maxnumb) {}
 
 public slots:
     void doWork() {
         try {
             qDebug() << "开始异步板卡识别，图片尺寸:" << input_image_.cols << "x" << input_image_.rows;
             
-            QList<PCBBoardInfo> result = board_manager_->identifyBoard(input_image_, threshold_);
+            std::vector<SiftMatcher::MatchResult> matchresult = SIFT_MATCHER->matchImage(input_image_);
+
+            QList<PCBBoardInfo> result;
+            for (const auto& match : matchresult) {
+                PCBBoardInfo board;
+                qDebug() << "匹配分数：" << match.matchScore;
+                board = board_manager_->getBoardById(QString::fromStdString(match.boardId));
+                result.append(board);
+                if(result.size() > maxnumb_) break;
+            }
             emit finished(result);
             
         } catch (const cv::Exception& e) {
@@ -42,7 +51,7 @@ signals:
 private:
     PCBBoardManager* board_manager_;
     cv::Mat input_image_;
-    double threshold_;
+    int maxnumb_;
 };
 
 #endif // IDENTIFICATIONWORKER_H

@@ -177,7 +177,7 @@ void ImageFlowDialog::setupImageViewer()
     view->setStyleSheet("border: none;");
 }
 
-void ImageFlowDialog::loadImages(const QStringList& imagePaths)
+void ImageFlowDialog::loadImages(const QStringList& imagePaths, const QStringList& board_name)
 {
     // 清除现有图片
     for (auto item : imageItems) {
@@ -190,18 +190,18 @@ void ImageFlowDialog::loadImages(const QStringList& imagePaths)
     // 设置圆形区域的直径
     int circleSize = height() * 0.7;  // 使用窗口高度的70%作为圆的直径
     
+    if(imagePaths.size() != board_name.size()){
+        qDebug() << "imagePaths和board_name的大小不一致";
+        return;
+    }
+
     // 加载新图片
-    for (const QString &path : imagePaths) {
-        QPixmap originalPixmap(path);
+    for (int i = 0; i < imagePaths.size(); i++) {
+        QPixmap originalPixmap(imagePaths[i]);
         
-        // 计算缩放比例，使图片刚好内切于圆形
         qreal scaleRatio;
         qreal imageRatio = (qreal)originalPixmap.width() / originalPixmap.height();
         
-        // 使用勾股定理计算内切矩形的尺寸
-        // 对于圆内最大矩形，如果矩形宽高比为r，则：
-        // width = diameter * r / sqrt(1 + r*r)
-        // height = diameter / sqrt(1 + r*r)
         qreal width = circleSize * imageRatio / sqrt(1 + imageRatio * imageRatio);
         qreal height = circleSize / sqrt(1 + imageRatio * imageRatio);
         
@@ -243,7 +243,7 @@ void ImageFlowDialog::loadImages(const QStringList& imagePaths)
         painter.drawEllipse(1, 1, circleSize-2, circleSize-2);
         
         // 创建 AnimatedPixmapItem 时传入原始路径
-        AnimatedPixmapItem *item = new AnimatedPixmapItem(roundPixmap, path);  // 使用原始的文件路径
+        AnimatedPixmapItem *item = new AnimatedPixmapItem(roundPixmap, imagePaths[i], board_name[i]);  // 使用原始的文件路径
         scene->addItem(item);
         item->setTransformOriginPoint(item->boundingRect().center());
         imageItems.append(item);
@@ -324,9 +324,7 @@ void ImageFlowDialog::updateImagePositions()
             item->setBorderVisible(true);
             
             // 更新并显示路径标签
-            QString path = item->originalPath();
-            QFileInfo fileInfo(path);
-            QString displayText = fileInfo.fileName();  // 只显示文件名
+            QString displayText = item->name();
             pathLabel->setText(displayText);
             pathLabel->setVisible(true);
             
@@ -471,8 +469,8 @@ void ImageFlowDialog::showEvent(QShowEvent *event)
 void ImageFlowDialog::onConfirmClicked()
 {
     if (!imageItems.isEmpty() && currentImageIndex >= 0 && currentImageIndex < imageItems.size()) {
-        QString selectedPath = imageItems[currentImageIndex]->originalPath();
-        emit imageSelected(selectedPath);
+        QString name = imageItems[currentImageIndex]->name();
+        emit imageSelected(name);
     }
     accept();
 }

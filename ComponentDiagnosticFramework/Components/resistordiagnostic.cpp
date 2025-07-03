@@ -208,6 +208,7 @@ ComponentTestConfig ResistorDiagnostic::configureDataAcquisition(const Component
         config.parameters["JY5711"] = operation5711;
     }
     
+    config.TemperatureThreshold = 60.0;
     return config;
 }
 
@@ -223,6 +224,9 @@ TestData ResistorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
         testData.errorMessage = "设备管理器未就绪";
         return testData;
     }
+
+    getDeviceManager()->setTemperatureThreshold(config.TemperatureThreshold);
+    getDeviceManager()->getCameraManager()->startCamera(CameraType::IR_CAMERA);
 
     try {
         logInfo("开始执行电阻器数据采集");
@@ -365,10 +369,13 @@ TestData ResistorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
             qDebug() << (QString("设备 %1 停止失败: %2").arg("JY5322", stopResult2.error).toStdString());
         }
         getDeviceManager()->removeSyncGroup(syncGroupName);
+        testData.thermalidata = getDeviceManager()->getLatestThermalData();
+        getDeviceManager()->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
         testData.valid = true;
 
     } catch (const std::exception& e) {
         getDeviceManager()->initializeDeviceThreads();
+        getDeviceManager()->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
         testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
         logError(testData.errorMessage);
     }
@@ -383,6 +390,7 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
     result.componentType = getComponentTypeName();
     result.timestamp = QDateTime::currentDateTime();
     result.metameasurements = testData.measurements.first();
+    result.thermalData = testData.thermalidata;
 
     if (!testData.valid) {
         result.isPassed = false;
@@ -419,6 +427,7 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
         result.measurements["容差/%"] = tolerancePercent;
         result.measurements["平均电压"] = calculateMean(voltages);
         result.measurements["平均电流"] = calculateMean(currents);
+        result.measurements["最高温度"] = testData.thermalidata.maxTemp;
 
         // 故障分析
         bool hasFault = false;
@@ -456,7 +465,14 @@ ComponentDiagnosticResult ResistorDiagnostic::analyzeFaults(const ComponentSpec&
             result.recommendations.append("元件值不稳定，可能老化或损坏");
             hasFault = true;
         }
-
+        // 5. 检查温度
+        double maxTemp = result.measurements["最高温度"];
+        if (maxTemp > 60.0) {
+            result.faultTypes.append("温度过高");
+            result.recommendations.append("元件温度过高，可能老化或损坏");
+            hasFault = true;
+        }
+        
         // 设置总体结果
         result.isPassed = !hasFault;
         result.healthScore = calculateHealthScore(result.measurements, component);

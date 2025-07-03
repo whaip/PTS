@@ -5,12 +5,14 @@
 #include <QElapsedTimer>
 #include <QCoreApplication>
 
-DeviceManager::DeviceManager(QObject *parent)
+DeviceManager::DeviceManager(CameraManager* cameraManager, QObject *parent)
     : QObject(parent), syncController_(DeviceSyncController::instance()),
-      statusTimer_(new QTimer(this))
+      statusTimer_(new QTimer(this)), cameraManager_(cameraManager)
 {
     // 初始化状态监控
     initializeStatusMonitoring();
+    connect(cameraManager_, &CameraManager::temperatureAlert,
+            this, &DeviceManager::onTemperatureAlert);
 }
 
 DeviceManager::~DeviceManager()
@@ -1221,4 +1223,32 @@ QMap<QString, QVariant> DeviceManager::measurePulse(const QMap<QString, QVariant
     result["turn_off_time"] = 25e-9;
     
     return result;
+}
+
+void DeviceManager::setTemperatureThreshold(double threshold)
+{
+    if (!cameraManager_) {
+        setError("相机管理器未初始化");
+        return;
+    }
+    TemperatureAlerted_ = false;
+    cameraManager_->setTemperatureThreshold(threshold);
+    return;
+}
+
+void DeviceManager::onTemperatureAlert(double temperature, const cv::Point& location)
+{
+    if(TemperatureAlerted_) return;
+    {lock_guard<QMutex> locker(thermalDataMutex_);
+    latestThermalData_ = cameraManager_->getLatestThermalData();}
+    g_ch340->Close();
+    TemperatureAlerted_ = true;
+}
+
+ThermalData DeviceManager::getLatestThermalData() const
+{
+    if(TemperatureAlerted_)
+        return latestThermalData_;
+    else
+        return cameraManager_->getLatestThermalData();
 }

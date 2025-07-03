@@ -31,28 +31,22 @@ public:
                   QSerialPort::Parity parity = QSerialPort::NoParity,
                   QSerialPort::StopBits stopBits = QSerialPort::OneStop);
 
-    // 关闭串口
-    void closePort();
-
-    // 发送数据
-    bool writeData(const QByteArray& data);
-
-    // 读取数据
-    QByteArray readData();
-
     // 检查串口是否打开
     bool isOpen();
+    bool Open();
+    bool Close();
 
     // 获取错误信息
     QString getLastError();
-
-    // 发送字符串数据
-    bool writeString(const QString& str);
-
 private:
     CH340();
+
+    void closePort();
+    bool writeData(const QByteArray& data);
     void writeThreadFunc();  // 写入线程函数
+    bool writeString(const QString& str);
     void processWriteQueue();  // 处理写入队列
+    QByteArray readData();
 
     QSerialPort* m_serialPort;
     QString m_lastError;

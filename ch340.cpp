@@ -13,58 +13,16 @@ CH340::CH340() : m_serialPort(new QSerialPort())
             break;
         }
     }
-    m_running = true;
-    m_writeThread = std::thread(&CH340::writeThreadFunc, this);
+    writeString("FF00FF");
+    m_running = false;
 }
 
 CH340::~CH340()
 {
-    m_running = false;
-    m_queueCondition.notify_all();
-    if (m_writeThread.joinable()) {
-        m_writeThread.join();
-    }
     if (m_serialPort->isOpen()) {
         m_serialPort->close();
     }
     delete m_serialPort;
-}
-
-void CH340::writeThreadFunc()
-{
-    while (m_running) {
-        std::unique_lock<std::mutex> lock(m_queueMutex);
-        m_queueCondition.wait(lock, [this] { 
-            return !m_writeQueue.empty() || !m_running; 
-        });
-
-        if (!m_running) break;
-
-        processWriteQueue();
-    }
-}
-
-void CH340::processWriteQueue()
-{
-    while (!m_writeQueue.empty()) {
-        QByteArray data = m_writeQueue.front();
-        m_writeQueue.pop();
-
-        std::lock_guard<std::mutex> lock(m_serialPortMutex);
-        if (m_serialPort->isOpen()) {
-            qint64 bytesWritten = m_serialPort->write(data);
-            if (bytesWritten == -1) {
-                m_lastError = m_serialPort->errorString();
-                qDebug() << "Write error:" << m_lastError;
-            } else {
-                // 等待数据写入完成，但使用较短的超时时间
-                if (!m_serialPort->waitForBytesWritten(100)) {
-                    m_lastError = "数据写入超时";
-                    qDebug() << "Write timeout";
-                }
-            }
-        }
-    }
 }
 
 bool CH340::openPort(const QString& portName, 
@@ -91,6 +49,29 @@ bool CH340::openPort(const QString& portName,
     return true;
 }
 
+bool CH340::Open()
+{
+    if(m_running) return true;
+    if(!writeString("FF01FF"))
+    {
+        m_lastError = "电源打开失败" + getLastError();
+        return false;
+    }
+    m_running = true;
+    return true;
+}
+
+bool CH340::Close()
+{
+    if(!m_running) return true;
+    if(!writeString("FF00FF"))
+    {
+        m_lastError = "电源关闭失败" + getLastError();
+        return false;
+    }
+    m_running = false;
+    return true;
+}
 void CH340::closePort()
 {
     std::lock_guard<std::mutex> lock(m_serialPortMutex);
@@ -131,8 +112,7 @@ QByteArray CH340::readData()
 
 bool CH340::isOpen()
 {
-    std::lock_guard<std::mutex> lock(m_serialPortMutex);
-    return m_serialPort->isOpen();
+    return m_running;
 }
 
 QString CH340::getLastError()
@@ -149,15 +129,18 @@ bool CH340::writeString(const QString& str)
     }
 
     QByteArray data = str.toUtf8();
-    
-    {
-        std::lock_guard<std::mutex> lock(m_queueMutex);
-        m_writeQueue.push(data);
-    }
-    m_queueCondition.notify_one();
 
-    if(str == "FF01FF") qDebug() << "ch340 open";
-    if(str == "FF00FF") qDebug() << "ch340 close";
+    qint64 bytesWritten = m_serialPort->write(data);
+    if (bytesWritten == -1) {
+        m_lastError = m_serialPort->errorString();
+        return false;
+    }
+
+    // 等待数据写入完成
+    if (!m_serialPort->waitForBytesWritten(1000)) {
+        m_lastError = "数据写入超时";
+        return false;
+    }
     
     return true;
 }

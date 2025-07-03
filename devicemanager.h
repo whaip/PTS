@@ -5,6 +5,7 @@
 #include "include/JY5710.h"
 #include "include/JY8902.h"
 #include "devicethread.h"
+#include "cameramanager.h"
 #include <QString>
 #include <QObject>
 #include <QMap>
@@ -28,7 +29,7 @@ class DeviceManager : public QObject
 {    Q_OBJECT
 
 public:
-    explicit DeviceManager(QObject *parent = nullptr);
+    explicit DeviceManager(CameraManager* cameraManager = nullptr, QObject *parent = nullptr);
     ~DeviceManager();
 
     struct WaitResult {
@@ -105,6 +106,8 @@ public:
                                        int timeout = 5000);
 
     QString getLastError() const { return last_error_; }
+    ThermalData getLatestThermalData() const;
+    CameraManager *getCameraManager() const { return cameraManager_; }
 
     // 通用测量接口
     QMap<QString, QVariant> measureVoltage(int channel, double range = 10.0);
@@ -113,11 +116,13 @@ public:
     QMap<QString, QVariant> measureLCR(const QMap<QString, QVariant>& params);
     QMap<QString, QVariant> measureSMU(const QMap<QString, QVariant>& params);
     QMap<QString, QVariant> measurePulse(const QMap<QString, QVariant>& params);
+    void setTemperatureThreshold(double threshold);
 
 public slots:
     void onDeviceStatusChanged(const QString& deviceName, bool ready);
     void onOperationCompleted(const QString& deviceName, const DeviceResult& result);
     void onDeviceError(const QString& deviceName, const QString& error);
+    void onTemperatureAlert(double temperature, const cv::Point& location);
 
 signals:
     void deviceStatusChanged(const QString& device, DeviceStatus status);
@@ -131,7 +136,11 @@ private:
     
     // 同步控制
     DeviceSyncController* syncController_;
-    
+    CameraManager* cameraManager_;
+    ThermalData latestThermalData_;
+    mutable QMutex thermalDataMutex_;
+    bool TemperatureAlerted_ = false;
+
     // 错误处理
     QString last_error_;
     mutable QMutex errorMutex_;

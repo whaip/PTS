@@ -16,26 +16,11 @@ PortManager::PortManager(DeviceManager* deviceManager, QObject *parent)
         connect(deviceManager_, &DeviceManager::deviceStatusChanged,
                 this, &PortManager::onDeviceStatusChanged);
     }
-    
-    // 状态更新定时器
-    connect(statusUpdateTimer_, &QTimer::timeout, this, &PortManager::updateDeviceStatus);
-    statusUpdateTimer_->start(5000); // 每5秒更新一次状态
 }
 
 PortManager::~PortManager()
 {
     qDebug() << "PortManager: 开始析构...";
-    
-    // 停止定时器
-    if (statusUpdateTimer_) {
-        statusUpdateTimer_->stop();
-    }
-    
-    // 先断开所有信号连接，避免析构过程中触发信号
-    if (deviceManager_) {
-        disconnect(deviceManager_, nullptr, this, nullptr);
-    }
-    // disconnect(this, nullptr, nullptr, nullptr);
     
     // 静默释放所有端口（不发送信号）
     {
@@ -45,7 +30,6 @@ PortManager::~PortManager()
                 if (!port.isAvailable) {
                     port.isAvailable = true;
                     port.allocatedTo.clear();
-                    // 不发送信号，避免析构过程中的问题
                 }
             }
         }
@@ -357,20 +341,6 @@ bool PortManager::validatePortConfiguration(const QVector<ConnectionInfo>& conne
     }
     
     return isValid;
-}
-
-void PortManager::updateDeviceStatus()
-{
-    // 检查设备状态并更新端口可用性
-    if (!deviceManager_) return;
-    
-    QMutexLocker locker(&portMutex_);
-    
-    for (auto it = devicePorts_.begin(); it != devicePorts_.end(); ++it) {
-        const QString& deviceName = it.key();
-        // 这里可以根据设备状态更新端口可用性
-        // 暂时保持现有状态
-    }
 }
 
 void PortManager::onDeviceStatusChanged(const QString& device, DeviceStatus status)

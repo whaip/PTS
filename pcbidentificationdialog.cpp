@@ -394,7 +394,7 @@ void PCBIdentificationDialog::startIdentification()
     addLogMessage(QString("开始识别: %1").arg(imagePath));
     
     // 启动异步识别
-    pcb_identifier_->identifyPCBAsync(imagePath);
+    // pcb_identifier_->identifyPCBAsync(imagePath);
 }
 
 void PCBIdentificationDialog::startBatchIdentification()
@@ -418,12 +418,12 @@ void PCBIdentificationDialog::startBatchIdentification()
     addLogMessage(QString("开始批量识别 %1 张图片").arg(imageFiles.size()));
     
     // 启动批量识别
-    QVector<PCBIdentificationResult> results = pcb_identifier_->identifyBatch(imageFiles);
+    // QVector<PCBIdentificationResult> results = pcb_identifier_->identifyBatch(imageFiles);
     
     // 处理结果
-    for (const PCBIdentificationResult& result : results) {
-        updateResultsTable(result);
-    }
+    // for (const PCBIdentificationResult& result : results) {
+    //     updateResultsTable(result);
+    // }
     
     // 恢复界面状态
     batch_identify_button_->setEnabled(true);
@@ -496,7 +496,7 @@ void PCBIdentificationDialog::addNewModel()
         return;
     }
     
-    if (pcb_identifier_ && pcb_identifier_->addPCBModel(modelName, templateFiles)) {
+    if (pcb_identifier_ && pcb_identifier_->addPCBModel(modelName, cv::imread(templateFiles[0].toStdString()))) {
         addLogMessage(QString("添加模型成功: %1").arg(modelName));
         updateModelList();
     }
@@ -543,7 +543,7 @@ void PCBIdentificationDialog::updateSelectedModel()
         return;
     }
     
-    if (pcb_identifier_ && pcb_identifier_->updatePCBModel(modelName, templatePaths)) {
+    if (pcb_identifier_ && pcb_identifier_->updatePCBModel(modelName, cv::imread(templatePaths[0].toStdString()))) {
         addLogMessage(QString("更新模型成功: %1").arg(modelName));
         updateModelList();
     }

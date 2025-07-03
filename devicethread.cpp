@@ -325,6 +325,11 @@ AODeviceThread::~AODeviceThread()
 
 bool AODeviceThread::initializeDevice()
 {
+    if(g_ch340->isOpen()){
+        if(!g_ch340->Close()){
+            qDebug() << "串口关闭失败";
+        }
+    }
     int32_t result = JY5710_Open(0, &deviceHandle_);
     if (result != Success) {
         qDebug() << "Failed to open JY5711 AO device, error:" << result;
@@ -404,6 +409,8 @@ void AODeviceThread::shutdownDevice()
         JY5710_Close(deviceHandle_);
         deviceHandle_ = nullptr;
     }
+
+    g_ch340->Close();
     enabledChannels_.clear();
     channelStates_.clear();
 }
@@ -460,6 +467,12 @@ DeviceResult AODeviceThread::executeOperation(const DeviceOperation& operation)
                 qDebug() << "AO stopped";
             } else {
                 result.error = QString("Failed to stop AO, error: %1").arg(apiResult);
+            }
+
+            if(!g_ch340->Close())
+            {
+                result.success = false;
+                result.error += g_ch340->getLastError();
             }
             break;
             
@@ -559,7 +572,7 @@ DeviceResult AODeviceThread::configureChannelWithRestart(const DeviceOperation& 
         result.error = QString("Failed to set AO trigger type, error: %1").arg(apiResult);
         return result;
     }
-    
+
     result.success = true;
     result.data["actualSampleRate"] = actualUpdateRate;
     qDebug() << "AO channels configured successfully with sample rate:" << actualUpdateRate;
@@ -679,6 +692,13 @@ DeviceResult AODeviceThread::outputWaveform(const DeviceOperation& operation)
     apiResult = JY5710_AO_Start(deviceHandle_);
     if (apiResult != Success) {
         result.error = QString("Failed to start AO output, error: %1").arg(apiResult);
+        return result;
+    }
+    
+    if(g_ch340->Open()){
+        qDebug() << "串口打开成功";
+    } else {
+        result.error = "Failed to open serial port for AO device";
         return result;
     }
     
