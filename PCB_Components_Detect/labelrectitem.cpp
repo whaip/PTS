@@ -396,7 +396,7 @@ void LabelRectItem::keyPressEvent(QKeyEvent *event)
 void LabelRectItem::hoverEnterEvent(QGraphicsSceneHoverEvent *event)
 {
     isHovered = true;
-    setFocus();  // 获���键盘焦点
+    setFocus();  // 获取键盘焦点
     QGraphicsRectItem::hoverEnterEvent(event);
 }
 
@@ -426,11 +426,17 @@ void LabelRectItem::setRect(const QRectF &rect)
     QGraphicsRectItem::setRect(rect);
     updateZValue();  // 当矩形大小改变时更新Z值
 
-    // 更新 label_info 以反映新的矩形尺寸和位置
+    // 更新兼容字段以反映新的矩形尺寸和位置
     label_info.point_x = rect.x();
     label_info.point_y = rect.y();
-    label_info.width = rect.width();
-    label_info.height = rect.height();
+    label_info.width   = rect.width();
+    label_info.height  = rect.height();
+
+    // 同步主字段以更新 x, y, w, h
+    label_info.x = rect.x();
+    label_info.y = rect.y();
+    label_info.w = rect.width();
+    label_info.h = rect.height();
 
     update();  // 确保重新绘制以反映更改
 }
@@ -438,13 +444,18 @@ void LabelRectItem::setRect(const QRectF &rect)
 QVariant LabelRectItem::itemChange(GraphicsItemChange change, const QVariant &value)
 {
     if (change == QGraphicsItem::ItemPositionChange || change == QGraphicsItem::ItemScaleChange) {
-        // 处理位置或缩放变化
         updateZValue();
-        QRectF rect = sceneRect();
-        label_info.point_x = rect.x();
-        label_info.point_y = rect.y();
-        label_info.width = rect.width();
-        label_info.height = rect.height();
+        QRectF r = sceneRect();
+        label_info.point_x = r.x();
+        label_info.point_y = r.y();
+        label_info.width   = r.width();
+        label_info.height  = r.height();
+
+        // 同步主字段
+        label_info.x = r.x();
+        label_info.y = r.y();
+        label_info.w = r.width();
+        label_info.h = r.height();
     }
     return QGraphicsRectItem::itemChange(change, value);
 }

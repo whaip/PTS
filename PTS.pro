@@ -61,7 +61,6 @@ SOURCES += \
     ComponentDiagnosticFramework/Components/inductordiagnostic.cpp \
     ComponentDiagnosticFramework/Components/diodediagnostic.cpp \
     ComponentDiagnosticFramework/Components/icdiagnostic.cpp \
-    componentimageselector.cpp \
     pcbidentifier.cpp \
     pcbidentificationdialog.cpp \
     cameramanager.cpp \
@@ -109,7 +108,6 @@ HEADERS += \
     ComponentDiagnosticFramework/Components/inductordiagnostic.h \
     ComponentDiagnosticFramework/Components/diodediagnostic.h \
     ComponentDiagnosticFramework/Components/icdiagnostic.h \
-    componentimageselector.h \
     pcbidentifier.h \
     pcbidentificationdialog.h \
     cameramanager.h \

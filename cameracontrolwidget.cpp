@@ -27,9 +27,7 @@ CameraControlWidget::~CameraControlWidget()
 {
     // 断开 cameraManager_ 的所有信号，避免析构过程中收到 queued 信号导致崩溃
     disconnect(cameraManager_, nullptr, this, nullptr);
-    // 停止所有摄像头，先停止红外再停止高清
-    cameraManager_->stopCamera(CameraType::IR_CAMERA);
-    cameraManager_->stopCamera(CameraType::HD_CAMERA);
+    onStopAllCameras();
 }
 
 CameraManager* CameraControlWidget::getCameraManager() const
@@ -500,8 +498,8 @@ void CameraControlWidget::onStartAllCameras()
 
 void CameraControlWidget::onStopAllCameras()
 {
-    onStopHDCamera();
     onStopIRCamera();
+    onStopHDCamera();
 }
 
 // 诊断功能

@@ -87,9 +87,9 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                 {
                     WiringConnection conn1;
                     conn1.componentPin = "引脚1";
-                    conn1.targetPort = port; // JY5711模拟输出
+                    conn1.targetPort = port;
                     conn1.wireColor = "红色";
-                    conn1.instruction = "将红色导线连接电阻引脚1到信号输出";
+                    conn1.instruction = QString("将模拟输出端口%1连接到电阻%2信号输出引脚").arg(port.portNumber).arg(component.reference);
                     conn1.isRequired = true;
                     connections.append(conn1);
                 }
@@ -100,7 +100,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                     conn2.componentPin = "引脚2";
                     conn2.targetPort = port; // 电压测量
                     conn2.wireColor = "黑色";
-                    conn2.instruction = "将黑色导线连接电阻引脚2到信号测量输入";
+                    conn2.instruction = QString("将数字输入端口%1连接到电阻%2信号测量输入引脚").arg(port.portNumber).arg(component.reference);
                     conn2.isRequired = true;
                     connections.append(conn2);
                 }
@@ -111,7 +111,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                     conn3.componentPin = "引脚1";
                     conn3.targetPort = port; // 电阻测量
                     conn3.wireColor = "蓝色";
-                    conn3.instruction = "将蓝色导线连接电阻引脚1到电阻测量";
+                    conn3.instruction = QString("将蓝色导线连接到电阻%1引脚%2到电阻测量").arg(component.reference).arg(port.portNumber);
                     conn3.isRequired = true;
                     connections.append(conn3);
                 }
@@ -122,7 +122,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                     conn4.componentPin = "引脚1";
                     conn4.targetPort = port; // 电流测量
                     conn4.wireColor = "绿色";
-                    conn4.instruction = "将测量导线串联到电阻电路中";
+                    conn4.instruction = QString("将模拟输入端口%1连接到电阻%2电路中").arg(port.portNumber).arg(component.reference);
                     conn4.isRequired = true;
                     connections.append(conn4);
                 }
@@ -370,12 +370,10 @@ TestData ResistorDiagnostic::executeDataAcquisition(const ComponentTestConfig& c
         }
         getDeviceManager()->removeSyncGroup(syncGroupName);
         testData.thermalidata = getDeviceManager()->getLatestThermalData();
-        getDeviceManager()->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
         testData.valid = true;
 
     } catch (const std::exception& e) {
         getDeviceManager()->initializeDeviceThreads();
-        getDeviceManager()->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
         testData.errorMessage = QString("数据采集异常: %1").arg(e.what());
         logError(testData.errorMessage);
     }

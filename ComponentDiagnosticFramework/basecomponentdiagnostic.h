@@ -87,26 +87,20 @@ public:
     explicit BaseComponentDiagnostic(DeviceManager* deviceManager, QObject* parent = nullptr);
     virtual ~BaseComponentDiagnostic() = default;
     
-    // 主要诊断接口
     ComponentDiagnosticResult diagnoseComponent(const ComponentSpec& component);
     
-    // 兼容性接口（为了兼容现有代码）
     ComponentDiagnosticResult diagnose(const ComponentSpec& component) {
         return diagnoseComponent(component);
     }
     
-    // 获取组件信息
     virtual ComponentType getSupportedComponentType() const = 0;
     virtual QString getComponentTypeName() const = 0;
     virtual QStringList getSupportedModels() const { return QStringList(); }
     
-    // 设备管理器操作
     void setDeviceManager(DeviceManager* deviceManager);
     
-    // 静态工具方法
     static QString componentTypeToString(ComponentType type);
     
-    // 静态工厂方法
     static BaseComponentDiagnostic* createDiagnostic(ComponentType type, DeviceManager* deviceManager, QObject* parent = nullptr);
     
     /**
@@ -221,12 +215,6 @@ signals:
 private:
     DeviceManager* deviceManager_;
     QString currentComponentId_;
-
-    // 诊断流程的私有方法
-    bool allocatePorts(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);
-    bool allocatePortsByComponentType(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts);
-    bool setupWiring(const ComponentSpec& component, const QVector<PortInfo>& ports);
-    void releasePorts(const QVector<PortInfo>& ports);
 };
 
 // 组件诊断工厂类

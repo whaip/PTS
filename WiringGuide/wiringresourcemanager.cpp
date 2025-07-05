@@ -26,7 +26,6 @@ WiringResourceManager::~WiringResourceManager()
     // 设置析构标志
     isDestructing_ = true;
     
-    // 先断开所有信号连接，避免析构过程中触发信号
     if (portManager_) {
         disconnect(portManager_, nullptr, this, nullptr);
     }
@@ -167,7 +166,6 @@ bool WiringResourceManager::validatePortAvailability(const QVector<ConnectionInf
             // 端口可用，验证通过
             continue;
         } else if (allocatedTo == currentUser) {
-            // 端口已分配给当前用户，这是预期的，验证通过
             qDebug() << "端口" << connection.sourcePort.deviceName << connection.sourcePort.portNumber 
                      << "已正确分配给当前用户:" << currentUser;
             continue;

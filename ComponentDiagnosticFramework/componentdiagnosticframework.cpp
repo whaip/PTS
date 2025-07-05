@@ -239,7 +239,12 @@ QString formatDiagnosticResult(const ComponentDiagnosticResult& result, bool det
 {
     QString formatted;
     QTextStream stream(&formatted);
-    
+
+    stream  << QString("===============================================") << "\n";
+    stream << QString("      PCB Component Test Statistics Report") << "\n";
+    stream << QString("===============================================") << "\n\n";
+
+    stream << QString("Report Generated: %1").arg(QDateTime::currentDateTime().toString()) << "\n\n";
     // 基本信息
     stream << QString("=== %1 诊断结果 ===").arg(result.componentId) << Qt::endl;
     stream << QString("组件类型: %1").arg(result.componentType) << Qt::endl;

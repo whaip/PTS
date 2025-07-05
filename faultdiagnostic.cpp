@@ -95,14 +95,19 @@ QString FaultDiagnostic::diagnoseComponentAsync(const ComponentSpec& component)
         return QString();
     }
     
-    try {
-        qDebug() << "开始异步诊断组件:" << component.reference;
-        return diagnostic_manager_->diagnoseComponentAsync(component);
-        
-    } catch (const std::exception& e) {
-        setError(QString("异步诊断失败: %1").arg(e.what()));
-        return QString();
-    }
+    QString taskId = diagnostic_manager_->diagnoseComponentAsync(component);
+    QObject::connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisCompleted,
+                        this, [this, taskId](const QString& taskId, const QString& componentId, const ComponentDiagnosticResult& frameworkResult) {
+                        auto result = convertFromComponentDiagnosticResult(frameworkResult);
+                        emit diagnosisCompleted(result);
+                        emit diagnosticCompleted(result);
+                        });
+    QObject::connect(diagnostic_manager_, &ComponentDiagnosticManager::componentDiagnosisError,
+                        this, [this, taskId](const QString& taskId, const QString& componentId, const QString& error) {
+                        setError(error);
+                        emit errorOccurred(error);
+                        });
+    return taskId;
 }
 
 QVector<DiagnosticResult> FaultDiagnostic::diagnoseBatch(const QVector<ComponentSpec>& components)
@@ -237,6 +242,7 @@ DiagnosticResult FaultDiagnostic::convertFromComponentDiagnosticResult(const Com
     // 设置健康分数和置信度
     diagnosticResult.healthScore = result.healthScore;
     diagnosticResult.confidence = result.confidence;
+    diagnosticResult.MetaResult = result;
     
     // 设置故障描述
     diagnosticResult.diagnosticSummary = formatDiagnosticResult(result, true);

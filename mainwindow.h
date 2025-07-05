@@ -91,7 +91,8 @@ private slots:
     void startWiringGuide();
     void onWiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);  // 接线完成回调
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
-    void proceedToNextBatchTest();  // 继续下一个批量测试
+    void proceedToNextBatchTest(); 
+    void onDiagnoseComponents(const QList<ComponentSpec>& specs);
 
 private:
     Ui::MainWindow *ui;    // 核心组件

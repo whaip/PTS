@@ -78,6 +78,7 @@ private:
     void updateValidationResults();
     void generateWiringSteps(const ComponentSpec& component, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void createConnectionInstructions();
+    QString GeneratePortShowName(const QString& devicename, const int& portnumber);
       // Add missing helper function declarations
     QString generateTestParametersDescription() const;
     QString portTypeToString(PortType type) const;

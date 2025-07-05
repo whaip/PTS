@@ -88,7 +88,7 @@ MainWindow::MainWindow(QWidget *parent)
     }
 
     // 初始化PCB板卡管理窗口 - 作为独立窗口
-    board_management_widget_ = new PCBBoardManagementWidget();
+    board_management_widget_ = new PCBBoardManagementWidget(diagnostic_manager);
     board_management_widget_->setBoardManager(board_manager_);
     board_management_widget_->setCameraManager(camera_control_->getCameraManager());
 
@@ -124,6 +124,9 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(result_exporter_, &ResultExporter::exportFailed,
             this, &MainWindow::onErrorOccurred);
+
+    connect(board_management_widget_, &PCBBoardManagementWidget::diagnoseComponents,
+            this, &MainWindow::onDiagnoseComponents);
 
     // 状态更新定时器
     connect(status_timer_, &QTimer::timeout, this, &MainWindow::updateSystemStatus);
@@ -812,6 +815,7 @@ void MainWindow::finishBatchTest()
         main_batch_task_id_.clear();
     }
     current_task_id_.clear();
+    camera_control_->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
 
     // 统计结果
     int passed = 0, failed = 0, errors = 0;
@@ -855,13 +859,15 @@ void MainWindow::onDiagnosticCompleted(const DiagnosticResult& result)
     }
 
     // 在单元件测试时更新结果显示
-    if (main_tabs_->currentWidget() == single_test_page_) {
+    if (!batch_testing_active_) {
         single_result_text_->append(result.diagnosticSummary);
         updateSingleTestMeasurementPlot(result.metameasurementData);
-        // 显示红外数据
+
+        single_thermal_display_->clear();
         if (result.thermalData.isValid) {
             updateSingleTestThermalDisplay(result.thermalData);
         }
+        camera_control_->getCameraManager()->stopCamera(CameraType::IR_CAMERA);
         single_result_text_->append("\n测试完成。");
 
         // Re-enable the single test button
@@ -1170,7 +1176,7 @@ void MainWindow::exportResults()
     QString filename = QFileDialog::getSaveFileName(this,
         "导出测试结果",
         QString("test_results_%1.csv").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
-        "CSV文件 (*.csv);;JSON文件 (*.json);;HTML报告 (*.html);;所有文件 (*.*)");
+        "CSV文件 (*.csv);;JSON文件 (*.json);;所有文件 (*.*)");
 
     if (!filename.isEmpty()) {
         QFileInfo fileInfo(filename);
@@ -1181,8 +1187,6 @@ void MainWindow::exportResults()
             success = result_exporter_->exportToCSV(test_results_, filename);
         } else if (extension == "json") {
             success = result_exporter_->exportToJSON(test_results_, filename);
-        } else if (extension == "html") {
-            success = result_exporter_->exportToHTML(test_results_, filename, "PCB故障诊断测试报告");
         } else {
             // 默认导出为CSV
             success = result_exporter_->exportToCSV(test_results_, filename);
@@ -1354,10 +1358,6 @@ void MainWindow::onWiringCompleted(const WiringScheme& scheme, const QMap<QStrin
         single_test_button_->setText("开始测试");
     }
 }
-
-//=============================================================================
-// 批量测试统一接线方案管理方法实现
-//=============================================================================
 
 QVector<ComponentSpec> MainWindow::createBatchComponentSpec()
 {
@@ -1574,7 +1574,7 @@ void MainWindow::updateDetailText(int currentRow, int currentColumn, int previou
         detail_text_->setText(result.diagnosticSummary);
         updateMeasurementPlot(result.metameasurementData);
 
-       // 更新批量测试结果页面的红外图像显示
+        batch_thermal_display_->clear();
        if (batch_thermal_display_ && result.thermalData.isValid) {
            updateBatchTestThermalDisplay(result.thermalData);
        }
@@ -2024,4 +2024,29 @@ void MainWindow::updateBatchTestThermalDisplay(const ThermalData& thermalData)
         
     batch_thermal_display_->setImage(thermalImage, tempData, width, height);
     batch_thermal_display_->MarkMaxTemp(true);
+}
+
+void MainWindow::onDiagnoseComponents(const QList<ComponentSpec>& specs)
+{
+    if(specs.isEmpty()) return;
+
+    for(const auto& spec : specs)
+    {
+        TestStep step = createTestStepFromComponent(spec);
+        bool isExist = false;
+        for (const TestStep &existingStep : current_sequence_.steps) {
+            if (existingStep.component == step.component) {
+                QMessageBox::warning(this, "添加失败",
+                                    QString("测试步骤 '%1' 已存在！").arg(step.component));
+                isExist = true;
+                break;
+            }
+        }
+        if(!isExist)
+        {
+            sequence_manager_->addTestStep(current_sequence_, step);
+        }
+    }
+    populateComponentTable();
+    main_tabs_->setCurrentWidget(batch_test_page_);
 }

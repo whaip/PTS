@@ -24,7 +24,7 @@ QString CapacitorDiagnostic::getComponentTypeName() const
 
 QStringList CapacitorDiagnostic::getSupportedModels() const
 {
-    return QStringList() << "陶瓷电容" << "电解电容" << "薄膜电容" << "钽电容" << "超级电容";
+    return QStringList() << "电解电容" <<  "钽电容";
 }
 
 QVector<PortRequirement> CapacitorDiagnostic::getPortRequirements(const ComponentSpec& component) const
@@ -61,7 +61,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     conn1.componentPin = "正极";
                     conn1.targetPort = port; // JY5711交流激励输出
                     conn1.wireColor = "红色";
-                    conn1.instruction = QString("将电容连接到模拟输出端口%1").arg(port.portNumber);
+                    conn1.instruction = QString("将电容%1连接到模拟输出端口%2").arg(component.reference).arg(port.portNumber);
                     conn1.isRequired = true;
                     connections.append(conn1);
                 }
@@ -73,7 +73,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     conn2.componentPin = "正极";
                     conn2.targetPort = port; // JY5322电压测量输入
                     conn2.wireColor = "黄色";
-                    conn2.instruction = QString("将数字输入端口%1 导线连接到电容正极").arg(port.portNumber);
+                    conn2.instruction = QString("将数字输入端口%1 导线连接到电容%2正极").arg(port.portNumber).arg(component.reference);
                     conn2.isRequired = true;
                     connections.append(conn2);
                 }
@@ -85,7 +85,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     conn3.componentPin = "负极";
                     conn3.targetPort = port; // JY5323电流测量输入
                     conn3.wireColor = "黑色";
-                    conn3.instruction = QString("将模拟输入端口%1 串联到电容负极").arg(port.portNumber);
+                    conn3.instruction = QString("将模拟输入端口%1 串联到电容%2负极").arg(port.portNumber).arg(component.reference);
                     conn3.isRequired = true;
                     connections.append(conn3);
                 }
@@ -166,6 +166,7 @@ ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const Componen
         }
     }
 
+    config.TemperatureThreshold = 60.0;
     config_ = config;
     return config;
 }
@@ -183,9 +184,12 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
         return testData;
     }
     
+    getDeviceManager()->setTemperatureThreshold(config.TemperatureThreshold);
+    getDeviceManager()->getCameraManager()->startCamera(CameraType::IR_CAMERA);
+    
     try {
         logInfo("开始执行电容器数据采集");
-        
+
         // 配置设备
         for (auto it = config.parameters.begin(); it != config.parameters.end(); ++it) {
             if(!getDeviceManager()->submitOperation(it.key(), it.value())) {
@@ -305,36 +309,12 @@ TestData CapacitorDiagnostic::executeDataAcquisition(const ComponentTestConfig& 
 
         getDeviceManager()->removeSyncGroup(syncGroupName);
 
-        // 计算ESR和阻抗参数
-        QVector<double> voltages = measurement.value("voltages").value<QVector<double>>();
-        QVector<double> currents = measurement.value("currents").value<QVector<double>>();
-        
-        if (!voltages.isEmpty() && !currents.isEmpty()) {
-            // 计算平均电压和电流
-            double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
-            double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-            
-            // 计算阻抗 Z = V/I
-            double impedance = (avgCurrent != 0) ? qAbs(avgVoltage / avgCurrent) : 0.0;
-            measurement["impedance"] = impedance;
-            
-            // 估算ESR（简化计算，实际ESR通常是阻抗的一部分）
-            double esr = impedance * 0.1; // 简化假设ESR为阻抗的10%
-            measurement["esr"] = esr;
-            
-            // 估算损耗角正切值
-            double tanDelta = 0.05; // 简化值，实际应该通过相位计算
-            measurement["tan_delta"] = tanDelta;
-            
-            logInfo(QString("计算得到 阻抗: %1 Ω, ESR: %2 Ω, tan δ: %3")
-                   .arg(impedance).arg(esr).arg(tanDelta));
-        }
-
         // 将测量数据添加到列表中
         testData.measurements.append(measurement);
         
         // 设置元数据
         testData.metadata = config.parameters;
+        testData.thermalidata = getDeviceManager()->getLatestThermalData();
         testData.valid = true;
         
         logInfo("电容器数据采集完成");
@@ -355,6 +335,8 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
     result.componentId = component.reference;
     result.componentType = getComponentTypeName();
     result.timestamp = QDateTime::currentDateTime();
+    result.metameasurements = testData.measurements.first();
+    result.thermalData = testData.thermalidata;
     
     if (!testData.valid) {
         result.isPassed = false;
@@ -396,9 +378,19 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
             calculatedCapacitance = 1.0 / (2 * M_PI * testFreq * impedance);
         }
         
-        // 获取ESR（从测量数据中获取或使用估算值）
-        double measuredESR = measurementData.value("esr", impedance * 0.1).toDouble(); // 默认为阻抗的10%
-        double measuredTanDelta = measurementData.value("tan_delta", 0.05).toDouble();
+        double measuredESR = 0.0;
+        if (!voltages.isEmpty() && !currents.isEmpty()) {
+            // 计算平均电压和电流
+            double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
+            double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
+            
+            // 估算ESR（简化计算，实际ESR通常是阻抗的一部分）
+            double esr = impedance * 0.1; // 简化设ESR为阻抗的10%
+            measuredESR = esr;
+            
+            logInfo(QString("计算得到 阻抗: %1 Ω, ESR: %2 Ω")
+                   .arg(impedance).arg(esr));
+        }
         
         // 从component.params中获取规格参数
         double nominalCapacitance = component.params.value("标称值", 1e-6).toDouble();
@@ -409,24 +401,25 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         result.metameasurements = measurementData;
         
         // 存储计算结果
-        result.measurements["calculated_capacitance"] = calculatedCapacitance;
-        result.measurements["expected_capacitance"] = nominalCapacitance;
-        result.measurements["capacitance_deviation_percent"] = calculateDeviation(calculatedCapacitance, nominalCapacitance);
-        result.measurements["measured_esr"] = measuredESR;
-        result.measurements["max_esr_spec"] = maxESR;
-        result.measurements["tolerance_percent"] = tolerancePercent;
-        result.measurements["tan_delta"] = measuredTanDelta;
-        result.measurements["test_frequency"] = testFreq;
-        result.measurements["calculated_impedance"] = impedance;
-        result.measurements["average_voltage"] = avgVoltage;
-        result.measurements["average_current"] = avgCurrent;
+        result.measurements["计算电容"] = calculatedCapacitance;
+        result.measurements["标称电容"] = nominalCapacitance;
+        result.measurements["容值偏差"] = calculateDeviation(calculatedCapacitance, nominalCapacitance);
+        result.measurements["测量ESR"] = measuredESR;
+        result.measurements["最大ESR规格"] = maxESR;
+        result.measurements["容差"] = tolerancePercent;
+        // result.measurements["损耗角正切值"] = measuredTanDelta;
+        result.measurements["测试频率"] = testFreq;
+        result.measurements["计算阻抗"] = impedance;
+        result.measurements["平均电压"] = avgVoltage;
+        result.measurements["平均电流"] = avgCurrent;
+        result.measurements["最高温度"] = testData.thermalidata.maxTemp;
 
         // 故障分析
         bool hasFault = false;
         
         // 1. 检查开路
         if (isOpenCircuit(calculatedCapacitance, nominalCapacitance)) {
-            result.faultTypes.append("OPEN_CIRCUIT");
+            result.faultTypes.append("开路");
             result.recommendations.append("检查元件引脚连接");
             result.recommendations.append("检查电容是否内部断路");
             hasFault = true;
@@ -434,7 +427,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         
         // 2. 检查短路
         if (isShortCircuit(calculatedCapacitance)) {
-            result.faultTypes.append("SHORT_CIRCUIT");
+            result.faultTypes.append("短路");
             result.recommendations.append("电容内部短路，需要更换");
             result.recommendations.append("检查是否有外部短路路径");
             hasFault = true;
@@ -442,7 +435,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         
         // 3. 检查容值偏差
         if (!hasFault && !isWithinTolerance(calculatedCapacitance, nominalCapacitance, tolerancePercent)) {
-            result.faultTypes.append("CAPACITANCE_OUT_OF_TOLERANCE");
+            result.faultTypes.append("容值偏差");
             result.recommendations.append("电容值超出规定容差范围");
             result.recommendations.append("可能是老化或制造偏差导致");
             hasFault = true;
@@ -450,19 +443,19 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         
         // 4. 检查ESR
         if (maxESR > 0 && isHighESR(measuredESR, maxESR)) {
-            result.faultTypes.append("HIGH_ESR");
+            result.faultTypes.append("ESR过高");
             result.recommendations.append("等效串联电阻过高");
             result.recommendations.append("电容可能老化或品质降低");
             hasFault = true;
         }
         
-        // 5. 检查损耗角正切值
-        if (measuredTanDelta > 0.1) { // tan δ > 0.1 认为损耗过大
-            result.faultTypes.append("HIGH_LOSS");
-            result.recommendations.append("损耗角正切值过高，介质损耗较大");
-            result.recommendations.append("电容可能老化或品质不良");
-            hasFault = true;
-        }
+        // // 5. 检查损耗角正切值
+        // if (measuredTanDelta > 0.1) { // tan δ > 0.1 认为损耗过大
+        //     result.faultTypes.append("损耗过大");
+        //     result.recommendations.append("损耗角正切值过高，介质损耗较大");
+        //     result.recommendations.append("电容可能老化或品质不良");
+        //     hasFault = true;
+        // }
         
         // 6. 计算品质因数
         if (testFreq > 0 && calculatedCapacitance > 0 && measuredESR > 0) {
@@ -470,9 +463,17 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
             result.measurements["quality_factor"] = qualityFactor;
             
             if (qualityFactor < 10) { // Q值过低
-                result.faultTypes.append("LOW_QUALITY_FACTOR");
+                result.faultTypes.append("品质因数过低");
                 result.recommendations.append("品质因数过低，损耗较大");
             }
+        }
+
+        // 7. 检查温度
+        double maxTemp = result.measurements["最高温度"];
+        if (maxTemp > 60.0) {
+            result.faultTypes.append("温度过高");
+            result.recommendations.append("元件温度过高，可能老化或损坏");
+            hasFault = true;
         }
 
         // 设置总体结果
@@ -497,7 +498,7 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         result.healthScore = 0.0;
         result.confidence = 0.0;
         result.summary = QString("故障分析异常: %1").arg(e.what());
-        result.faultTypes.append("ANALYSIS_ERROR");
+        result.faultTypes.append("分析异常");
         logError(result.summary);
     }
     

@@ -710,7 +710,7 @@ void CameraManager::hdCaptureLoop()
                              << "- Size:" << frame.cols << "x" << frame.rows;
                 }
                 // 添加图像翻转（如果需要）- 参考DetectCamera的实现
-                // cv::flip(frame, frame, -1);  // 如果需要翻转可以取消注释
+                cv::rotate(frame, frame, cv::ROTATE_180);
                 
                 // 检查队列大小，防止内存溢出
                 {

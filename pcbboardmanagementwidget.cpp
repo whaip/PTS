@@ -25,9 +25,16 @@
 #include <QMessageBox>
 #include <QThread>
 #include <QFutureWatcher>
+#include <QDialog>
+#include <QVBoxLayout>
+#include <QDialogButtonBox>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
+#include <QMetaObject>  // 用于队列调用 refreshTable
 
 // PCBBoardManagementWidget 实现
-PCBBoardManagementWidget::PCBBoardManagementWidget(QWidget *parent)
+PCBBoardManagementWidget::PCBBoardManagementWidget(ComponentDiagnosticManager* diagnostic_manager, QWidget *parent)
     : QWidget(parent)
     , board_manager_(nullptr)
     , camera_manager_(nullptr)
@@ -38,6 +45,7 @@ PCBBoardManagementWidget::PCBBoardManagementWidget(QWidget *parent)
     , drawing_component_(false)
     , label_editing_(nullptr)
     , identification_worker_thread_(nullptr)
+    , diagnostic_manager_(diagnostic_manager)
 {
     setupUI();
     connectSignals();
@@ -386,6 +394,10 @@ void PCBBoardManagementWidget::setupImageDisplayPanel()
     // 图像工具栏
     QHBoxLayout* imageToolLayout = new QHBoxLayout();
     
+    diagnose_button_ = new QPushButton("诊断选中元件");
+    diagnose_info_button_ = new QPushButton("编辑诊断信息");
+    imageToolLayout->addWidget(diagnose_button_);
+    imageToolLayout->addWidget(diagnose_info_button_);
     imageToolLayout->addStretch();
     
     layout->addLayout(imageToolLayout);
@@ -462,6 +474,9 @@ void PCBBoardManagementWidget::connectSignals()
     connect(import_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onImportBoard);
     connect(export_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onExportBoard);
     connect(delete_board_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onDeleteBoard);
+
+    connect(diagnose_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onDiagnoseSelectedComponents);
+    connect(diagnose_info_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onEditDiagnoseInfo);
     
     // 板卡识别按钮
     connect(identify_file_button_, &QPushButton::clicked, this, &PCBBoardManagementWidget::onIdentifyFromFile);
@@ -1085,6 +1100,7 @@ void PCBBoardManagementWidget::onCreateBoard()
         // 启动摄像头预览
         try {
             if (camera_manager_->startCamera(CameraType::HD_CAMERA)) {
+                camera_manager_->setHDCameraParams(8192, 4608, 30);
                 cameraTimer->start(33); // ~30 FPS
                 cameraPreview->setText("");
             } else {
@@ -1589,10 +1605,6 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
                 "2. 改善光照条件\n"
                 "3. 确认板卡是否已在数据库中\n"
                 "4. 尝试重新捕获图像");
-        } else {
-            QMessageBox::information(this, "识别成功", 
-                QString("识别完成！找到 %1 个候选板卡。\n请在候选列表中选择最合适的板卡。")
-                .arg(candidates.size()));
         }
         
         // 异步清理线程
@@ -2093,32 +2105,44 @@ ComponentInfo* PCBBoardManagementWidget::getComponentAtPosition(const QPoint& po
 void PCBBoardManagementWidget::onLabelAdded(const Label& label)
 {
     qDebug() << "PCBBoardManagementWidget::onLabelAdded - 标签添加:";
-    
     if (!board_manager_ || current_board_id_.isEmpty()) {
         qWarning() << "PCBBoardManagementWidget::onLabelAdded - 板卡管理器未初始化或无当前板卡";
         return;
     }
-    
     // 将Label转换为ComponentInfo
     ComponentInfo component;
     component.labelInfo = label;
     component.componentName = label.label;
-    component.componentType = "Unknown"; // 默认类型
+    component.componentType = "Unknown";
     component.componentValue = QString::fromUtf8(label.notes);
     component.description = QString("通过标签编辑添加的元器件");
     component.isRequired = true;
-    
+    // 记录旧ID以便后续替换
+    int oldId = component.labelInfo.id;
+    // 监听数据库生成的新ID
+    QMetaObject::Connection conn;
+    conn = connect(board_manager_, &PCBBoardManager::componentAdded,
+        this, [this, oldId, &conn](const QString& boardId, int newId) {
+            if (boardId != current_board_id_) return;
+            // 更新 LabelRectItem 中的 ID
+            if (label_editing_) {
+                if (auto* rectItem = label_editing_->getRectItemById(oldId)) {
+                    rectItem->setId(newId);
+                }
+                // 刷新表格以显示新的 ID（通过队列调用以确保在主线程执行）
+                QMetaObject::invokeMethod(label_editing_, "refreshTable", Qt::QueuedConnection);
+            }
+            // 更新本地组件列表对应项的 ID
+            current_components_ = board_manager_->getComponents(boardId);
+            disconnect(conn);
+        });
     // 添加到数据库
     if (board_manager_->addComponent(current_board_id_, component)) {
         qDebug() << "PCBBoardManagementWidget::onLabelAdded - 标签同步到数据库成功";
-        
-        // 更新本地组件列表
-        current_components_.append(component);
-        
-        // 更新统计信息
-        // updateStatistics();
     } else {
+        current_components_.removeLast();
         qWarning() << "PCBBoardManagementWidget::onLabelAdded - 标签同步到数据库失败";
+        disconnect(conn);
     }
 }
 
@@ -2178,4 +2202,165 @@ void PCBBoardManagementWidget::onLabelDeleted(int labelId)
             break;
         }
     }
+}
+
+bool PCBBoardManagementWidget::onEditDiagnoseInfo()
+{
+    std::vector<Label> selectedComponents = getSelectedComponents();
+    if (selectedComponents.empty()) {
+        QMessageBox::warning(this, "错误", "请先选择元件！");
+        return false;
+    }
+    QVector<ComponentType> supportedTypes = diagnostic_manager_->getSupportedComponentTypes();
+    QVector<ComponentInfo> componentInfos;
+    for (auto& component : selectedComponents) {
+        QString componentType = getComponentTypeName(component.cls);
+        ComponentType type = stringToComponentType(componentType);
+        if (!supportedTypes.contains(type)) {
+            QMessageBox::warning(this, "错误", QString("系统当前不支持的%1类型！").arg(componentType));
+            continue;
+        }
+        ComponentInfo componentInfo = board_manager_->getComponent(current_board_id_, component.id);
+        componentInfos.append(componentInfo);
+    }
+    if (componentInfos.empty()) {
+        QMessageBox::warning(this, "错误", "没有有效的元器件！");
+        return false;
+    }
+
+    QDialog paramDialog(this);
+    paramDialog.setWindowTitle("编辑元件测量参数");
+    paramDialog.resize(800, 600);
+    QVBoxLayout* vLayout = new QVBoxLayout(&paramDialog);
+    QTabWidget* tabWidget = new QTabWidget(&paramDialog);
+    std::vector<QTableWidget*> tables;
+    for (auto& component : componentInfos) {
+        QMap<QString, QVariant> requirement = diagnostic_manager_->getRequiredParameters(
+            stringToComponentType(getComponentTypeName(component.labelInfo.cls)));
+        QWidget* page = new QWidget(&paramDialog);
+        QVBoxLayout* pageLayout = new QVBoxLayout(page);
+        QTableWidget* table = new QTableWidget(page);
+        table->setColumnCount(2);
+        table->setHorizontalHeaderLabels({"参数", "值"});
+        table->horizontalHeader()->setStretchLastSection(true);
+        table->setAlternatingRowColors(true);
+        int row = 0;
+        for (auto it = requirement.constBegin(); it != requirement.constEnd(); ++it) {
+            const QString& paramName = it.key();
+            const QVariant defaultValue = it.value();
+            QVariant value = component.labelInfo.parameters.contains(paramName) ?
+                              component.labelInfo.parameters.value(paramName) : defaultValue;
+            table->insertRow(row);
+            table->setItem(row, 0, new QTableWidgetItem(paramName));
+            QWidget* editor = nullptr;
+            switch (defaultValue.type()) {
+            case QMetaType::Bool: {
+                QCheckBox* cb = new QCheckBox(page);
+                cb->setChecked(value.toBool());
+                editor = cb;
+                break;
+            }
+            case QMetaType::Int: {
+                QSpinBox* sb = new QSpinBox(page);
+                sb->setRange(-999999, 999999);
+                sb->setValue(value.toInt());
+                editor = sb;
+                break;
+            }
+            case QMetaType::Double: {
+                QDoubleSpinBox* dsb = new QDoubleSpinBox(page);
+                dsb->setRange(0.0, 1000000.0);
+                dsb->setDecimals(6);
+                dsb->setValue(value.toDouble());
+                editor = dsb;
+                break;
+            }
+            case QMetaType::QStringList: {
+                QComboBox* cb = new QComboBox(page);
+                for (const QString& opt : defaultValue.toStringList()) cb->addItem(opt);
+                int idx = cb->findText(value.toString()); if (idx >= 0) cb->setCurrentIndex(idx);
+                editor = cb;
+                break;
+            }
+            default: {
+                QLineEdit* le = new QLineEdit(page);
+                le->setText(value.toString());
+                editor = le;
+                break;
+            }
+            }
+            table->setCellWidget(row, 1, editor);
+            row++;
+        }
+        pageLayout->addWidget(table);
+        tabWidget->addTab(page, QString("元件%1").arg(component.labelInfo.id));
+        tables.push_back(table);
+    }
+    vLayout->addWidget(tabWidget);
+    QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &paramDialog);
+    vLayout->addWidget(buttonBox);
+    connect(buttonBox, &QDialogButtonBox::accepted, &paramDialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &paramDialog, &QDialog::reject);
+    if (paramDialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+    // 用户确认，保存所有修改
+    for (int i = 0; i < tables.size(); ++i) {
+        QTableWidget* table = tables[i];
+        ComponentInfo& component = componentInfos[i];
+        for (int r = 0; r < table->rowCount(); ++r) {
+            QString pName = table->item(r, 0)->text();
+            QWidget* w = table->cellWidget(r, 1);
+            QVariant newVal;
+            if (auto cb = qobject_cast<QCheckBox*>(w)) newVal = cb->isChecked();
+            else if (auto sb = qobject_cast<QSpinBox*>(w)) newVal = sb->value();
+            else if (auto dsb = qobject_cast<QDoubleSpinBox*>(w)) newVal = dsb->value();
+            else if (auto combo = qobject_cast<QComboBox*>(w)) newVal = combo->currentText();
+            else if (auto le = qobject_cast<QLineEdit*>(w)) newVal = le->text();
+            component.labelInfo.parameters[pName] = newVal;
+        }
+        board_manager_->updateComponent(current_board_id_, component);
+    }
+    return true;
+}
+
+void PCBBoardManagementWidget::onDiagnoseSelectedComponents()
+{
+    // 编辑参数，若用户取消则中断诊断
+    if (!onEditDiagnoseInfo()) {
+        return;
+    }
+    // 调用诊断管理器生成诊断序列
+    std::vector<Label> selectedComponents = getSelectedComponents();
+    QVector<ComponentType> supportedTypes = diagnostic_manager_->getSupportedComponentTypes();
+    QList<ComponentSpec> diagnoseSpecs;
+    for (auto& component : selectedComponents) {
+        QString componentType = getComponentTypeName(component.cls);
+        ComponentType type = stringToComponentType(componentType);
+        if (!supportedTypes.contains(type)) {
+            continue;
+        }
+        ComponentInfo componentInfo = board_manager_->getComponent(current_board_id_, component.id);
+        ComponentSpec diagnoseSpec;
+        diagnoseSpec.reference = componentInfo.labelInfo.label + "(ID:" + QString::number(componentInfo.labelInfo.id) + ")";
+        diagnoseSpec.description = componentInfo.labelInfo.notes;
+        diagnoseSpec.params = componentInfo.labelInfo.parameters;
+        diagnoseSpec.type = type;
+        diagnoseSpecs.append(diagnoseSpec);
+    }
+    if (diagnoseSpecs.empty()) {
+        QMessageBox::warning(this, "错误", "没有有效的元器件！");
+        return;
+    }
+    emit diagnoseComponents(diagnoseSpecs);
+    this->close();
+}
+
+// 添加：获取所有被选中元件接口实现
+std::vector<Label> PCBBoardManagementWidget::getSelectedComponents() const
+{
+    if (label_editing_) {
+        return label_editing_->getSelectedLabelItemInfos();
+    }
+    return std::vector<Label>();
 }

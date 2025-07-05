@@ -70,7 +70,7 @@ void DetectCamera::captureFrame()
         cv::Mat frame;
         m_cap >> frame;
         
-        cv::flip(frame, frame, -1);
+        cv::flip(frame, frame, 0);
         
         if (!frame.empty()) {
             std::lock_guard<std::mutex> lock(m_mutex);

@@ -161,12 +161,12 @@ inline QString componentTypeToString(const ComponentType& type) {
 }
 
 inline ComponentType stringToComponentType(const QString& type) {
-    if (type == "resistor") return ComponentType::RESISTOR;
-    if (type == "capacitor") return ComponentType::CAPACITOR;
-    if (type == "inductor") return ComponentType::INDUCTOR;
-    if (type == "diode") return ComponentType::DIODE;
-    if (type == "transistor") return ComponentType::TRANSISTOR;
-    if (type == "integrated_circuit") return ComponentType::IC;
+    if (type == "resistor" || type == "Resistor") return ComponentType::RESISTOR;
+    if (type == "capacitor" || type == "Capacitor") return ComponentType::CAPACITOR;
+    if (type == "inductor" || type == "Inductor") return ComponentType::INDUCTOR;
+    if (type == "diode" || type == "Diode") return ComponentType::DIODE;
+    if (type == "transistor" || type == "Transistor") return ComponentType::TRANSISTOR;
+    if (type == "integrated_circuit" || type == "IC") return ComponentType::IC;
     if (type == "unknown") return ComponentType::UNKNOWN;
     return ComponentType::UNKNOWN;
 }

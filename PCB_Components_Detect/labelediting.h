@@ -37,6 +37,14 @@ public:
 
     QGraphicsScene* getScene() const { return scene; }
 
+    // 添加获取所有被选中标签信息的方法
+    std::vector<Label> getSelectedLabelItemInfos() const;
+
+    LabelRectItem* getRectItemById(int id) const;
+
+    // 外部调用以刷新表格内容（内部调用 updateLabelTable）
+    Q_INVOKABLE void refreshTable();
+
 public slots:
     void on_createRectButton_clicked();
     void on_editButton_clicked();

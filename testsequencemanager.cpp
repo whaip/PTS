@@ -180,10 +180,10 @@ TestSequence TestSequenceManager::jsonToSequence(const QJsonObject& json)
 QJsonObject TestSequenceManager::testStepToJson(const TestStep& step)
 {
     QJsonObject json;
-    json["component_type"] = step.componentType;
-    json["test_name"] = step.testName;
-    json["enabled"] = step.enabled;
-    json["timeout_ms"] = step.timeoutMs;
+    json["componentType"] = step.componentType;
+    json["testName"] = step.testName;
+    json["common_type"] = QString::number(static_cast<int>(step.common_type));
+    json["component"] = step.component;
     json["parameters"] = step.parameters;
     json["specs"] = componentParamsToJson(step.specs);
     
@@ -194,12 +194,13 @@ TestStep TestSequenceManager::jsonToTestStep(const QJsonObject& json)
 {
     TestStep step;
     
-    step.componentType = json["component_type"].toString();
-    step.testName = json["test_name"].toString();
-    step.enabled = json["enabled"].toBool(true);
-    step.timeoutMs = json["timeout_ms"].toInt(5000);
+    step.componentType = json["componentType"].toString();
+    step.testName = json["testName"].toString();
+    step.common_type = static_cast<ComponentType>(json["common_type"].toInt());
+    step.component = json["component"].toString();
     step.parameters = json["parameters"].toObject();
     step.specs = jsonToComponentParams(json["specs"].toObject());
+    step.enabled = true;
     
     return step;
 }

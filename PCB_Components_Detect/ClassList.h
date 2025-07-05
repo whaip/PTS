@@ -5,19 +5,23 @@
 #include <QByteArray>
 #include <QStringList>
 #include <algorithm>  // for std::max, std::min
+#include <QMap>
+#include <QVariant>
+
 
 // PCB元件标签结构体
 struct Label {
     int id;                      // 标签ID
-    int x;                       // 边界框左上角X坐标
-    int y;                       // 边界框左上角Y坐标
-    int w;                       // 边界框宽度
-    int h;                       // 边界框高度
+    double x;                       // 边界框左上角X坐标
+    double y;                       // 边界框左上角Y坐标
+    double w;                       // 边界框宽度
+    double h;                       // 边界框高度
     int cls;                     // 类别ID
     double confidence;           // 置信度 [0.0, 1.0]
     QString label;               // 标签文本
     QString position_number;     // 位置编号
     QByteArray notes;           // 备注信息
+    QMap<QString, QVariant> parameters; // 参数
     
     // 兼容性字段 (为了兼容旧代码)
     int point_x;                 // 与 x 相同
@@ -29,19 +33,18 @@ struct Label {
     Label() : id(-1), x(0), y(0), w(0), h(0), cls(-1), confidence(0.0)
         , point_x(0), point_y(0), width(0), height(0) {}
     
-    Label(int id_, int x_, int y_, int w_, int h_, int cls_, double confidence_, 
+    Label(int id_, double x_, double y_, double w_, double h_, int cls_, double confidence_,
           const QString& label_ = "", const QString& position_ = "", 
           const QByteArray& notes_ = QByteArray())
         : id(id_), x(x_), y(y_), w(w_), h(h_), cls(cls_), confidence(confidence_)
         , label(label_), position_number(position_), notes(notes_)
         , point_x(x_), point_y(y_), width(w_), height(h_) {}
     
-    // 兼容性构造函数 (为了兼容旧代码中的构造调用)
     Label(int id_, const QString& label_, double x_, double y_, int w_, int h_, 
           const QString& cls_ = "", const QString& pos_ = "")
-        : id(id_), x(static_cast<int>(x_)), y(static_cast<int>(y_)), w(w_), h(h_)
+        : id(id_), x(static_cast<double>(x_)), y(static_cast<double>(y_)), w(w_), h(h_)
         , cls(-1), confidence(0.0), label(label_), position_number(pos_)
-        , point_x(static_cast<int>(x_)), point_y(static_cast<int>(y_)), width(w_), height(h_) {}
+        , point_x(static_cast<double>(x_)), point_y(static_cast<double>(y_)), width(w_), height(h_) {}
     
     // 同步函数：确保兼容性字段与主字段同步
     void syncFields() {
@@ -60,12 +63,12 @@ struct Label {
     }
     
     // 获取中心点坐标
-    int centerX() const { return x + w / 2; }
-    int centerY() const { return y + h / 2; }
+    double centerX() const { return x + w / 2; }
+    double centerY() const { return y + h / 2; }
     
     // 获取右下角坐标
-    int right() const { return x + w; }
-    int bottom() const { return y + h; }
+    double right() const { return x + w; }
+    double bottom() const { return y + h; }
     
     // 检查标签是否有效
     bool isValid() const { 
@@ -77,17 +80,17 @@ struct Label {
     
     // 计算与另一个标签的IoU (Intersection over Union)
     double iou(const Label& other) const {
-        int left = std::max(x, other.x);
-        int top = std::max(y, other.y);
-        int right = std::min(x + w, other.x + other.w);
-        int bottom = std::min(y + h, other.y + other.h);
+        double left = std::max(x, other.x);
+        double top = std::max(y, other.y);
+        double right = std::min(x + w, other.x + other.w);
+        double bottom = std::min(y + h, other.y + other.h);
         
         if (left >= right || top >= bottom) {
             return 0.0; // 没有重叠
         }
         
-        int intersection_area = (right - left) * (bottom - top);
-        int union_area = area() + other.area() - intersection_area;
+        double intersection_area = (right - left) * (bottom - top);
+        double union_area = area() + other.area() - intersection_area;
         
         return union_area > 0 ? static_cast<double>(intersection_area) / union_area : 0.0;
     }

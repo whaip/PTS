@@ -145,7 +145,6 @@ private:
     QString last_error_;
     mutable QMutex errorMutex_;
     
-    // 状态监控
     QTimer* statusTimer_;
     
     void setError(const QString& error);

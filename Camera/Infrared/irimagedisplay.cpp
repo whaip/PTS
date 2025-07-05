@@ -547,14 +547,12 @@ void IRImageDisplay::clear() {
         m_tempWidth = 0;
         m_tempHeight = 0;
         
-        // 兼容旧代码
         this->image = QImage();
         this->tempData.clear();
         this->tempWidth = 0;
         this->tempHeight = 0;
     }
     
-    // 清理UI显示
     if (m_displayLabel) {
         m_displayLabel->clear();
     }

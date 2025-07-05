@@ -112,8 +112,8 @@ void LabelEditing::loadImage(const QImage &image)
 
 void LabelEditing::setupLabelTable()
 {
-    labelTable->setColumnCount(4);
-    labelTable->setHorizontalHeaderLabels({"ID", "Label", "位号", "备注"});
+    labelTable->setColumnCount(5);
+    labelTable->setHorizontalHeaderLabels({"ID", "Label", "类型", "位号", "备注"});
 
     labelTable->hideColumn(0);
 
@@ -129,21 +129,46 @@ void LabelEditing::setupLabelTable()
 
 void LabelEditing::updateLabelTable()
 {
+    qDebug() << "LabelEditing::updateLabelTable - 开始更新表格";
     labelTable->setRowCount(0);
 
     int row = 0;
     std::vector<LabelRectItem*> items = label_rect_item;
     items.insert(items.end(), label_rect_item_add.begin(), label_rect_item_add.end());
+    qDebug() << "LabelEditing::updateLabelTable - 总共" << items.size() << "个标签项";
+    
     for (LabelRectItem* item : items) {
         try {
             auto itemInfo = item->getItemInfo();
             int id = std::get<0>(itemInfo);
+            qDebug() << "LabelEditing::updateLabelTable - 处理标签项，ID:" << id << "标签:" << item->getLabel();
 
             labelTable->insertRow(row);
+            // ID
             labelTable->setItem(row, 0, new QTableWidgetItem(QString::number(id)));
+            // 标签文本
             labelTable->setItem(row, 1, new QTableWidgetItem(item->getLabel()));
-            labelTable->setItem(row, 2, new QTableWidgetItem(item->getPositionNumber()));
-            labelTable->setItem(row, 3, new QTableWidgetItem(QString::fromUtf8(item->getNotes())));
+            // 类型下拉框
+            QComboBox* typeCombo = new QComboBox(labelTable);
+            for (int i = 0; i < 16; ++i) {
+                typeCombo->addItem(getComponentTypeName(i), i);
+            }
+            int currentCls = item->getLabelInfo().cls;
+            if (currentCls >= 0 && currentCls < 16) {
+                typeCombo->setCurrentIndex(currentCls);
+            }
+            labelTable->setCellWidget(row, 2, typeCombo);
+            connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    this, [this, item, typeCombo](int index) {
+                int newCls = typeCombo->itemData(index).toInt();
+                item->setComponentType(newCls);
+                Label updatedLabel = item->getLabelInfo();
+                emit labelUpdated(updatedLabel);
+            });
+            // 位号
+            labelTable->setItem(row, 3, new QTableWidgetItem(item->getPositionNumber()));
+            // 备注
+            labelTable->setItem(row, 4, new QTableWidgetItem(QString::fromUtf8(item->getNotes())));
             row++;
         } catch (const std::exception& e) {
             qDebug() << "Error processing item:" << e.what();
@@ -155,12 +180,11 @@ void LabelEditing::updateLabelTable()
 
 void LabelEditing::onTableCellChanged(int row, int column)
 {
-    // 暂时断开信号连接，防止更新表格时触发循环
     labelTable->disconnect(SIGNAL(cellChanged(int,int)));
     
     QTableWidgetItem* labelItem = labelTable->item(row, 1);
-    QTableWidgetItem* positionItem = labelTable->item(row, 2); 
-    QTableWidgetItem* notesItem = labelTable->item(row, 3);
+    QTableWidgetItem* positionItem = labelTable->item(row, 3);
+    QTableWidgetItem* notesItem = labelTable->item(row, 4);
     QTableWidgetItem* idItem = labelTable->item(row, 0);
     
     if (!labelItem || !positionItem || !notesItem || !idItem) {
@@ -175,41 +199,38 @@ void LabelEditing::onTableCellChanged(int row, int column)
     int id = idItem->text().toInt();
     
     // 更新对应的label_info或label_info_add中的标签
-    if (id > 0) {
-        auto it = std::find_if(label_rect_item.begin(), label_rect_item.end(),
-            [id](const LabelRectItem* label) { return label->getLabelInfo().id == id; });
-        if (it != label_rect_item.end()) {
-            LabelRectItem* rectItem = *it;
-            if (rectItem) {
-                rectItem->setLabel(newLabel);
-                rectItem->setPositionNumber(newPositionNumber);
-                rectItem->setNotes(notes);
-                
-                // 发射标签更新信号
-                Label updatedLabel = rectItem->getLabelInfo();
-                emit labelUpdated(updatedLabel);
-            }
+    Label updatedLabel;
+    auto it = std::find_if(label_rect_item.begin(), label_rect_item.end(),
+        [id](const LabelRectItem* label) { return label->getLabelInfo().id == id; });
+    if (it != label_rect_item.end()) {
+        LabelRectItem* rectItem = *it;
+        if (rectItem) {
+            rectItem->setLabel(newLabel);
+            rectItem->setPositionNumber(newPositionNumber);
+            rectItem->setNotes(notes);
+            
+            // 发射标签更新信号
+            updatedLabel = rectItem->getLabelInfo();
         }
-    } else {
-        auto it = std::find_if(label_rect_item_add.begin(), label_rect_item_add.end(),
-            [id](const LabelRectItem* label) { return label->getLabelInfo().id == id; });
-        if (it != label_rect_item_add.end()) {
-            LabelRectItem* rectItem = *it;
-            if (rectItem) {
-                rectItem->setLabel(newLabel);
-                rectItem->setPositionNumber(newPositionNumber);
-                rectItem->setNotes(notes);
-                
-                // 发射标签更新信号
-                Label updatedLabel = rectItem->getLabelInfo();
-                emit labelUpdated(updatedLabel);
-            }
+    }
+
+    it = std::find_if(label_rect_item_add.begin(), label_rect_item_add.end(),
+        [id](const LabelRectItem* label) { return label->getLabelInfo().id == id; });
+    if (it != label_rect_item_add.end()) {
+        LabelRectItem* rectItem = *it;
+        if (rectItem) {
+            rectItem->setLabel(newLabel);
+            rectItem->setPositionNumber(newPositionNumber);
+            rectItem->setNotes(notes);
+            
+            updatedLabel = rectItem->getLabelInfo();
         }
     }
     
     scene->update();
     // 重新连接信号
     connect(labelTable, &QTableWidget::cellChanged, this, &LabelEditing::onTableCellChanged);
+    emit labelUpdated(updatedLabel);
 }
 
 void LabelEditing::onTableRowClicked(int row)
@@ -284,12 +305,14 @@ void LabelEditing::selectAndCenterRectItem(int labelId, int row)
         auto it = std::find_if(label_rect_item.begin(), label_rect_item.end(),
             [labelId](const LabelRectItem* label) { return label->getLabelInfo().id == labelId; });
         if (it != label_rect_item.end()) {
+            qDebug() << "LabelEditing::selectAndCenterRectItem - 找到标签项，ID:" << labelId;
             processRectItem(*it);
         }
-    } else {
-        auto it = std::find_if(label_rect_item_add.begin(), label_rect_item_add.end(),
+        
+        it = std::find_if(label_rect_item_add.begin(), label_rect_item_add.end(),
             [labelId](const LabelRectItem* label) { return label->getLabelInfo().id == labelId; });
         if (it != label_rect_item_add.end()) {
+            qDebug() << "LabelEditing::selectAndCenterRectItem - 找到标签项，ID:" << labelId;
             processRectItem(*it);
         }
     }
@@ -331,15 +354,20 @@ void LabelEditing::mousePressEvent(QMouseEvent *event)
         QGraphicsItem *item = scene->itemAt(scenePos, transform());
         if (LabelRectItem *rectItem = qgraphicsitem_cast<LabelRectItem*>(item))
         {
-            // 先清除所有选中状态
-            clearAllSelection();
-            // 然后设置当前矩形的选中状态
-            rectItem->setSelected(true);
+            bool ctrlPressed = event->modifiers() & Qt::ControlModifier;
+            if (!ctrlPressed) {
+                clearAllSelection();
+            }
+            if (ctrlPressed) {
+                // 切换当前项的选择状态
+                rectItem->setSelected(!rectItem->getSelected());
+            } else {
+                rectItem->setSelected(true);
+            }
             selectRectItem = rectItem;
-            rectItem->update();
             setLabelTableFocus();
         }
-        QGraphicsView::mousePressEvent(event); // 将事件传递给场景，可能会触发 LabelRectItem 的信号
+        QGraphicsView::mousePressEvent(event);
         return;
     }
 
@@ -353,7 +381,7 @@ void LabelEditing::mousePressEvent(QMouseEvent *event)
         origin = mapToScene(event->pos());
         
         int id = label_rect_item_add.size() > 0 ? label_rect_item_add[label_rect_item_add.size() - 1]->getLabelInfo().id - 1 : 0;
-        Label newLabel(id, "-1", origin.x(), origin.y(), 1, 1, "-1", "-1");
+        Label newLabel(id, origin.x(), origin.y(), 1.0, 1.0, 0, 100.0, "-1", "-1");
         rubberBand = new LabelRectItem(nullptr, newLabel);
         
         rubberBand->setRect(QRectF(origin, QSizeF(0, 0)));
@@ -430,8 +458,9 @@ void LabelEditing::on_finishButton_clicked()
         Label newLabel = createRectItem->getLabelInfo();
         newLabel.updateFromCompat();
         emit labelAdded(newLabel);
-        
         createRectItem = nullptr;
+    }else if(selectRectItem){
+        emit labelUpdated(selectRectItem->getLabelInfo());
     }
     clearAllSelection();
     is_editing = false;
@@ -599,6 +628,19 @@ void LabelEditing::getAllLabelItemInfo(std::vector<Label> &result_label_info)
     }
 }
 
+LabelRectItem* LabelEditing::getRectItemById(int id) const
+{
+    for (LabelRectItem* item : label_rect_item) {
+        if (item->getLabelInfo().id == id)
+            return item;
+    }
+    for (LabelRectItem* item : label_rect_item_add) {
+        if (item->getLabelInfo().id == id)
+            return item;
+    }
+    return nullptr;
+}
+
 void LabelEditing::setupUI()
 {
     // 原有的按钮
@@ -730,4 +772,24 @@ void LabelEditing::triggerTableRowClickById(int labelId)
             }
         }
     }, Qt::QueuedConnection);
+}
+
+std::vector<Label> LabelEditing::getSelectedLabelItemInfos() const
+{
+    std::vector<Label> selectedLabels;
+    std::vector<LabelRectItem*> items = label_rect_item;
+    items.insert(items.end(), label_rect_item_add.begin(), label_rect_item_add.end());
+    for (auto* item : items) {
+        if (item && item->getSelected()) {
+            selectedLabels.push_back(item->getLabelInfo());
+        }
+    }
+    return selectedLabels;
+}
+
+void LabelEditing::refreshTable()
+{
+    qDebug() << "LabelEditing::refreshTable - 开始刷新表格";
+    updateLabelTable();
+    qDebug() << "LabelEditing::refreshTable - 表格刷新完成";
 }

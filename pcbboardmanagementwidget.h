@@ -32,6 +32,8 @@
 #include "cameramanager.h"
 #include "PCB_Components_Detect/labelediting.h"
 #include "PCB_Model_Identification/ImageDialog/imageflowdialog.h"
+#include "ComponentDiagnosticFramework/componentdiagnosticframework.h"
+#include <vector>
 
 class ComponentImageSelector;
 
@@ -40,7 +42,7 @@ class PCBBoardManagementWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit PCBBoardManagementWidget(QWidget *parent = nullptr);
+    explicit PCBBoardManagementWidget(ComponentDiagnosticManager* diagnostic_manager, QWidget *parent = nullptr);
     ~PCBBoardManagementWidget();
 
     void setBoardManager(PCBBoardManager* manager);
@@ -61,6 +63,8 @@ public slots:
     // 自动检测功能
     void onAutoDetectComponents();
     void onDetectLabels();
+    void onDiagnoseSelectedComponents();
+    bool onEditDiagnoseInfo();
     
     // 界面更新
     void onBoardSelectionChanged(QTableWidgetItem* current, QTableWidgetItem* previous);
@@ -74,6 +78,9 @@ public slots:
     void onLabelAdded(const Label& label);
     void onLabelUpdated(const Label& label);
     void onLabelDeleted(int labelId);
+
+signals:
+    void diagnoseComponents(const QList<ComponentSpec>& specs);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -127,6 +134,9 @@ private:
     void drawComponent(QPainter& painter, const ComponentInfo& component, bool selected = false);
     ComponentInfo* getComponentAtPosition(const QPoint& pos);
 
+    // 获取所有被选中的元件
+    std::vector<Label> getSelectedComponents() const;
+
 private:
     PCBBoardManager* board_manager_;
     CameraManager* camera_manager_;
@@ -157,8 +167,10 @@ private:
     QLabel* image_label_;
     LabelEditing* label_editing_;
     QTableWidget* label_table_;
-    QSlider* zoom_slider_;
-    QCheckBox* show_components_checkbox_;
+    QPushButton* diagnose_button_;
+    QPushButton* diagnose_info_button_;
+    ComponentDiagnosticManager* diagnostic_manager_;
+    
     
     // 板卡识别标签页
     QWidget* identification_tab_;

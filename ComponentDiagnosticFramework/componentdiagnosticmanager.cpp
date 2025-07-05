@@ -142,6 +142,62 @@ ComponentDiagnosticResult ComponentDiagnosticManager::diagnoseComponent(const Co
     return result;
 }
 
+QString ComponentDiagnosticManager::diagnoseComponentAsync(const ComponentSpec& component)
+{
+    QString taskId = generateTaskId();
+
+    // 创建异步任务
+    {
+        QMutexLocker locker(&tasksMutex_);
+        createTask(taskId, TaskType::SINGLE_COMPONENT);
+        DiagnosticTask* task = getTask(taskId);
+        if (task) {
+            task->component = component;
+            task->timeout = globalTimeout_;
+        }
+    }
+
+    // 启动工作线程
+    DiagnosticWorker* worker = new DiagnosticWorker(this, taskId);
+    workers_[taskId] = worker;
+
+    // 连接工作线程信号
+    connect(worker, &DiagnosticWorker::taskProgress, this, [this, taskId](const QString& tid, const QString& componentId, int percentage) {
+        if (tid == taskId) {
+            emit componentDiagnosisProgress(taskId, componentId, percentage);
+        }
+    });
+
+    connect(worker, &DiagnosticWorker::taskCompleted, this, [this, taskId](const QString& tid) {
+        if (tid == taskId) {
+            onWorkerFinished();
+        }
+    });
+
+    connect(worker, &DiagnosticWorker::taskError, this, [this, taskId](const QString& tid, const QString& error) {
+        if (tid == taskId) {
+            QMutexLocker locker(&tasksMutex_);
+            DiagnosticTask* task = getTask(taskId);
+            if (task) {
+                task->status = TaskStatus::FAILED;
+                task->errorMessage = error;
+                task->endTime = QDateTime::currentDateTime();
+            }
+            emit componentDiagnosisError(taskId, task ? task->component.reference : "", error);
+        }
+    });
+
+    // 启动超时定时器
+    startTaskTimer(taskId);
+
+    // 启动工作线程
+    worker->start();
+
+    emit componentDiagnosisStarted(taskId, component.id());
+
+    return taskId;
+}
+
 QVector<PortRequirement> ComponentDiagnosticManager::getPortRequirements(const ComponentSpec& component) const
 {
     QVector<PortRequirement> requirements;
@@ -178,62 +234,6 @@ QVector<WiringConnection> ComponentDiagnosticManager::generateWiringScheme(const
         wiringScheme = diagnostic->generateWiringScheme(component, allocatedPorts);
     }
     return wiringScheme;
-}
-
-QString ComponentDiagnosticManager::diagnoseComponentAsync(const ComponentSpec& component)
-{
-    QString taskId = generateTaskId();
-    
-    // 创建异步任务
-    {
-        QMutexLocker locker(&tasksMutex_);
-        createTask(taskId, TaskType::SINGLE_COMPONENT);
-        DiagnosticTask* task = getTask(taskId);
-        if (task) {
-            task->component = component;
-            task->timeout = globalTimeout_;
-        }
-    }
-    
-    // 启动工作线程
-    DiagnosticWorker* worker = new DiagnosticWorker(this, taskId);
-    workers_[taskId] = worker;
-    
-    // 连接工作线程信号
-    connect(worker, &DiagnosticWorker::taskProgress, this, [this, taskId](const QString& tid, const QString& componentId, int percentage) {
-        if (tid == taskId) {
-            emit componentDiagnosisProgress(taskId, componentId, percentage);
-        }
-    });
-    
-    connect(worker, &DiagnosticWorker::taskCompleted, this, [this, taskId](const QString& tid) {
-        if (tid == taskId) {
-            onWorkerFinished();
-        }
-    });
-    
-    connect(worker, &DiagnosticWorker::taskError, this, [this, taskId](const QString& tid, const QString& error) {
-        if (tid == taskId) {
-            QMutexLocker locker(&tasksMutex_);
-            DiagnosticTask* task = getTask(taskId);
-            if (task) {
-                task->status = TaskStatus::FAILED;
-                task->errorMessage = error;
-                task->endTime = QDateTime::currentDateTime();
-            }
-            emit componentDiagnosisError(taskId, task ? task->component.reference : "", error);
-        }
-    });
-    
-    // 启动超时定时器
-    startTaskTimer(taskId);
-    
-    // 启动工作线程
-    worker->start();
-    
-    emit componentDiagnosisStarted(taskId, component.id());
-    
-    return taskId;
 }
 
 QVector<ComponentDiagnosticResult> ComponentDiagnosticManager::diagnoseBatch(const QVector<ComponentSpec>& components)

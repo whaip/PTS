@@ -166,12 +166,12 @@ QString BaseComponentDiagnostic::generateTestReport(const ComponentDiagnosticRes
         stream << "故障类型: " << result.faultTypes.join(", ") << Qt::endl;
     }
     
-    // if (!result.measurements.isEmpty()) {
-    //     stream << Qt::endl << "=== 测量数据 ===" << Qt::endl;
-    //     for (auto it = result.measurements.begin(); it != result.measurements.end(); ++it) {
-    //         stream << it.key() << ": " << formatValue(it.value()) << Qt::endl;
-    //     }
-    // }
+    if (!result.measurements.isEmpty()) {
+        stream << Qt::endl << "=== 测量数据 ===" << Qt::endl;
+        for (auto it = result.measurements.begin(); it != result.measurements.end(); ++it) {
+            stream << it.key() << ": " << formatValue(it.value()) << Qt::endl;
+        }
+    }
     
     if (!result.summary.isEmpty()) {
         stream << Qt::endl << "=== 分析总结 ===" << Qt::endl;
@@ -287,73 +287,6 @@ void BaseComponentDiagnostic::logWarning(const QString& message) const
 void BaseComponentDiagnostic::logError(const QString& message) const
 {
     qCritical() << QString("[%1] %2").arg(getComponentTypeName()).arg(message);
-}
-
-bool BaseComponentDiagnostic::allocatePorts(const ComponentSpec& component, QVector<PortInfo>& allocatedPorts)
-{
-    if (!deviceManager_) {
-        logError("设备管理器未初始化");
-        return false;
-    }
-    
-    // 获取端口需求
-    QVector<PortRequirement> requirements = getPortRequirements(component);
-    
-    logInfo(QString("组件 %1 需要 %2 个端口配置").arg(component.reference).arg(requirements.size()));
-    
-    // 这里应该调用端口管理器来分配端口
-    // 简化实现，实际应该与PortManager集成
-    allocatedPorts.clear();
-    
-    for (const PortRequirement& req : requirements) {
-        for (int i = 0; i < req.count; ++i) {
-            PortInfo port;
-            port.deviceName = "PXIe-5711"; // 默认设备，应该根据需求动态分配
-            port.portNumber = i; // 简化的端口号分配
-            port.portType = req.portType;
-            port.description = req.description;
-            port.isAvailable = true;
-            port.allocatedTo = component.reference;
-            
-            allocatedPorts.append(port);
-        }
-    }
-    
-    logInfo(QString("为组件 %1 分配了 %2 个端口").arg(component.reference).arg(allocatedPorts.size()));
-    return true;
-}
-
-bool BaseComponentDiagnostic::setupWiring(const ComponentSpec& component, const QVector<PortInfo>& ports)
-{
-    // 生成接线方案
-    QVector<WiringConnection> connections = generateWiringScheme(component, ports);
-    
-    if (connections.isEmpty()) {
-        logWarning("没有生成接线连接");
-        return true; // 允许无接线的测试
-    }
-    
-    logInfo(QString("组件 %1 需要 %2 个接线连接").arg(component.reference).arg(connections.size()));
-    
-    // 发出接线需求信号
-    emit wiringRequired(currentComponentId_, connections);
-    
-    // 这里应该等待用户完成接线或自动验证接线
-    // 简化实现，假设接线已完成
-    emit wiringCompleted(currentComponentId_);
-    
-    return true;
-}
-
-void BaseComponentDiagnostic::releasePorts(const QVector<PortInfo>& ports)
-{
-    logInfo(QString("释放 %1 个端口").arg(ports.size()));
-    
-    // 这里应该调用端口管理器来释放端口
-    // 简化实现
-    for (const PortInfo& port : ports) {
-        logInfo(QString("释放端口: %1:%2").arg(port.deviceName).arg(port.portNumber));
-    }
 }
 
 BaseComponentDiagnostic* BaseComponentDiagnostic::createDiagnostic(ComponentType type, DeviceManager* deviceManager, QObject* parent)

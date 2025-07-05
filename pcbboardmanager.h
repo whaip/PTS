@@ -78,10 +78,10 @@ struct ComponentInfo {
     QString description;          // 描述
     bool isRequired;              // 是否必需
     QMap<QString, QVariant> parameters;
-    
+
     ComponentInfo() : isRequired(true) {}
     ComponentInfo(const Label& label) : labelInfo(label), isRequired(true) {}
-    
+
     // JSON序列化
     QJsonObject toJson() const;
     static ComponentInfo fromJson(const QJsonObject& json);

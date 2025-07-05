@@ -1247,6 +1247,7 @@ void DeviceManager::onTemperatureAlert(double temperature, const cv::Point& loca
 
 ThermalData DeviceManager::getLatestThermalData() const
 {
+    qDebug() << "获取最新热成像数据";
     if(TemperatureAlerted_)
         return latestThermalData_;
     else

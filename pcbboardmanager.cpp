@@ -10,71 +10,85 @@
 #include <opencv2/features2d.hpp>
 #include <opencv2/calib3d.hpp>
 #include "PCB_Components_Detect/yolomodel.h"
+#include <QJsonValue>
 
 // PCBBoardInfo JSON序列化实现
 QJsonObject PCBBoardInfo::toJson() const {
     QJsonObject obj;
-    obj["boardId"] = boardId;
-    obj["boardName"] = boardName;
-    obj["boardModel"] = boardModel;
-    obj["description"] = description;
-    obj["imagePath"] = imagePath;
-    obj["templatePath"] = templatePath;
-    obj["createTime"] = createTime.toString(Qt::ISODate);
-    obj["updateTime"] = updateTime.toString(Qt::ISODate);
-    obj["isActive"] = isActive;
-    
+    obj.insert("boardId", boardId);
+    obj.insert("boardName", boardName);
+    obj.insert("boardModel", boardModel);
+    obj.insert("description", description);
+    obj.insert("imagePath", imagePath);
+    obj.insert("templatePath", templatePath);
+    obj.insert("createTime", createTime.toString(Qt::ISODate));
+    obj.insert("updateTime", updateTime.toString(Qt::ISODate));
+    obj.insert("isActive", isActive);
+
     // 序列化元器件列表
     QJsonArray componentsArray;
     for (const auto& component : components) {
         QJsonObject compObj;
-        compObj["id"] = component.id;
-        compObj["x"] = component.x;
-        compObj["y"] = component.y;
-        compObj["w"] = component.w;
-        compObj["h"] = component.h;
-        compObj["cls"] = component.cls;
-        compObj["confidence"] = component.confidence;
-        compObj["label"] = component.label;
-        compObj["position_number"] = component.position_number;
-        compObj["notes"] = QString::fromUtf8(component.notes);
+        compObj.insert("id", component.id);
+        compObj.insert("x", component.x);
+        compObj.insert("y", component.y);
+        compObj.insert("w", component.w);
+        compObj.insert("h", component.h);
+        compObj.insert("cls", component.cls);
+        compObj.insert("confidence", component.confidence);
+        compObj.insert("label", component.label);
+        compObj.insert("position_number", component.position_number);
+        compObj.insert("notes", QString::fromUtf8(component.notes));
+
+        // 修复 parameters 嵌套对象的赋值
+        QJsonObject paramsObj;
+        for (auto it = component.parameters.constBegin(); it != component.parameters.constEnd(); ++it) {
+            paramsObj.insert(it.key(), QJsonValue::fromVariant(it.value()));
+        }
+        compObj.insert("parameters", paramsObj);
+
         componentsArray.append(compObj);
     }
-    obj["components"] = componentsArray;
-    
+    obj.insert("components", componentsArray);
     return obj;
 }
 
 PCBBoardInfo PCBBoardInfo::fromJson(const QJsonObject& json) {
     PCBBoardInfo board;
-    board.boardId = json["boardId"].toString();
-    board.boardName = json["boardName"].toString();
-    board.boardModel = json["boardModel"].toString();
-    board.description = json["description"].toString();
-    board.imagePath = json["imagePath"].toString();
-    board.templatePath = json["templatePath"].toString();
-    board.createTime = QDateTime::fromString(json["createTime"].toString(), Qt::ISODate);
-    board.updateTime = QDateTime::fromString(json["updateTime"].toString(), Qt::ISODate);
-    board.isActive = json["isActive"].toBool();
-    
+    board.boardId      = json.value("boardId").toString();
+    board.boardName    = json.value("boardName").toString();
+    board.boardModel   = json.value("boardModel").toString();
+    board.description  = json.value("description").toString();
+    board.imagePath    = json.value("imagePath").toString();
+    board.templatePath = json.value("templatePath").toString();
+    board.createTime   = QDateTime::fromString(json.value("createTime").toString(), Qt::ISODate);
+    board.updateTime   = QDateTime::fromString(json.value("updateTime").toString(), Qt::ISODate);
+    board.isActive     = json.value("isActive").toBool();
+
     // 反序列化元器件列表
-    QJsonArray componentsArray = json["components"].toArray();
-    for (const auto& value : componentsArray) {
-        QJsonObject compObj = value.toObject();
+    QJsonArray componentsArray = json.value("components").toArray();
+    for (const QJsonValue& val : componentsArray) {
+        QJsonObject compObj = val.toObject();
         Label component;
-        component.id = compObj["id"].toInt();
-        component.x = compObj["x"].toInt();
-        component.y = compObj["y"].toInt();
-        component.w = compObj["w"].toInt();
-        component.h = compObj["h"].toInt();
-        component.cls = compObj["cls"].toInt();
-        component.confidence = compObj["confidence"].toDouble();
-        component.label = compObj["label"].toString();
-        component.position_number = compObj["position_number"].toString();
-        component.notes = compObj["notes"].toString().toUtf8();
+        component.id              = compObj.value("id").toInt();
+        component.x               = compObj.value("x").toDouble();
+        component.y               = compObj.value("y").toDouble();
+        component.w               = compObj.value("w").toDouble();
+        component.h               = compObj.value("h").toDouble();
+        component.cls             = compObj.value("cls").toInt();
+        component.confidence      = compObj.value("confidence").toDouble();
+        component.label           = compObj.value("label").toString();
+        component.position_number = compObj.value("position_number").toString();
+        component.notes           = compObj.value("notes").toString().toUtf8();
+
+        // 修复 parameters 嵌套对象的读取
+        QJsonObject paramsObj = compObj.value("parameters").toObject();
+        for (auto it = paramsObj.constBegin(); it != paramsObj.constEnd(); ++it) {
+            component.parameters.insert(it.key(), it.value().toVariant());
+        }
+
         board.components.push_back(component);
     }
-    
     return board;
 }
 
@@ -103,6 +117,13 @@ QJsonObject ComponentInfo::toJson() const {
     obj["description"] = description;
     obj["isRequired"] = isRequired;
     
+    // 序列化参数信息
+    QJsonObject paramsObj;
+    for (auto it = parameters.constBegin(); it != parameters.constEnd(); ++it) {
+        paramsObj.insert(it.key(), QJsonValue::fromVariant(it.value()));
+    }
+    obj["parameters"] = paramsObj;
+    
     return obj;
 }
 
@@ -111,10 +132,10 @@ ComponentInfo ComponentInfo::fromJson(const QJsonObject& json) {
     
     // 基础标签信息
     component.labelInfo.id = json["id"].toInt();
-    component.labelInfo.x = json["x"].toInt();
-    component.labelInfo.y = json["y"].toInt();
-    component.labelInfo.w = json["w"].toInt();
-    component.labelInfo.h = json["h"].toInt();
+    component.labelInfo.x = json["x"].toDouble();
+    component.labelInfo.y = json["y"].toDouble();
+    component.labelInfo.w = json["w"].toDouble();
+    component.labelInfo.h = json["h"].toDouble();
     component.labelInfo.cls = json["cls"].toInt();
     component.labelInfo.confidence = json["confidence"].toDouble();
     component.labelInfo.label = json["label"].toString();
@@ -129,6 +150,13 @@ ComponentInfo ComponentInfo::fromJson(const QJsonObject& json) {
     component.partNumber = json["partNumber"].toString();
     component.description = json["description"].toString();
     component.isRequired = json["isRequired"].toBool();
+
+    if (json.contains("parameters") && json["parameters"].isObject()) {
+        QJsonObject paramsObj = json["parameters"].toObject();
+        for (auto it = paramsObj.constBegin(); it != paramsObj.constEnd(); ++it) {
+            component.parameters.insert(it.key(), it.value().toVariant());
+        }
+    }
     return component;
 }
 
@@ -266,6 +294,7 @@ bool PCBBoardManager::deleteBoard(const QString& boardId) {
     for (int i = 0; i < boards_.size(); ++i) {
         if (boards_[i].boardId == boardId) {
             deleteImageFiles(boardId);
+            SIFT_MATCHER->removeFromDatabase(boardId.toStdString());
             boards_.removeAt(i);
             
             // 发射信号需要在mutex外执行

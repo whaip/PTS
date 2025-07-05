@@ -10,6 +10,7 @@
 #include <QBrush>
 #include <QFont>
 #include <QUuid>
+#include <QTextOption>
 
 WiringGuideDialog::WiringGuideDialog(const ComponentSpec& component,
                                    PortManager* portManager,
@@ -580,47 +581,128 @@ void WiringGuideDialog::updateConnectionDiagram()
 
     const ConnectionInfo& connection = wiringSteps_[currentStepIndex_];
 
-    // 绘制简化的连接图
-    double centerX = 200;
-    double centerY = 100;
-    double portSpacing = 80;
+    // 获取视图可用区域
+    QRectF viewRect = connectionDiagramView_->rect();
+    double viewWidth = qMax(400.0, viewRect.width() - 40);  // 最小宽度400，留40像素边距
+    double viewHeight = qMax(200.0, viewRect.height() - 40); // 最小高度200，留40像素边距
 
-    // 绘制源端口
+    // 计算中心位置
+    double centerX = viewWidth / 2;
+    double centerY = viewHeight / 2;
+
+    // 创建源端口文本以计算所需尺寸
+    QString sourceDisplayText = GeneratePortShowName(connection.sourcePort.deviceName, connection.sourcePort.portNumber);
+    QFont textFont("Arial", 10);
+    QFontMetrics fontMetrics(textFont);
+    
+    // 计算源端口文本尺寸，添加内边距
+    QRect sourceTextRect = fontMetrics.boundingRect(sourceDisplayText);
+    double sourcePadding = 10; // 内边距
+    double sourceWidth = qMax(80.0, sourceTextRect.width() + sourcePadding * 2);
+    double sourceHeight = qMax(30.0, sourceTextRect.height() + sourcePadding * 2);
+
+    // 计算目标端口文本尺寸
+    QString targetDisplayText = "元件连接点";
+    QRect targetTextRect = fontMetrics.boundingRect(targetDisplayText);
+    double targetPadding = 10;
+    double targetWidth = qMax(80.0, targetTextRect.width() + targetPadding * 2);
+    double targetHeight = qMax(30.0, targetTextRect.height() + targetPadding * 2);
+
+    // 计算元素间距，确保不超出视图
+    double connectionGap = 40; // 连接线长度
+    double totalWidth = sourceWidth + connectionGap + targetWidth;
+    
+    // 如果总宽度超出视图，调整间距和尺寸
+    if (totalWidth > viewWidth - 40) {
+        double scale = (viewWidth - 40) / totalWidth;
+        sourceWidth *= scale;
+        targetWidth *= scale;
+        connectionGap *= scale;
+        sourcePadding *= scale;
+        targetPadding *= scale;
+    }
+
+    // 计算位置
+    double sourceX = centerX - totalWidth / 2;
+    double sourceY = centerY - sourceHeight / 2;
+    double targetX = sourceX + sourceWidth + connectionGap;
+    double targetY = centerY - targetHeight / 2;
+
+    // 绘制源端口矩形
     QGraphicsRectItem* sourceRect = connectionDiagramScene_->addRect(
-        centerX - 100, centerY - 20, 80, 40,
+        sourceX, sourceY, sourceWidth, sourceHeight,
         QPen(Qt::blue, 2), QBrush(QColor(173, 216, 230)));
 
-    QGraphicsTextItem* sourceText = connectionDiagramScene_->addText(
-        QString("%1:%2").arg(connection.sourcePort.deviceName).arg(connection.sourcePort.portNumber),
-        QFont("Arial", 10));
-    sourceText->setPos(centerX - 95, centerY - 15);
+    // 绘制源端口文本
+    QGraphicsTextItem* sourceText = connectionDiagramScene_->addText(sourceDisplayText, textFont);
+    sourceText->setTextWidth(sourceWidth);
+    QTextOption sourceOpt;
+    sourceOpt.setAlignment(Qt::AlignCenter);
+    sourceText->document()->setDefaultTextOption(sourceOpt);
+    
+    // 垂直居中文本
+    QRectF sourceTextBounds = sourceText->boundingRect();
+    sourceText->setPos(sourceX, sourceY + (sourceHeight - sourceTextBounds.height()) / 2);
 
-    // 绘制目标点
+    // 绘制目标端口矩形
     QGraphicsRectItem* targetRect = connectionDiagramScene_->addRect(
-        centerX + 20, centerY - 20, 80, 40,
+        targetX, targetY, targetWidth, targetHeight,
         QPen(Qt::red, 2), QBrush(QColor(240, 128, 128)));
 
-    QGraphicsTextItem* targetText = connectionDiagramScene_->addText(
-        "元件连接点", QFont("Arial", 10));
-    targetText->setPos(centerX + 25, centerY - 15);
+    // 绘制目标端口文本
+    QGraphicsTextItem* targetText = connectionDiagramScene_->addText(targetDisplayText, textFont);
+    targetText->setTextWidth(targetWidth);
+    QTextOption targetOpt;
+    targetOpt.setAlignment(Qt::AlignCenter);
+    targetText->document()->setDefaultTextOption(targetOpt);
+    
+    // 垂直居中文本
+    QRectF targetTextBounds = targetText->boundingRect();
+    targetText->setPos(targetX, targetY + (targetHeight - targetTextBounds.height()) / 2);
 
     // 绘制连接线
+    double lineStartX = sourceX + sourceWidth;
+    double lineEndX = targetX;
+    double lineY = centerY;
+    
     QPen connectionPen(getWireColor(connection.wireColor), 3);
     QGraphicsLineItem* connectionLine = connectionDiagramScene_->addLine(
-        centerX - 20, centerY, centerX + 20, centerY, connectionPen);
+        lineStartX, lineY, lineEndX, lineY, connectionPen);
 
     // 添加箭头
+    double arrowSize = 8;
     QGraphicsLineItem* arrow1 = connectionDiagramScene_->addLine(
-        centerX + 15, centerY - 5, centerX + 20, centerY, connectionPen);
+        lineEndX - arrowSize, lineY - arrowSize/2, lineEndX, lineY, connectionPen);
     QGraphicsLineItem* arrow2 = connectionDiagramScene_->addLine(
-        centerX + 15, centerY + 5, centerX + 20, centerY, connectionPen);
+        lineEndX - arrowSize, lineY + arrowSize/2, lineEndX, lineY, connectionPen);
 
     // 添加说明文字
+    QFont instructionFont("Arial", 9);
     QGraphicsTextItem* instructionText = connectionDiagramScene_->addText(
-        connection.instruction, QFont("Arial", 9));
-    instructionText->setPos(centerX - 50, centerY + 50);
-
-    connectionDiagramView_->fitInView(connectionDiagramScene_->itemsBoundingRect(), Qt::KeepAspectRatio);
+        connection.instruction, instructionFont);
+    
+    // 计算说明文字位置，确保在视图内
+    QRectF instructionBounds = instructionText->boundingRect();
+    double instructionX = centerX - instructionBounds.width() / 2;
+    double instructionY = qMax(sourceY, targetY) + qMax(sourceHeight, targetHeight) + 15;
+    
+    if (instructionY + instructionBounds.height() > viewHeight - 10) {
+        instructionY = qMin(sourceY, targetY) - instructionBounds.height() - 15;
+    }
+    
+    instructionText->setPos(instructionX, instructionY);    // 设置场景矩形以适应所有内容
+    double margin = 20;
+    double sceneLeft = qMin(sourceX, instructionX) - margin;
+    double sceneTop = qMin(qMin(sourceY, targetY), instructionY) - margin;
+    double sceneRight = qMax(qMax(sourceX + sourceWidth, targetX + targetWidth), instructionX + instructionBounds.width()) + margin;
+    double sceneBottom = qMax(qMax(sourceY + sourceHeight, targetY + targetHeight), instructionY + instructionBounds.height()) + margin;
+    
+    QRectF sceneRect(sceneLeft, sceneTop, sceneRight - sceneLeft, sceneBottom - sceneTop);
+    connectionDiagramScene_->setSceneRect(sceneRect);
+    
+    // 适应视图
+    connectionDiagramView_->resetTransform();
+    connectionDiagramView_->fitInView(sceneRect, Qt::KeepAspectRatio);
 }
 
 void WiringGuideDialog::onNextStep()
@@ -827,30 +909,19 @@ QString WiringGuideDialog::generateTestParametersDescription() const
 {
     QString params;
 
-    switch (component_.type) {
-    case ComponentType::RESISTOR:
-        params = QString("测试类型: 直流电阻测试\n"
-                        "测试电压: 1V\n"
-                        "测试电流: 自适应\n"
-                        "测量精度: 0.1%\n"
-                        "预期阻值: %1 Ω (±%2%)")
-                 .arg(component_.nominal_value)
-                 .arg(component_.tolerance_percent);
-        break;
-    case ComponentType::CAPACITOR:
-        params = QString("测试类型: 电容测试\n"
-                        "测试频率: 1kHz\n"
-                        "测试电压: 1V\n"
-                        "测量精度: 1%\n"
-                        "预期容值: %1 F (±%2%)")
-                 .arg(component_.nominal_value)
-                 .arg(component_.tolerance_percent);
-        break;
-    default:
-        params = QString("预期值: %1 (±%2%)")
-                 .arg(component_.nominal_value)
-                 .arg(component_.tolerance_percent);
-        break;
+    if (isBatchWiring_) {
+        // 批量布线时，遍历每个元件的参数映射
+        for (const auto& comp : batchComponentSpecs_) {
+            for (auto it = comp.params.constBegin(); it != comp.params.constEnd(); ++it) {
+                params += QString("%1: %2\n").arg(it.key(), it.value().toString());
+            }
+            params += "\n";
+        }
+    } else {
+        // 单个元件布线时，遍历当前元件的参数映射
+        for (auto it = component_.params.constBegin(); it != component_.params.constEnd(); ++it) {
+            params += QString("%1: %2\n").arg(it.key(), it.value().toString());
+        }
     }
 
     return params;
@@ -891,3 +962,35 @@ double WiringGuideDialog::getTestFrequency() const
         return 1000;
     }
 }
+
+QString WiringGuideDialog::GeneratePortShowName(const QString& devicename, const int    & portnumber)
+{
+    if(devicename == "JY5711")
+    {
+        if(portnumber >= 0 && portnumber <= 15)
+        {
+            return QString("模拟输出端口:%1").arg(portnumber);
+        }
+        else if(portnumber >= 16 && portnumber <= 27)
+        {
+            return QString("数字输出端口:%1").arg(portnumber - 16);
+        }
+        else if(portnumber >= 28 && portnumber <= 31)
+        {
+            return QString("电源输出端口:%1").arg(portnumber - 28);
+        }
+    }
+    else if(devicename == "JY5323")
+    {
+        return QString("模拟输入端口:%1").arg(portnumber);
+    }
+    else if(devicename == "JY5322")
+    {
+        return QString("数字输入端口:%1").arg(portnumber);
+    }
+    else if(devicename == "JY8902")
+    {
+        return QString("DMM测量端口:%1").arg(portnumber);
+    }
+}
+
