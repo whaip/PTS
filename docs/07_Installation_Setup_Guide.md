@@ -120,40 +120,6 @@ nmake /?
 ### 1. 设备驱动安装
 
 #### JY5711驱动安装
-```powershell
-# 1. 连接JY5711设备到计算机
-# 2. 运行设备管理器
-devmgmt.msc
-
-# 3. 查找未识别设备
-# 4. 右键选择"更新驱动程序"
-# 5. 浏览到驱动程序文件夹：
-cd "d:\FaultDetect\Program\FaultDetect\PTS\JYDevice\drivers\JY5711"
-
-# 6. 选择对应的.inf文件安装
-```
-
-#### JY5322/5323驱动安装
-```powershell
-# DAQ设备驱动安装
-cd "d:\FaultDetect\Program\FaultDetect\PTS\JYDevice\drivers\JY5320"
-
-# 安装步骤：
-# 1. 以管理员身份运行命令提示符
-# 2. 执行驱动安装脚本
-install_driver.bat
-
-# 3. 重启计算机使驱动生效
-```
-
-#### JY8902驱动安装
-```powershell
-# DMM设备驱动安装
-cd "d:\FaultDetect\Program\FaultDetect\PTS\JYDevice\drivers\JY8902"
-
-# 使用设备制造商提供的安装程序
-setup.exe
-```
 
 ### 2. 驱动验证
 ```cpp
@@ -198,10 +164,9 @@ bool DeviceManager::checkDeviceAvailability()
 ```powershell
 # 克隆项目仓库
 git clone <repository-url>
-cd FaultDetect\Program\FaultDetect\PTS
+cd PTS
 
 # 或者解压源码包到指定目录
-# 确保路径为: d:\FaultDetect\Program\FaultDetect\PTS\
 ```
 
 ### 2. 依赖库配置
@@ -211,15 +176,10 @@ cd FaultDetect\Program\FaultDetect\PTS
 # 添加Qt路径到环境变量
 $env:QTDIR = "C:\Qt\5.12.12\msvc2017_64"
 $env:PATH += ";$env:QTDIR\bin"
-
-# 添加设备库路径
-$env:JY_DEVICE_PATH = "d:\FaultDetect\Program\FaultDetect\PTS\JYDevice"
 ```
 
 #### 库文件检查
 ```powershell
-# 检查必需的库文件
-ls "d:\FaultDetect\Program\FaultDetect\PTS\lib\"
 
 # 应包含以下文件：
 - JY5710.lib    # AO设备库
@@ -245,7 +205,7 @@ ls "d:\FaultDetect\Program\FaultDetect\PTS\lib\"
 #### 使用命令行编译
 ```powershell
 # 进入项目目录
-cd "d:\FaultDetect\Program\FaultDetect\PTS"
+cd "\PTS"
 
 # 生成Makefile
 qmake PTS.pro
@@ -269,7 +229,7 @@ nmake
 ### 4. 编译验证
 ```powershell
 # 检查生成的可执行文件
-ls "d:\FaultDetect\Program\FaultDetect\PTS\release\PTS.exe"
+ls "\PTS\release\PTS.exe"
 
 # 检查依赖的DLL文件
 windeployqt --debug --compiler-runtime release\PTS.exe
@@ -360,7 +320,7 @@ CREATE TABLE FaultRecords (
 # 以管理员身份运行PowerShell
 
 # 设置程序文件权限
-icacls "d:\FaultDetect\Program\FaultDetect\PTS" /grant Users:F /T
+icacls "\PTS" /grant Users:F /T
 
 # 设置设备访问权限
 # 在组策略中允许硬件设备访问
