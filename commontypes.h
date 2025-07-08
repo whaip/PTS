@@ -63,9 +63,8 @@ struct DeviceResult {
 
 // 端口类型枚举
 enum class PortType {
-    ANALOG_OUTPUT,    // 模拟输出
     DIGITAL_OUTPUT,   // 数字输出
-    POWER_OUTPUT,     // 电源输出
+    ANALOG_OUTPUT,    // 模拟输出
     ANALOG_INPUT,     // 模拟输入
     DIGITAL_INPUT,    // 数字输入
     DMM_MEASUREMENT   // 万用表测量端口

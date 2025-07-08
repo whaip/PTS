@@ -59,6 +59,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     // 连接1：激励信号到电容正极
                     WiringConnection conn1;
                     conn1.componentPin = "正极";
+                    conn1.component = component.reference;
                     conn1.targetPort = port; // JY5711交流激励输出
                     conn1.wireColor = "红色";
                     conn1.instruction = QString("将电容%1连接到模拟输出端口%2").arg(component.reference).arg(port.portNumber);
@@ -71,6 +72,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     // 连接2：电容正极到电压测量
                     WiringConnection conn2;
                     conn2.componentPin = "正极";
+                    conn2.component = component.reference;
                     conn2.targetPort = port; // JY5322电压测量输入
                     conn2.wireColor = "黄色";
                     conn2.instruction = QString("将数字输入端口%1 导线连接到电容%2正极").arg(port.portNumber).arg(component.reference);
@@ -83,6 +85,7 @@ QVector<WiringConnection> CapacitorDiagnostic::generateWiringScheme(const Compon
                     // 连接3：电容负极接地并连接到电流测量
                     WiringConnection conn3;
                     conn3.componentPin = "负极";
+                    conn3.component = component.reference;
                     conn3.targetPort = port; // JY5323电流测量输入
                     conn3.wireColor = "黑色";
                     conn3.instruction = QString("将模拟输入端口%1 串联到电容%2负极").arg(port.portNumber).arg(component.reference);

@@ -257,8 +257,10 @@ QString PCBBoardManager::createBoard(const QString& boardName, const QString& bo
     
     boards_.append(board);
     // 将新板卡图像加入 SIFT 特征数据库
+    cv::Mat image = loadImage(board.imagePath);
+    cv::cvtColor(image, image, cv::COLOR_RGB2BGR);
     try {
-        SIFT_MATCHER->appendToDatabase({ board.boardId.toStdString() }, { cv::imread(board.imagePath.toStdString())});
+        SIFT_MATCHER->appendToDatabase({ board.boardId.toStdString() }, { image });
         qDebug() << "PCBBoardManager: 已将新板卡图像添加到特征数据库:" << board.imagePath;
     } catch (const std::exception& e) {
         qDebug() << "PCBBoardManager: 特征数据库追加失败:" << e.what();
@@ -266,6 +268,7 @@ QString PCBBoardManager::createBoard(const QString& boardName, const QString& bo
     qDebug() << "PCBBoardManager::createBoard - 板卡创建成功，ID:" << board.boardId;
     locker.unlock();
     emit boardAdded(board.boardId);
+    saveBoardsToDatabase();
     return board.boardId;
 }
 
@@ -281,6 +284,7 @@ bool PCBBoardManager::updateBoard(const PCBBoardInfo& boardInfo) {
             // 发射信号需要在mutex外执行
             locker.unlock();
             emit boardUpdated(boardInfo.boardId);
+            saveBoardsToDatabase();
             return true;
         }
     }
@@ -300,6 +304,7 @@ bool PCBBoardManager::deleteBoard(const QString& boardId) {
             // 发射信号需要在mutex外执行
             locker.unlock();
             emit boardDeleted(boardId);
+            saveBoardsToDatabase();
             return true;
         }
     }
@@ -404,6 +409,7 @@ bool PCBBoardManager::removeComponent(const QString& boardId, int componentId) {
                     // 发射信号需要在mutex外执行
                     locker.unlock();
                     emit componentRemoved(boardId, componentId);
+                    saveBoardsToDatabase();
                     return true;
                 }
             }
@@ -557,7 +563,9 @@ QString PCBBoardManager::saveImage(const cv::Mat& image, const QString& prefix) 
         return QString();
     }
     
-    if (cv::imwrite(fullPath.toStdString(), image)) {
+    cv::Mat bgrForSave;
+    cv::cvtColor(image, bgrForSave, cv::COLOR_RGB2BGR);
+    if (cv::imwrite(fullPath.toStdString(), bgrForSave)) {
         qDebug() << "PCBBoardManager::saveImage - 图片保存成功:" << fullPath;
         return fullPath;
     }
@@ -600,6 +608,7 @@ cv::Mat PCBBoardManager::loadImage(const QString& imagePath) const {
     }
     
     cv::Mat image = cv::imread(imagePath.toStdString());
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     if (image.empty()) {
         qDebug() << "PCBBoardManager::loadImage - cv::imread加载失败:" << imagePath;
     } else {
@@ -1099,33 +1108,33 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
     }
 
     // 创建进度报告定时器
-    QTimer* progressTimer = new QTimer(this);
-    progressTimer->setInterval(500);
+    // QTimer* progressTimer = new QTimer(this);
+    // progressTimer->setInterval(500);
 
-    // 进度报告
-    int progressValue = 20;
-    connect(progressTimer, &QTimer::timeout, [this, progressTimer, &progressValue]() {
-        if (creation_cancelled_) {
-            progressTimer->stop();
-            progressTimer->deleteLater();
-            return;
-        }
-        progressValue = qMin(progressValue + 8, 80);
-        emit boardCreationProgress(progressValue, "正在创建板卡...");
-        if (progressValue >= 80) {
-            progressTimer->stop();
-        }
-    });
+    // // 进度报告
+    // int progressValue = 20;
+    // connect(progressTimer, &QTimer::timeout, [this, progressTimer, &progressValue]() {
+    //     if (creation_cancelled_) {
+    //         progressTimer->stop();
+    //         progressTimer->deleteLater();
+    //         return;
+    //     }
+    //     progressValue = qMin(progressValue + 8, 80);
+    //     emit boardCreationProgress(progressValue, "正在创建板卡...");
+    //     if (progressValue >= 80) {
+    //         progressTimer->stop();
+    //     }
+    // });
 
-    // 启动定时器
-    progressTimer->start();
+    // // 启动定时器
+    // progressTimer->start();
 
-    // 清理定时器连接
-    connect(creation_watcher_, &QFutureWatcher<QString>::finished,
-            progressTimer, [progressTimer]() {
-                progressTimer->stop();
-                progressTimer->deleteLater();
-            });
+    // // 清理定时器连接
+    // connect(creation_watcher_, &QFutureWatcher<QString>::finished,
+    //         progressTimer, [progressTimer]() {
+    //             progressTimer->stop();
+    //             progressTimer->deleteLater();
+    //         });
 
     // 启动异步任务
     auto future = QtConcurrent::run([this, boardName, boardModel, boardImage, description]() -> QString {

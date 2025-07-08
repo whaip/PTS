@@ -42,17 +42,7 @@ WiringGuideDialog::~WiringGuideDialog()
 {
     qDebug() << "WiringGuideDialog: 开始析构...";
 
-    // 先断开信号连接
     disconnect(this, nullptr, nullptr, nullptr);
-
-    // 释放为此组件分配的端口，但要检查portManager是否仍然有效
-    // 注意：由于析构顺序问题，portManager可能已经被析构，所以这里不调用其方法
-    // 端口释放应该由PortManager自己的析构函数处理
-    if (portManager_) {
-        qDebug() << "WiringGuideDialog: portManager仍然有效，但跳过端口释放以避免崩溃";
-        // 不再调用portManager的方法，因为可能导致崩溃
-        // portManager_->releasePortsForUser(component_.reference, false);
-    }
 
     qDebug() << "WiringGuideDialog: 析构完成";
 }
@@ -67,7 +57,6 @@ void WiringGuideDialog::reject()
 
 void WiringGuideDialog::closeEvent(QCloseEvent* event)
 {
-    // 发出取消信号
     emit wiringCancelled();
     QDialog::closeEvent(event);
 }
@@ -106,14 +95,7 @@ void WiringGuideDialog::setupUI()
 
     // 连接信号
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-    connect(finishBtn, &QPushButton::clicked, [this]() {
-        if (wiringCompleted_) {
-            emit wiringCompleted(currentScheme_, allocatedPorts_);
-            accept();
-        } else {
-            QMessageBox::warning(this, "警告", "请完成所有接线步骤后再点击完成");
-        }
-    });
+    connect(finishBtn, &QPushButton::clicked, this, &WiringGuideDialog::onComplate);
 }
 
 void WiringGuideDialog::setupComponentConfigPage()
@@ -195,11 +177,9 @@ void WiringGuideDialog::setupPortSelectionPage()
     // 操作按钮
     QHBoxLayout* buttonLayout = new QHBoxLayout();
     autoAllocateBtn_ = new QPushButton("自动分配");
-    manualAllocateBtn_ = new QPushButton("手动添加");
     clearSelectionBtn_ = new QPushButton("清除选择");
 
     buttonLayout->addWidget(autoAllocateBtn_);
-    buttonLayout->addWidget(manualAllocateBtn_);
     buttonLayout->addWidget(clearSelectionBtn_);
 
     leftLayout->addLayout(buttonLayout);
@@ -229,17 +209,9 @@ void WiringGuideDialog::setupPortSelectionPage()
 
     // 连接信号
     connect(autoAllocateBtn_, &QPushButton::clicked, this, &WiringGuideDialog::onAutoAllocatePorts);
-    connect(manualAllocateBtn_, &QPushButton::clicked, this, &WiringGuideDialog::onManualAllocatePorts);
     connect(clearSelectionBtn_, &QPushButton::clicked, [this]() {
-        if(isBatchWiring_)
-        {
-            for(const auto& comp : batchComponentSpecs_)
-            {
-                portManager_->releaseAllPorts();
-            }
-        }else{
-            portManager_->releasePortsForUser(component_.reference);
-        }
+        portManager_->releaseAllPorts();
+        allocatedPorts_.clear();
         updatePortTable();
         updateAvailablePorts();
     });
@@ -373,7 +345,41 @@ void WiringGuideDialog::updatePortTable()
         const PortInfo& port = selectedPorts[i];
 
         selectedPortsTable_->setItem(i, 0, new QTableWidgetItem(port.deviceName));
-        selectedPortsTable_->setItem(i, 1, new QTableWidgetItem(QString::number(port.portNumber)));
+        QComboBox* portNumberComboBox = getPortComboBox(port.portType, port.portNumber);
+        connect(portNumberComboBox, &QComboBox::currentTextChanged, [this, devicename = port.deviceName, portType = port.portType, allocatedTo = port.allocatedTo, oldnumber = port.portNumber](const QString& text) {
+            int newPort = text.toInt();
+            switch(portType){
+                case PortType::ANALOG_OUTPUT:
+                    {
+                        newPort += JY5711Ports::ANALOG_OUTPUT_START;
+                    }
+                    break;
+                case PortType::DIGITAL_OUTPUT:
+                    {
+                        newPort += JY5711Ports::DIGITAL_OUTPUT_START;
+                    }
+                    break;
+                default:
+                        break;
+                }
+            QString errorMessage;
+            if(portManager_->allocatePort(devicename, newPort, allocatedTo, &errorMessage))
+            {
+                portManager_->releasePort(devicename, oldnumber);
+                auto &vec = allocatedPorts_[allocatedTo];
+                for (auto &p : vec) {
+                    if (p.deviceName == devicename && p.portNumber == oldnumber) {
+                        p = portManager_->getPortInfo(devicename, newPort);
+                        break;
+                    }
+                }
+                    updatePortTable();
+                    updateAvailablePorts();
+            }else{
+                QMessageBox::warning(this, "警告", errorMessage);
+            }
+        });
+        selectedPortsTable_->setCellWidget(i, 1, portNumberComboBox);
         selectedPortsTable_->setItem(i, 2, new QTableWidgetItem(portTypeToString(port.portType)));
         selectedPortsTable_->setItem(i, 3, new QTableWidgetItem(getPortUsage(port.portType)));
         selectedPortsTable_->setItem(i, 4, new QTableWidgetItem(getConnectionPoint(port.portType)));
@@ -401,7 +407,7 @@ void WiringGuideDialog::updatePortTable()
 void WiringGuideDialog::onAutoAllocatePorts()
 {
     if (!portManager_) return;
-
+    portManager_->releaseAllPorts();
     allocatedPorts_.clear();
     if (isBatchWiring_) {
         for (auto& component : batchComponentSpecs_) {
@@ -436,50 +442,9 @@ void WiringGuideDialog::onAutoAllocatePorts()
 
     updatePortTable();
     updateAvailablePorts();
-    generateWiringSteps(component_, allocatedPorts_);
 
     QMessageBox::information(this, "成功",
         QString("自动分配了 %1 个端口，请查看已选端口列表").arg(allocatedPorts_.size()));
-}
-
-void WiringGuideDialog::onManualAllocatePorts()
-{
-    int currentRow = availablePortsTable_->currentRow();
-    if (currentRow < 0) {
-        QMessageBox::information(this, "提示", "请先选择一个可用端口");
-        return;
-    }
-
-    QString deviceName = availablePortsTable_->item(currentRow, 0)->text();
-    int portNumber = availablePortsTable_->item(currentRow, 1)->text().toInt();
-    QString portType = availablePortsTable_->item(currentRow, 2)->text();
-
-    qDebug() << "尝试手动分配端口：" << deviceName << portNumber << "类型：" << portType;
-
-    // 检查端口类型是否适合当前元件
-    if (component_.type == ComponentType::RESISTOR ||
-        component_.type == ComponentType::CAPACITOR ||
-        component_.type == ComponentType::INDUCTOR) {
-
-        if (portType != "万用表测量") {
-            QMessageBox::warning(this, "端口类型不匹配",
-                QString("该元件需要万用表测量端口，您选择的是%1端口。\n"
-                       "请选择JY8902设备的万用表测量端口。").arg(portType));
-            return;
-        }
-    }
-
-    if (portManager_->allocatePort(deviceName, portNumber, component_.reference)) {
-        qDebug() << "端口分配成功";
-        updatePortTable();
-        // generateWiringSteps(component_, QVector<PortInfo>{portManager_->getPortInfo(deviceName, portNumber)});
-
-        QMessageBox::information(this, "成功",
-            QString("已添加端口：%1-%2 (%3)").arg(deviceName).arg(portNumber).arg(portType));
-    } else {
-        qDebug() << "端口分配失败";
-        QMessageBox::warning(this, "错误", "端口分配失败，端口可能已被占用");
-    }
 }
 
 void WiringGuideDialog::generateWiringSteps(const ComponentSpec& component, const QMap<QString, QVector<PortInfo>>& allocatedPorts)
@@ -556,9 +521,7 @@ void WiringGuideDialog::updateWiringInstructions()
      .arg(generateDetailedInstruction(connection));
 
     currentStepDetails_->setPlainText(details);
-      // 更新按钮状态
     prevStepBtn_->setEnabled(currentStepIndex_ > 0);
-    // 修改逻辑：允许在最后一步也能点击"下一步"按钮来完成该步骤
     nextStepBtn_->setEnabled(currentStepIndex_ < wiringSteps_.size());
 
     // 更新进度条
@@ -748,18 +711,6 @@ void WiringGuideDialog::onPreviousStep()
     }
 }
 
-void WiringGuideDialog::onValidateConnections()
-{
-    // 验证步骤已移除 - 直接跳过验证
-    // 接线完成后直接生成方案
-}
-
-void WiringGuideDialog::updateValidationResults()
-{
-    // 验证结果显示已移除 - 直接跳过
-    // 接线完成后直接生成方案，无需显示验证结果
-}
-
 void WiringGuideDialog::onGenerateScheme()
 {
     if(!isBatchWiring_) {
@@ -768,13 +719,6 @@ void WiringGuideDialog::onGenerateScheme()
         currentScheme_.componentType = component_.type;
         currentScheme_.description = QString("为%1元件生成的接线方案").arg(componentTypeToString(component_.type));
         currentScheme_.connections = wiringSteps_;
-
-        // 添加测试参数
-        currentScheme_.testParameters["component_reference"] = component_.reference;
-        currentScheme_.testParameters["nominal_value"] = component_.nominal_value;
-        currentScheme_.testParameters["tolerance"] = component_.tolerance_percent;
-        currentScheme_.testParameters["test_voltage"] = getTestVoltage();
-        currentScheme_.testParameters["test_frequency"] = getTestFrequency();
 
         QMessageBox::information(this, "成功",
             QString("接线方案生成成功!\n方案ID: %1").arg(currentScheme_.schemeId));
@@ -786,7 +730,6 @@ void WiringGuideDialog::onGenerateScheme()
         currentScheme_.connections = wiringSteps_;
     }
 
-    // 直接发出完成信号，跳过验证页面的显示
     emit wiringCompleted(currentScheme_, allocatedPorts_);
     accept();
 }
@@ -810,8 +753,6 @@ void WiringGuideDialog::onResetWiring()
         updatePortTable();
         updateWiringStepsList();
         tabWidget_->setCurrentIndex(0);
-
-        // 验证按钮已移除，无需设置状态
     }
 }
 
@@ -838,7 +779,6 @@ QString WiringGuideDialog::portTypeToString(PortType type) const
     switch (type) {
     case PortType::ANALOG_OUTPUT: return "模拟输出";
     case PortType::DIGITAL_OUTPUT: return "数字输出";
-    case PortType::POWER_OUTPUT: return "电源输出";
     case PortType::ANALOG_INPUT: return "模拟输入";
     case PortType::DIGITAL_INPUT: return "数字输入";
     case PortType::DMM_MEASUREMENT: return "万用表测量";
@@ -851,7 +791,6 @@ QString WiringGuideDialog::getPortUsage(PortType type) const
     switch (type) {
     case PortType::ANALOG_OUTPUT: return "信号源";
     case PortType::DIGITAL_OUTPUT: return "控制信号";
-    case PortType::POWER_OUTPUT: return "电源供应";
     case PortType::ANALOG_INPUT: return "信号采集";
     case PortType::DIGITAL_INPUT: return "状态检测";
     case PortType::DMM_MEASUREMENT: return "万用表测量";
@@ -863,7 +802,6 @@ QString WiringGuideDialog::getConnectionPoint(PortType type) const
 {
     switch (type) {
     case PortType::ANALOG_OUTPUT: return "元件引脚A";
-    case PortType::POWER_OUTPUT: return "电源端";
     case PortType::ANALOG_INPUT: return "元件引脚B";
     case PortType::DMM_MEASUREMENT: return "元件引脚";
     default: return "元件引脚";
@@ -898,11 +836,11 @@ QVector<ConnectionInfo> WiringGuideDialog::convertToConnectionInfo(const QVector
 
 QString WiringGuideDialog::generateDetailedInstruction(const ConnectionInfo& connection) const
 {
-    return QString("1. 使用%1线缆\n2. 将一端连接到%2的端口%3\n3. 将另一端%4\n4. 确保连接牢固")
+    QString DisplayDeviceName = GeneratePortShowName(connection.sourcePort.deviceName, connection.sourcePort.portNumber);
+    return QString("1. 使用%1线缆\n2. 将%2连接到%3一端\n3. 将%2另一端连接到%3另一端\n4. 确保连接牢固")
            .arg(connection.wireColor)
-           .arg(connection.sourcePort.deviceName)
-           .arg(connection.sourcePort.portNumber)
-           .arg(connection.instruction);
+           .arg(DisplayDeviceName)
+           .arg(connection.targetPort.allocatedTo);
 }
 
 QString WiringGuideDialog::generateTestParametersDescription() const
@@ -927,43 +865,7 @@ QString WiringGuideDialog::generateTestParametersDescription() const
     return params;
 }
 
-bool WiringGuideDialog::validateCurrentConfiguration() const
-{
-    // 检查是否有必要的端口配置
-    QStringList errors;
-    return portManager_->validatePortConfiguration(wiringSteps_, errors);
-}
-
-double WiringGuideDialog::getTestVoltage() const
-{
-    switch (component_.type) {
-    case ComponentType::RESISTOR:
-    case ComponentType::CAPACITOR:
-    case ComponentType::INDUCTOR:
-        return 1.0; // 1V
-    case ComponentType::DIODE:
-        return 3.3; // 3.3V
-    case ComponentType::IC:
-        return 5.0; // 5V
-    default:
-        return 1.0;
-    }
-}
-
-double WiringGuideDialog::getTestFrequency() const
-{
-    switch (component_.type) {
-    case ComponentType::RESISTOR:
-        return 0; // DC
-    case ComponentType::CAPACITOR:
-    case ComponentType::INDUCTOR:
-        return 1000; // 1kHz
-    default:
-        return 1000;
-    }
-}
-
-QString WiringGuideDialog::GeneratePortShowName(const QString& devicename, const int    & portnumber)
+QString WiringGuideDialog::GeneratePortShowName(const QString& devicename, const int& portnumber) const
 {
     if(devicename == "JY5711")
     {
@@ -994,3 +896,74 @@ QString WiringGuideDialog::GeneratePortShowName(const QString& devicename, const
     }
 }
 
+QComboBox* WiringGuideDialog::getPortComboBox(PortType type, int portNumber)
+{
+    QComboBox* comboBox = new QComboBox();
+    switch(type){
+        case PortType::ANALOG_OUTPUT:
+            {
+                for(int i = JY5711Ports::ANALOG_OUTPUT_START; i <= JY5711Ports::ANALOG_OUTPUT_END; ++i)
+                {
+                    comboBox->addItem(QString::number(i - JY5711Ports::ANALOG_OUTPUT_START));
+                }
+                comboBox->setCurrentIndex(portNumber - JY5711Ports::ANALOG_OUTPUT_START);
+            }
+            
+            break;
+        case PortType::DIGITAL_OUTPUT:
+            {
+                for(int i = JY5711Ports::DIGITAL_OUTPUT_START; i <= JY5711Ports::DIGITAL_OUTPUT_END; ++i)
+                {
+                    comboBox->addItem(QString::number(i - JY5711Ports::DIGITAL_OUTPUT_START));
+                }
+                comboBox->setCurrentIndex(portNumber - JY5711Ports::DIGITAL_OUTPUT_START);
+            }
+            break;
+        case PortType::ANALOG_INPUT:
+            {
+                for(int i = JY5323Ports::ANALOG_INPUT_START; i <= JY5323Ports::ANALOG_INPUT_END; i++)
+                {
+                    comboBox->addItem(QString::number(i));
+                }
+                comboBox->setCurrentIndex(portNumber);
+            }
+            break;
+        case PortType::DIGITAL_INPUT:
+            {
+                for(int i = JY5322Ports::DIGITAL_INPUT_START; i <= JY5322Ports::DIGITAL_INPUT_END; i++)
+                {
+                    comboBox->addItem(QString::number(i));
+                }
+                comboBox->setCurrentIndex(portNumber);
+            }
+            break;
+        case PortType::DMM_MEASUREMENT:
+            {
+                for(int i = JY8902Ports::DMM_CHANNEL_START; i <= JY8902Ports::DMM_CHANNEL_END; i++)
+                {
+                    comboBox->addItem(QString::number(i));
+                }
+                comboBox->setCurrentIndex(portNumber);
+            }
+            break;
+    }
+    return comboBox;
+}
+
+void WiringGuideDialog::onComplate()
+{
+    if(tabWidget_->currentIndex() == 0)
+    {
+        tabWidget_->setCurrentIndex(1);
+    }
+    else if(tabWidget_->currentIndex() == 1)
+    {
+        if(allocatedPorts_.isEmpty())
+        {
+            QMessageBox::warning(this, "警告", "请先分配端口");
+            return;
+        }
+        generateWiringSteps(component_, allocatedPorts_);
+        tabWidget_->setCurrentIndex(2);
+    }
+}

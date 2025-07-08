@@ -28,8 +28,8 @@ public:
     QVector<PortInfo> getAllPorts() const;
     PortInfo getPortInfo(const QString& deviceName, int portNumber) const;
       // 端口分配和释放
-    bool allocatePort(const QString& deviceName, int portNumber, const QString& allocatedTo);
-    bool releasePort(const QString& deviceName, int portNumber);
+    bool allocatePort(const QString& deviceName, const int& portNumber, const QString& allocatedTo, QString* errorMessage = nullptr);
+    bool releasePort(const QString& deviceName, const int& portNumber);
     void releaseAllPorts();
     void releasePortsForUser(const QString& allocatedTo);
     void releasePortsForUser(const QString& allocatedTo, bool emitSignals);

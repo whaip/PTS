@@ -66,24 +66,17 @@ void PortManager::initializeJY5711Ports()
     
     qDebug() << "初始化" << deviceName << "端口...";
     
-    // 模拟输出端口 (0-15)
+    // 模拟输出端口 (16-31)
     for (int i = JY5711Ports::ANALOG_OUTPUT_START; i <= JY5711Ports::ANALOG_OUTPUT_END; ++i) {
         PortInfo port(deviceName, i, PortType::ANALOG_OUTPUT,
                      QString("模拟输出端口 AO%1").arg(i), 10.0, 0.02);
         ports.append(port);
     }
     
-    // 数字输出端口 (16-27)
+    // 模拟输出端口 (0-15)
     for (int i = JY5711Ports::DIGITAL_OUTPUT_START; i <= JY5711Ports::DIGITAL_OUTPUT_END; ++i) {
         PortInfo port(deviceName, i, PortType::DIGITAL_OUTPUT,
-                     QString("数字输出端口 DO%1").arg(i), 5.0, 0.01);
-        ports.append(port);
-    }
-    
-    // 电源输出端口 (28-31)
-    for (int i = JY5711Ports::POWER_OUTPUT_START; i <= JY5711Ports::POWER_OUTPUT_END; ++i) {
-        PortInfo port(deviceName, i, PortType::POWER_OUTPUT,
-                     QString("电源输出端口 PWR%1").arg(i), 12.0, 1.0);
+                     QString("数字输出端口 DO%1").arg(i - 16), 5.0, 0.01);
         ports.append(port);
     }
     
@@ -174,27 +167,34 @@ PortInfo PortManager::getPortInfo(const QString& deviceName, int portNumber) con
     return port ? *port : PortInfo();
 }
 
-bool PortManager::allocatePort(const QString& deviceName, int portNumber, const QString& allocatedTo)
+bool PortManager::allocatePort(const QString& deviceName, const int& portNumber, const QString& allocatedTo, QString* errorMessage)
 {
     QMutexLocker locker(&portMutex_);
     
     PortInfo* port = findPort(deviceName, portNumber);
     
     if (!port) {
-        qWarning() << "端口不存在:" << deviceName << portNumber;
+        if (errorMessage) {
+            *errorMessage = "端口不存在:" + deviceName + QString::number(portNumber);
+        }
         return false;
     }
     
     qDebug() << "端口状态 - 可用:" << port->isAvailable << "当前分配给:" << port->allocatedTo;
 
     if (!port->isAvailable) {
-        qWarning() << "端口已被分配:" << deviceName << portNumber << "分配给:" << port->allocatedTo;
+        if (errorMessage) {
+            *errorMessage = "端口已被分配:" + deviceName + QString::number(portNumber) + "分配给:" + port->allocatedTo;
+        }
         return false;
     }
     
     // 检查allocatedTo是否为空或无效
     if (allocatedTo.isEmpty()) {
-        qWarning() << "警告：尝试将端口分配给空用户名！";
+        if (errorMessage) {
+            *errorMessage = "警告：尝试将端口分配给空用户名！";
+        }
+        return false;
     }
     
     port->isAvailable = false;
@@ -206,7 +206,7 @@ bool PortManager::allocatePort(const QString& deviceName, int portNumber, const 
     return true;
 }
 
-bool PortManager::releasePort(const QString& deviceName, int portNumber)
+bool PortManager::releasePort(const QString& deviceName, const int& portNumber)
 {
     QMutexLocker locker(&portMutex_);
     PortInfo* port = findPort(deviceName, portNumber);
@@ -508,7 +508,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                 {
                     QString deviceName = "JY5711";
                     bool allocated = false;
-                    for(int portNumber = 0; portNumber <= 15; portNumber++){
+                    for(int portNumber = JY5711Ports::ANALOG_OUTPUT_START; portNumber <= JY5711Ports::ANALOG_OUTPUT_END; portNumber++){
                         if (allocatePort(deviceName, portNumber, allocatedTo)) {
                             allocatedPorts.append(getPortInfo(deviceName, portNumber));
                             allocated = true;
@@ -527,7 +527,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                 {
                     QString deviceName = "JY5711";
                     bool allocated = false;
-                    for(int portNumber = 16; portNumber <= 27; portNumber++){
+                    for(int portNumber = JY5711Ports::DIGITAL_OUTPUT_START; portNumber <= JY5711Ports::DIGITAL_OUTPUT_END; portNumber++){
                         if (allocatePort(deviceName, portNumber, allocatedTo)) {
                             allocatedPorts.append(getPortInfo(deviceName, portNumber));
                             allocated = true;
@@ -542,30 +542,11 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                     }
                 }
                 break;
-            case PortType::POWER_OUTPUT:
-                {
-                    QString deviceName = "JY5711";
-                    bool allocated = false;
-                    for(int portNumber = 28; portNumber <= 31; portNumber++){
-                        if (allocatePort(deviceName, portNumber, allocatedTo)) {
-                            allocatedPorts.append(getPortInfo(deviceName, portNumber));
-                            allocated = true;
-                            break;
-                        }
-                    }
-                    if(!allocated){
-                        qWarning() << "警告：电源输出端口分配失败";
-                        lastError_ = "电源输出端口分配失败";
-                        cleanupInvalidAllocations();
-                        return QVector<PortInfo>();
-                    }
-                }
-                break;
             case PortType::ANALOG_INPUT:
                 {
                     QString deviceName = "JY5323";
                     bool allocated = false;
-                    for(int portNumber = 0; portNumber <= 31; portNumber++){
+                    for(int portNumber = JY5323Ports::ANALOG_INPUT_START; portNumber <= JY5323Ports::ANALOG_INPUT_END; portNumber++){
                         if (allocatePort(deviceName, portNumber, allocatedTo)) {
                             allocatedPorts.append(getPortInfo(deviceName, portNumber));
                             allocated = true;
@@ -584,7 +565,7 @@ QVector<PortInfo> PortManager::autoAllocatePorts(QVector<PortRequirement> &requi
                 {
                     QString deviceName = "JY5322";
                     bool allocated = false;
-                    for(int portNumber = 0; portNumber <= 15; portNumber++){
+                    for(int portNumber = JY5322Ports::DIGITAL_INPUT_START; portNumber <= JY5322Ports::DIGITAL_INPUT_END; portNumber++){
                         if (allocatePort(deviceName, portNumber, allocatedTo)) {
                             allocatedPorts.append(getPortInfo(deviceName, portNumber));
                             allocated = true;

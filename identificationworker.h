@@ -19,7 +19,7 @@ public slots:
     void doWork() {
         try {
             qDebug() << "开始异步板卡识别，图片尺寸:" << input_image_.cols << "x" << input_image_.rows;
-            
+            cv::cvtColor(input_image_, input_image_, cv::COLOR_RGB2BGR);
             std::vector<SiftMatcher::MatchResult> matchresult = SIFT_MATCHER->matchImage(input_image_);
 
             QList<PCBBoardInfo> result;
@@ -27,6 +27,7 @@ public slots:
                 PCBBoardInfo board;
                 qDebug() << "匹配分数：" << match.matchScore;
                 board = board_manager_->getBoardById(QString::fromStdString(match.boardId));
+                board.matchScore = match.matchScore;
                 result.append(board);
                 if(result.size() > maxnumb_) break;
             }

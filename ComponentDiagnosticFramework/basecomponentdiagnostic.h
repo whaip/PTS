@@ -17,6 +17,7 @@ struct AnalysisResult;
 // 接线连接定义
 struct WiringConnection {
     QString componentPin;           // 元件引脚
+    QString component;
     PortInfo targetPort;           // 目标端口
     QString wireColor;             // 导线颜色
     QString instruction;           // 接线说明

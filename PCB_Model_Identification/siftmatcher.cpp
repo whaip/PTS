@@ -1,5 +1,7 @@
 #include "siftmatcher.h"
 #include <iostream>
+#include <set>
+#include <cmath>
 
 void SiftMatcher::saveDescriptors(const std::string& filename,
                                   const std::vector<cv::Mat>& descriptors,
@@ -41,7 +43,6 @@ void SiftMatcher::loadDescriptors(const std::string& filename,
 SiftMatcher::SiftMatcher() {
     if (checkGPU()) {
         try {
-            // 使用ORB替代SIFT（因为CUDA不直接支持SIFT）
             gpu_detector = cv::cuda::ORB::create(
                 500,    // nfeatures
                 1.2f,   // scaleFactor
@@ -52,10 +53,8 @@ SiftMatcher::SiftMatcher() {
                 cv::ORB::HARRIS_SCORE,
                 31      // patchSize
             );
-            gpu_matcher = cv::cuda::DescriptorMatcher::createBFMatcher(cv::NORM_L2);
-            std::cout << "GPU acceleration enabled" << std::endl;
+            gpu_matcher = cv::cuda::DescriptorMatcher::createBFMatcher(cv::NORM_HAMMING);
         } catch (const cv::Exception& e) {
-            std::cout << "GPU initialization failed: " << e.what() << std::endl;
             gpu_detector.release();
             gpu_matcher.release();
         }
@@ -93,22 +92,31 @@ bool SiftMatcher::checkGPU() {
 }
 
 cv::Mat SiftMatcher::extractDescriptor(const cv::Mat& image, int rotation) {
-
     // 转换为灰度图
     cv::Mat gray;
     cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
-
+    
+    // 图像预处理：增强对比度和去噪
+    cv::Mat enhanced;
+    cv::equalizeHist(gray, enhanced); // 直方图均衡化
+    
+    // 高斯滤波去噪
+    cv::Mat denoised;
+    cv::GaussianBlur(enhanced, denoised, cv::Size(3, 3), 0);
+    
+    // 应用旋转
+    cv::Mat processed = denoised;
     if (rotation >= 0) {
         switch (rotation) {
-            case 0: cv::rotate(gray, gray, cv::ROTATE_90_CLOCKWISE); break;
-            case 1: cv::rotate(gray, gray, cv::ROTATE_180); break;
-            case 2: cv::rotate(gray, gray, cv::ROTATE_90_COUNTERCLOCKWISE); break;
+            case 0: cv::rotate(processed, processed, cv::ROTATE_90_CLOCKWISE); break;
+            case 1: cv::rotate(processed, processed, cv::ROTATE_180); break;
+            case 2: cv::rotate(processed, processed, cv::ROTATE_90_COUNTERCLOCKWISE); break;
         }
     }
 
     if (gpu_detector) {
         try {
-            cv::cuda::GpuMat gpu_image(gray);
+            cv::cuda::GpuMat gpu_image(processed);
             cv::cuda::GpuMat gpu_descriptors;
             std::vector<cv::KeyPoint> keypoints;
 
@@ -117,21 +125,31 @@ cv::Mat SiftMatcher::extractDescriptor(const cv::Mat& image, int rotation) {
             cv::Mat descriptors;
             gpu_descriptors.download(descriptors);
             
-            if (!descriptors.empty()) {
-                descriptors.convertTo(descriptors, CV_32F);
-            }
-            
+            std::cout << "GPU extracted " << keypoints.size() << " keypoints" << std::endl;
             return descriptors;
         } catch (const cv::Exception& e) {
             std::cout << "GPU feature extraction failed: " << e.what() << std::endl;
         }
     }
 
-    // 降级到CPU实现
-    cv::Ptr<cv::SIFT> sift = cv::SIFT::create();
+    // 降级到CPU实现 - 同样使用ORB保持一致性
+    cv::Ptr<cv::ORB> orb = cv::ORB::create(
+        500,        // nfeatures
+        1.2f,       // scaleFactor
+        8,          // nlevels
+        31,         // edgeThreshold
+        0,          // firstLevel
+        2,          // WTA_K
+        cv::ORB::HARRIS_SCORE,
+        31,         // patchSize
+        20          // fastThreshold
+    );
+    
     std::vector<cv::KeyPoint> keypoints;
     cv::Mat descriptors;
-    sift->detectAndCompute(gray, cv::noArray(), keypoints, descriptors);
+    orb->detectAndCompute(processed, cv::noArray(), keypoints, descriptors);
+    
+    std::cout << "CPU extracted " << keypoints.size() << " keypoints" << std::endl;
     return descriptors;
 }
 
@@ -142,45 +160,102 @@ SiftMatcher::MatchResult SiftMatcher::computeMatchScore(const cv::Mat& queryDesc
     
     try {
         if (gpu_matcher) {
-            cv::Mat queryDesc32F, trainDesc32F;
-            queryDesc.convertTo(queryDesc32F, CV_32F);
-            trainDesc.convertTo(trainDesc32F, CV_32F);
-
-            cv::cuda::GpuMat gpu_queryDesc(queryDesc32F);
-            cv::cuda::GpuMat gpu_trainDesc(trainDesc32F);
+            cv::cuda::GpuMat gpu_queryDesc(queryDesc);
+            cv::cuda::GpuMat gpu_trainDesc(trainDesc);
             
             gpu_matcher->match(gpu_queryDesc, gpu_trainDesc, matches);
         } else {
-            cv::Ptr<cv::FlannBasedMatcher> matcher = cv::FlannBasedMatcher::create();
+            cv::Ptr<cv::BFMatcher> matcher = cv::BFMatcher::create(cv::NORM_HAMMING);
             matcher->match(queryDesc, trainDesc, matches);
         }
     } catch (const cv::Exception& e) {
-        std::cout << "Matching failed: " << e.what() << std::endl;
+        std::cout << "Matching failed for " << board_id << ": " << e.what() << std::endl;
         return {board_id, 0, 0};
     }
 
-    double minDist = 100000, maxDist = 0;
-    for (const auto& match : matches) {
-        double dist = match.distance;
-        if (dist < minDist) minDist = dist;
-        if (dist > maxDist) maxDist = dist;
+    if (matches.empty()) {
+        return {board_id, 0, 0};
     }
 
-    std::vector<cv::DMatch> goodMatches;
-    double totalScore = 0;
+    // 找到最小和最大距离
+    double minDist = matches[0].distance;
+    double maxDist = matches[0].distance;
     for (const auto& match : matches) {
-        if (match.distance <= std::max(2 * minDist, 30.0)) {
+        minDist = std::min(minDist, (double)match.distance);
+        maxDist = std::max(maxDist, (double)match.distance);
+    }
+
+    // 使用更严格的阈值
+    // 对于ORB HAMMING距离，使用更保守的阈值
+    double threshold = std::max(2.5 * minDist, 35.0); // 更严格的阈值
+    
+    std::vector<cv::DMatch> goodMatches;
+    for (const auto& match : matches) {
+        if (match.distance <= threshold) {
             goodMatches.push_back(match);
-            totalScore += 1.0 - (match.distance / std::max(maxDist, 0.1));
         }
     }
 
+    // 输出调试信息
+    std::cout << "  Board " << board_id << ": " 
+              << matches.size() << " total matches, "
+              << goodMatches.size() << " good matches (threshold: " << threshold 
+              << ", min_dist: " << minDist << ", max_dist: " << maxDist << ")" << std::endl;
+
+    // 如果好匹配太少，直接返回低分
+    if (goodMatches.size() < 10) {
+        std::cout << "    Too few good matches, returning low score" << std::endl;
+        return {board_id, (int)goodMatches.size(), 0};
+    }
+
+    // 计算匹配分数
     double matchScore = 0;
     if (!goodMatches.empty()) {
-        matchScore = goodMatches.size() * (totalScore / goodMatches.size());
-        if (goodMatches.size() > 1000) {
-            matchScore *= 10;
+        // 计算平均匹配距离
+        double avgDistance = 0;
+        for (const auto& match : goodMatches) {
+            avgDistance += match.distance;
         }
+        avgDistance /= goodMatches.size();
+        
+        // 计算距离的标准差，用于评估匹配一致性
+        double distanceVariance = 0;
+        for (const auto& match : goodMatches) {
+            double diff = match.distance - avgDistance;
+            distanceVariance += diff * diff;
+        }
+        distanceVariance /= goodMatches.size();
+        double distanceStdDev = std::sqrt(distanceVariance);
+        
+        // 归一化分数：距离越小，分数越高
+        double qualityScore = 1.0 / (1.0 + avgDistance / 30.0); // 更严格的归一化
+        
+        // 一致性分数：标准差越小，匹配越一致
+        double consistencyScore = 1.0 / (1.0 + distanceStdDev / 20.0);
+        
+        // 最终分数：结合匹配数量、质量和一致性
+        matchScore = goodMatches.size() * qualityScore * consistencyScore;
+        
+        // 对于高质量匹配给予奖励
+        if (goodMatches.size() > 30 && avgDistance < 25.0 && distanceStdDev < 15.0) {
+            matchScore *= 1.8; // 高质量匹配奖励
+        }
+        
+        // 对于大量匹配给予额外奖励
+        if (goodMatches.size() > 80) {
+            matchScore *= 1.3;
+        }
+        
+        // 惩罚匹配质量差的情况
+        if (avgDistance > 40.0 || distanceStdDev > 25.0) {
+            matchScore *= 0.5; // 质量差的匹配惩罚
+        }
+        
+        std::cout << "    Avg distance: " << avgDistance 
+                  << ", Std dev: " << distanceStdDev
+                  << ", Quality score: " << qualityScore 
+                  << ", Consistency: " << consistencyScore
+                  << ", Final score: " << matchScore << std::endl;
     }
 
     return {board_id, (int)goodMatches.size(), matchScore};
@@ -193,26 +268,46 @@ std::vector<SiftMatcher::MatchResult> SiftMatcher::matchImage(const cv::Mat& inp
 
     cv::Mat queryDesc = extractDescriptor(inputImage);
     if (queryDesc.empty()) {
+        std::cout << "Warning: Failed to extract descriptors from input image" << std::endl;
         return {};
     }
+    
+    std::cout << "Query image descriptors: " << queryDesc.rows << " features" << std::endl;
+    std::cout << "Database contains: " << loadedDescriptors.size() << " descriptor sets" << std::endl;
 
     std::vector<MatchResult> matchResults;
     for (size_t i = 0; i < loadedDescriptors.size(); i++) {
-        matchResults.push_back(computeMatchScore(queryDesc, loadedDescriptors[i], loadedNames[i]));
+        MatchResult result = computeMatchScore(queryDesc, loadedDescriptors[i], loadedNames[i]);
+        matchResults.push_back(result);
+        
+        // 输出每个匹配的详细信息
+        if (result.goodMatchCount > 0) {
+            std::cout << "Match with " << result.boardId 
+                      << ": " << result.goodMatchCount << " good matches, score: " 
+                      << result.matchScore << std::endl;
+        }
     }
 
-    std::sort(matchResults.begin(), matchResults.end());
+    // 按匹配分数降序排序
+    std::sort(matchResults.begin(), matchResults.end(), [](const MatchResult& a, const MatchResult& b) {
+        return a.matchScore > b.matchScore;
+    });
+    
+    // 改进的去重逻辑：为每个board_id选择最佳匹配结果
     std::vector<MatchResult> results;
-    for(auto& result : matchResults) {
-        auto it = std::find_if(results.begin(), results.end(), [result](const MatchResult& mr) {
-            return result.boardId == mr.boardId;
-        });
-        if(it == results.end()) {
+    std::set<std::string> processedBoardIds;
+    
+    for(const auto& result : matchResults) {
+        // 如果这个board_id还没有被处理过，添加到结果中
+        if (processedBoardIds.find(result.boardId) == processedBoardIds.end()) {
             results.push_back(result);
+            processedBoardIds.insert(result.boardId);
+            std::cout << "Best match for " << result.boardId 
+                      << ": score " << result.matchScore 
+                      << " (" << result.goodMatchCount << " matches)" << std::endl;
         }
     }
     return results;
-    
 }
 
 void SiftMatcher::appendToDatabase(const std::vector<std::string>& boardid, const std::vector<cv::Mat>& images) {
@@ -275,6 +370,9 @@ bool SiftMatcher::removeFromDatabase(const std::string& board_id) {
             }
         }
 
+        if (found) {
+            saveDescriptors("descriptors_database.yml", newDescriptors, newImageNames);
+        }
         return found;
 
     } catch (const cv::Exception& e) {

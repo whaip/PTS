@@ -119,10 +119,6 @@ private:
     QPixmap matToQPixmap(const cv::Mat& mat);    
     cv::Mat qPixmapToMat(const QPixmap& pixmap);
     
-    // 静态工具方法：标准化颜色转换
-    static QPixmap matToQPixmapStandard(const cv::Mat& mat, bool convertBGRtoRGB = true);
-    static cv::Mat qPixmapToMatStandard(const QPixmap& pixmap);
-    
     // 坐标转换
     QPoint imageToWidget(const QPoint& imagePos);
     QPoint widgetToImage(const QPoint& widgetPos);

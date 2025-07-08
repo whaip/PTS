@@ -57,12 +57,11 @@ protected:
 
 private slots:
     void onAutoAllocatePorts();
-    void onManualAllocatePorts();
-    void onValidateConnections(); // 保留声明，但实现已简化
     void onNextStep();
     void onPreviousStep();
     void onResetWiring();
     void onGenerateScheme();
+    void onComplate();
 
 private:
     void setupUI();
@@ -75,26 +74,23 @@ private:
     void updatePortTable();
     void updateWiringInstructions();
     void updateConnectionDiagram();
-    void updateValidationResults();
     void generateWiringSteps(const ComponentSpec& component, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void createConnectionInstructions();
-    QString GeneratePortShowName(const QString& devicename, const int& portnumber);
+    QString GeneratePortShowName(const QString& devicename, const int& portnumber) const;
       // Add missing helper function declarations
     QString generateTestParametersDescription() const;
     QString portTypeToString(PortType type) const;
     QString getPortUsage(PortType type) const;  // Fixed parameter type
     QString getConnectionPoint(PortType type) const;  // Fixed parameter type
+    QComboBox* getPortComboBox(PortType type, int portNumber);
     QString getWireColor(PortType type) const;
     QColor getWireColor(const QString& portId) const;  // Added overload for QString
     QString generateDetailedInstruction(const ConnectionInfo& connection) const;
     QString componentTypeToString(ComponentType type) const;
-    double getTestVoltage() const;  // Removed parameter
-    double getTestFrequency() const;  // Removed parameter
     QVector<ConnectionInfo> convertToConnectionInfo(const QVector<WiringConnection>& connections) const;
 
     // Missing UI update functions
     void updateWiringStepsList();
-    bool validateCurrentConfiguration() const;
 
     QVector<ComponentSpec> batchComponentSpecs_;
     QMap<QString, QVector<PortInfo>> allocatedPorts_;
@@ -126,7 +122,6 @@ private:
     QTableWidget* availablePortsTable_;
     QTableWidget* selectedPortsTable_;
     QPushButton* autoAllocateBtn_;
-    QPushButton* manualAllocateBtn_;
     QPushButton* clearSelectionBtn_;
     QLabel* portStatusLabel_;
       // 接线指导页面

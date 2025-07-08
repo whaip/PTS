@@ -32,6 +32,9 @@
 #include <QDoubleSpinBox>
 #include <QLineEdit>
 #include <QMetaObject>  // 用于队列调用 refreshTable
+#include <QPointer>
+#include <QFileInfo>
+#include <memory>
 
 // PCBBoardManagementWidget 实现
 PCBBoardManagementWidget::PCBBoardManagementWidget(ComponentDiagnosticManager* diagnostic_manager, QWidget *parent)
@@ -607,12 +610,12 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
         return;
     }
       // 转换Mat为QImage - 使用标准化的颜色转换
-    QPixmap pixmap = matToQPixmapStandard(current_board_image_, false);
-    if (pixmap.isNull()) {
+    QImage image(current_board_image_.data, current_board_image_.cols, current_board_image_.rows, current_board_image_.step, QImage::Format_RGB888);
+    if (image.isNull()) {
         qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 图像转换失败";
         return;
     }
-    QImage qimage = pixmap.toImage();
+    QImage qimage = image.copy();
     
     // 准备标签数据
     std::vector<Label> existingLabels;
@@ -902,16 +905,12 @@ void PCBBoardManagementWidget::onCreateBoard()
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.tiff *.tif);;所有文件 (*.*)");
         
         if (!fileName.isEmpty()) {
-            cv::Mat loadedImage = cv::imread(fileName.toStdString());
+            cv::Mat loadedImage = board_manager_->loadImage(fileName);
             if (!loadedImage.empty()) {
                 selectedImage = loadedImage.clone();
                 imageFilePath = fileName;
                 
-                // 更新预览
-                cv::Mat rgbMat;
-                cv::cvtColor(selectedImage, rgbMat, cv::COLOR_BGR2RGB);
-                selectedImage = rgbMat;
-                QPixmap pixmap = matToQPixmapStandard(selectedImage, false);
+                QPixmap pixmap = matToQPixmap(selectedImage);
                 if (!pixmap.isNull()) {
                     QSize previewSize = imagePreview->size();
                     pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1030,7 +1029,7 @@ void PCBBoardManagementWidget::onCreateBoard()
                 try {
                     ImageData imageData = camera_manager_->getLatestImage(CameraType::HD_CAMERA);
                     if (imageData.isValid && !imageData.image.empty()) {
-                        QPixmap pixmap = matToQPixmapStandard(imageData.image, false);
+                        QPixmap pixmap = matToQPixmap(imageData.image);
                         if (!pixmap.isNull()) {
                             QSize previewSize = cameraPreview->size();
                             pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1052,7 +1051,7 @@ void PCBBoardManagementWidget::onCreateBoard()
                     photoTaken = true;
                     
                     // 显示拍摄的图像
-                    QPixmap pixmap = matToQPixmapStandard(capturedImage, false);
+                    QPixmap pixmap = matToQPixmap(capturedImage);
                     if (!pixmap.isNull()) {
                         QSize previewSize = cameraPreview->size();
                         pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1126,7 +1125,7 @@ void PCBBoardManagementWidget::onCreateBoard()
             imageFilePath.clear(); // 摄像头拍摄的图像没有文件路径
             
             // 更新预览
-            QPixmap pixmap = matToQPixmapStandard(selectedImage, false);
+            QPixmap pixmap = matToQPixmap(selectedImage);
             if (!pixmap.isNull()) {
                 QSize previewSize = imagePreview->size();
                 pixmap = pixmap.scaled(previewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1175,7 +1174,7 @@ void PCBBoardManagementWidget::onCreateBoard()
         // 连接完成和错误信号
         QMetaObject::Connection connFinished, connError;
         connFinished = connect(board_manager_, &PCBBoardManager::boardCreationFinished,
-            this, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& createdBoardId) {
+            createDialog, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& createdBoardId) {
                 // 关闭进度对话框并显示结果
                 progressDialog->close();
                 QMessageBox::information(createDialog, "成功",
@@ -1185,7 +1184,7 @@ void PCBBoardManagementWidget::onCreateBoard()
                 createDialog->accept();
             });
         connError = connect(board_manager_, &PCBBoardManager::boardCreationError,
-            this, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& errorMsg) {
+            createDialog, [progressDialog, createDialog, createButton, boardName, boardModel, this](const QString& errorMsg) {
                 // 关闭进度对话框并提示错误
                 progressDialog->close();
                 QMessageBox::warning(createDialog, "错误",
@@ -1297,7 +1296,7 @@ void PCBBoardManagementWidget::onIdentifyFromFile()
     }
     
     // 快速加载图片进行预览
-    cv::Mat inputImage = cv::imread(fileName.toStdString());
+    cv::Mat inputImage = board_manager_->loadImage(fileName);
     if (inputImage.empty()) {
         QMessageBox::warning(this, "错误", "无法加载图片文件！\n请检查文件格式是否支持。");
         return;
@@ -1490,7 +1489,7 @@ void PCBBoardManagementWidget::onIdentifyFromCamera()
         try {
             ImageData imageData = camera_manager_->getLatestImage(CameraType::HD_CAMERA);
             if (imageData.isValid && !imageData.image.empty()) {
-                QPixmap pixmap = matToQPixmapStandard(imageData.image, false);
+                QPixmap pixmap = matToQPixmap(imageData.image);
                 if (!pixmap.isNull()) {
                     // 缩放图像以适应标签大小
                     QSize labelSize = previewLabel->size();
@@ -1888,8 +1887,8 @@ void PCBBoardManagementWidget::displayIdentificationResults(const QList<PCBBoard
 
 QPixmap PCBBoardManagementWidget::matToQPixmap(const cv::Mat& mat)
 {
-    // 使用标准化的颜色转换方法
-    return matToQPixmapStandard(mat, false);
+    QImage tmp(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_RGB888);
+    return QPixmap::fromImage(tmp.copy());
 }
 
 cv::Mat PCBBoardManagementWidget::qPixmapToMat(const QPixmap& pixmap)
@@ -1900,121 +1899,6 @@ cv::Mat PCBBoardManagementWidget::qPixmapToMat(const QPixmap& pixmap)
     QImage swapped = qimg.rgbSwapped();
     return cv::Mat(swapped.height(), swapped.width(), CV_8UC3, 
                    (void*)swapped.constBits(), swapped.bytesPerLine()).clone();
-}
-
-// 静态工具方法：标准化颜色转换
-QPixmap PCBBoardManagementWidget::matToQPixmapStandard(const cv::Mat& mat, bool convertBGRtoRGB)
-{
-    if (mat.empty()) {
-        return QPixmap();
-    }
-    
-    try {
-        switch (mat.type()) {
-            case CV_8UC1: {
-                // 灰度图像
-                QImage image(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_Grayscale8);
-                qDebug() << "Created grayscale QImage - Size:" << image.width() << "x" << image.height();
-                return QPixmap::fromImage(image);
-            }
-            case CV_8UC3: {
-                // 3通道图像处理
-                if (convertBGRtoRGB) {
-                    // BGR图像 - 转换为RGB
-                    cv::Mat rgbMat;
-                    cv::cvtColor(mat, rgbMat, cv::COLOR_BGR2RGB);
-                    QImage image(rgbMat.data, rgbMat.cols, rgbMat.rows, rgbMat.step, QImage::Format_RGB888);
-                    qDebug() << "Created RGB QImage (with BGR->RGB conversion) - Size:" << image.width() << "x" << image.height();
-                    return QPixmap::fromImage(image);
-                } else {
-                    // 已经是RGB格式或不需要转换
-                    QImage image(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_RGB888);
-                    qDebug() << "Created RGB QImage (no conversion) - Size:" << image.width() << "x" << image.height();
-                    return QPixmap::fromImage(image);
-                }
-            }
-            case CV_8UC4: {
-                // BGRA图像
-                QImage image(mat.data, mat.cols, mat.rows, mat.step, QImage::Format_ARGB32);
-                qDebug() << "Created ARGB QImage - Size:" << image.width() << "x" << image.height();
-                return QPixmap::fromImage(image);
-            }
-            case CV_16UC1: {
-                // 16位灰度图像，转换为8位
-                cv::Mat mat8;
-                mat.convertTo(mat8, CV_8UC1, 1.0/256.0);
-                QImage image(mat8.data, mat8.cols, mat8.rows, mat8.step, QImage::Format_Grayscale8);
-                return QPixmap::fromImage(image);
-            }
-            case CV_32FC1: {
-                // 32位浮点灰度图像，转换为8位
-                cv::Mat mat8;
-                mat.convertTo(mat8, CV_8UC1, 255.0);
-                QImage image(mat8.data, mat8.cols, mat8.rows, mat8.step, QImage::Format_Grayscale8);
-                return QPixmap::fromImage(image);
-            }
-            default: {
-                qWarning() << "matToQImage: Unsupported Mat type:" << mat.type();
-                
-                // 尝试转换为RGB格式
-                cv::Mat rgbMat;
-                if (mat.channels() == 1) {
-                    cv::cvtColor(mat, rgbMat, cv::COLOR_GRAY2RGB);
-                } else if (mat.channels() == 3) {
-                    cv::cvtColor(mat, rgbMat, cv::COLOR_BGR2RGB);
-                } else {
-                    // 不支持的格式，创建一个错误图像
-                    rgbMat = cv::Mat::zeros(100, 200, CV_8UC3);
-                    cv::putText(rgbMat, "Unsupported Format", cv::Point(10, 50), 
-                               cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-                }
-                
-                if (rgbMat.type() == CV_8UC3) {
-                    QImage image(rgbMat.data, rgbMat.cols, rgbMat.rows, rgbMat.step, QImage::Format_RGB888);
-                    return QPixmap::fromImage(image);
-                }
-                
-                return  QPixmap();
-            }
-        }
-    } catch (const std::exception& e) {
-        qWarning() << "matToQImage error:" << e.what();
-        return QPixmap();
-    }
-    return QPixmap();
-}
-
-cv::Mat PCBBoardManagementWidget::qPixmapToMatStandard(const QPixmap& pixmap)
-{
-    if (pixmap.isNull()) {
-        return cv::Mat();
-    }
-    
-    try {
-        QImage qimg = pixmap.toImage();
-        if (qimg.isNull()) {
-            return cv::Mat();
-        }
-        
-        // 确保图像格式为RGB888
-        if (qimg.format() != QImage::Format_RGB888) {
-            qimg = qimg.convertToFormat(QImage::Format_RGB888);
-        }
-        
-        // 创建OpenCV Mat，注意QImage是RGB格式，需要转换为BGR
-        cv::Mat mat(qimg.height(), qimg.width(), CV_8UC3, (void*)qimg.constBits(), qimg.bytesPerLine());
-        cv::Mat result;
-        cv::cvtColor(mat, result, cv::COLOR_RGB2BGR);
-        
-        return result.clone(); // 返回深拷贝
-        
-    } catch (const cv::Exception& e) {
-        qDebug() << "PCBBoardManagementWidget::qPixmapToMatStandard - OpenCV异常:" << e.what();
-        return cv::Mat();
-    } catch (const std::exception& e) {
-        qDebug() << "PCBBoardManagementWidget::qPixmapToMatStandard - 标准异常:" << e.what();
-        return cv::Mat();
-    }
 }
 
 // 简化的事件处理和其他方法

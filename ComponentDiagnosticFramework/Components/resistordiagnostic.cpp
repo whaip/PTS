@@ -87,9 +87,10 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                 {
                     WiringConnection conn1;
                     conn1.componentPin = "引脚1";
+                    conn1.component = component.reference;
                     conn1.targetPort = port;
                     conn1.wireColor = "红色";
-                    conn1.instruction = QString("将模拟输出端口%1连接到电阻%2信号输出引脚").arg(port.portNumber).arg(component.reference);
+                    conn1.instruction = QString("将电源输出端口%1连接到电阻%2信号输出引脚").arg(port.portNumber - 28).arg(component.reference);
                     conn1.isRequired = true;
                     connections.append(conn1);
                 }
@@ -98,6 +99,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                 {
                     WiringConnection conn2;
                     conn2.componentPin = "引脚2";
+                    conn2.component = component.reference;
                     conn2.targetPort = port; // 电压测量
                     conn2.wireColor = "黑色";
                     conn2.instruction = QString("将数字输入端口%1连接到电阻%2信号测量输入引脚").arg(port.portNumber).arg(component.reference);
@@ -109,6 +111,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                 {
                     WiringConnection conn3;
                     conn3.componentPin = "引脚1";
+                    conn3.component = component.reference;
                     conn3.targetPort = port; // 电阻测量
                     conn3.wireColor = "蓝色";
                     conn3.instruction = QString("将蓝色导线连接到电阻%1引脚%2到电阻测量").arg(component.reference).arg(port.portNumber);
@@ -120,6 +123,7 @@ QVector<WiringConnection> ResistorDiagnostic::generateWiringScheme(const Compone
                 {
                     WiringConnection conn4;
                     conn4.componentPin = "引脚1";
+                    conn4.component = component.reference;
                     conn4.targetPort = port; // 电流测量
                     conn4.wireColor = "绿色";
                     conn4.instruction = QString("将模拟输入端口%1连接到电阻%2电路中").arg(port.portNumber).arg(component.reference);
@@ -161,7 +165,7 @@ ComponentTestConfig ResistorDiagnostic::configureDataAcquisition(const Component
                 QVariantMap channelConfig;
                 channelConfig["channel"] = port.portNumber;
                 channelConfig["type"] = static_cast<int>(PXIe5711_testtype::HighLevelWave);
-                channelConfig["amplitude"] = 5;
+                channelConfig["amplitude"] = 6;
                 channelConfig["frequency"] = 1000;
                 channelConfig["lowRange"] = -10.0;
                 channelConfig["highRange"] = 10.0;
