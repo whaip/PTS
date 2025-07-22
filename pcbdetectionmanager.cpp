@@ -68,9 +68,10 @@ PCBDetectionRecord PCBDetectionRecord::fromJson(const QJsonObject& json) {
         QJsonObject labelObj = value.toObject();
         Label label;
         label.id = labelObj["id"].toInt();
-        label.x = labelObj["x"].toInt();
-        label.y = labelObj["y"].toInt();        label.w = labelObj["w"].toInt();
-        label.h = labelObj["h"].toInt();
+        label.x = labelObj["x"].toDouble();
+        label.y = labelObj["y"].toDouble();
+        label.w = labelObj["w"].toDouble();
+        label.h = labelObj["h"].toDouble();
         label.cls = labelObj["cls"].toInt();
         label.confidence = labelObj["confidence"].toDouble();
         label.label = labelObj["label_string"].toString();

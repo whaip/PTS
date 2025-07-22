@@ -23,44 +23,20 @@ struct Label {
     QByteArray notes;           // 备注信息
     QMap<QString, QVariant> parameters; // 参数
     
-    // 兼容性字段 (为了兼容旧代码)
-    int point_x;                 // 与 x 相同
-    int point_y;                 // 与 y 相同
-    int width;                   // 与 w 相同
-    int height;                  // 与 h 相同
-    
     // 构造函数
-    Label() : id(-1), x(0), y(0), w(0), h(0), cls(-1), confidence(0.0)
-        , point_x(0), point_y(0), width(0), height(0) {}
+    Label() : id(-1), x(0), y(0), w(0), h(0), cls(-1), confidence(0.0) {}
     
     Label(int id_, double x_, double y_, double w_, double h_, int cls_, double confidence_,
           const QString& label_ = "", const QString& position_ = "", 
           const QByteArray& notes_ = QByteArray())
         : id(id_), x(x_), y(y_), w(w_), h(h_), cls(cls_), confidence(confidence_)
-        , label(label_), position_number(position_), notes(notes_)
-        , point_x(x_), point_y(y_), width(w_), height(h_) {}
+        , label(label_), position_number(position_), notes(notes_) {}
     
     Label(int id_, const QString& label_, double x_, double y_, int w_, int h_, 
           const QString& cls_ = "", const QString& pos_ = "")
         : id(id_), x(static_cast<double>(x_)), y(static_cast<double>(y_)), w(w_), h(h_)
-        , cls(-1), confidence(0.0), label(label_), position_number(pos_)
-        , point_x(static_cast<double>(x_)), point_y(static_cast<double>(y_)), width(w_), height(h_) {}
+        , cls(-1), confidence(0.0), label(label_), position_number(pos_) {}
     
-    // 同步函数：确保兼容性字段与主字段同步
-    void syncFields() {
-        point_x = x;
-        point_y = y;
-        width = w;
-        height = h;
-    }
-    
-    // 从兼容性字段更新主字段
-    void updateFromCompat() {
-        x = point_x;
-        y = point_y;
-        w = width;
-        h = height;
-    }
     
     // 获取中心点坐标
     double centerX() const { return x + w / 2; }

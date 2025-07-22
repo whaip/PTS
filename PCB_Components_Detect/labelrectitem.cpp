@@ -427,10 +427,10 @@ void LabelRectItem::setRect(const QRectF &rect)
     updateZValue();  // 当矩形大小改变时更新Z值
 
     // 更新兼容字段以反映新的矩形尺寸和位置
-    label_info.point_x = rect.x();
-    label_info.point_y = rect.y();
-    label_info.width   = rect.width();
-    label_info.height  = rect.height();
+    label_info.x = rect.x();
+    label_info.y = rect.y();
+    label_info.w   = rect.width();
+    label_info.h  = rect.height();
 
     // 同步主字段以更新 x, y, w, h
     label_info.x = rect.x();
@@ -445,17 +445,34 @@ QVariant LabelRectItem::itemChange(GraphicsItemChange change, const QVariant &va
 {
     if (change == QGraphicsItem::ItemPositionChange || change == QGraphicsItem::ItemScaleChange) {
         updateZValue();
+        
+        // 获取场景坐标
         QRectF r = sceneRect();
-        label_info.point_x = r.x();
-        label_info.point_y = r.y();
-        label_info.width   = r.width();
-        label_info.height  = r.height();
-
-        // 同步主字段
-        label_info.x = r.x();
-        label_info.y = r.y();
-        label_info.w = r.width();
-        label_info.h = r.height();
+        
+        // 验证场景是否有效，确保坐标更新只在有效场景中进行
+        if (scene() && !scene()->sceneRect().isEmpty()) {
+            QRectF sceneRect = scene()->sceneRect();
+            
+            // 只有当坐标在场景范围内时才更新label_info
+            if (r.x() >= 0 && r.y() >= 0 && 
+                r.right() <= sceneRect.width() && r.bottom() <= sceneRect.height()) {
+                
+                label_info.x = r.x();
+                label_info.y = r.y();
+                label_info.w = r.width();
+                label_info.h = r.height();
+                
+                qDebug() << "LabelRectItem::itemChange - 坐标更新，ID:" << label_info.id 
+                         << "场景坐标:" << r.x() << "," << r.y() << r.width() << "x" << r.height()
+                         << "场景范围:" << sceneRect;
+            } else {
+                qDebug() << "LabelRectItem::itemChange - 坐标越界，忽略更新，ID:" << label_info.id 
+                         << "坐标:" << r.x() << "," << r.y() << r.width() << "x" << r.height()
+                         << "场景范围:" << sceneRect;
+            }
+        } else {
+            qDebug() << "LabelRectItem::itemChange - 场景无效，忽略坐标更新，ID:" << label_info.id;
+        }
     }
     return QGraphicsRectItem::itemChange(change, value);
 }

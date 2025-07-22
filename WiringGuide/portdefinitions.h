@@ -12,10 +12,10 @@ namespace PortDefinitions {
 
 // JY5711 端口分配
 struct JY5711Ports {
-    static constexpr int ANALOG_OUTPUT_START = 16;
-    static constexpr int ANALOG_OUTPUT_END = 31;
-    static constexpr int DIGITAL_OUTPUT_START = 0;
-    static constexpr int DIGITAL_OUTPUT_END = 15;
+    static constexpr int ANALOG_OUTPUT_START = 0;
+    static constexpr int ANALOG_OUTPUT_END = 15;
+    static constexpr int DIGITAL_OUTPUT_START = 16;
+    static constexpr int DIGITAL_OUTPUT_END = 31;
     static constexpr int TOTAL_PORTS = 32;
 };
 

@@ -6,7 +6,7 @@
 #include <QComboBox>
 #include <QtCore>
 
-LabelEditing::LabelEditing(QWidget *parent, const QImage &image, std::vector<Label> label_info, std::vector<Label> label_info_add, std::vector<int>& delete_id, QTableWidget*& labelTable)
+LabelEditing::LabelEditing(QWidget *parent, const QImage &image, const std::vector<Label> &label_info, const std::vector<Label> &label_info_add, std::vector<int>& delete_id, QTableWidget*& labelTable)
     : QGraphicsView(parent)
     , label_image(image)
     , label_info(label_info)
@@ -50,12 +50,27 @@ LabelEditing::~LabelEditing()
 
 void LabelEditing::loadImage(const QImage &image)
 {
+    qDebug() << "LabelEditing::loadImage - 开始加载图像";
+    
+    // 完全清除场景中的所有项，确保干净的起始状态
     scene->clear();
+    
+    // 清除所有现有的矩形项向量（但不清除数据，因为数据是外部传入的）
+    label_rect_item.clear();
+    label_rect_item_add.clear();
+    
+    // 重置选择状态
+    selectRectItem = nullptr;
+    createRectItem = nullptr;
+    rubberBand = nullptr;
 
     if (image.isNull()) {
-        qDebug() << "image is null";
+        qDebug() << "LabelEditing::loadImage - 图像为空";
         return;
     }
+
+    // 存储图像
+    label_image = image;
 
     // 直接使用原始图像，不进行缩放
     QPixmap pixmap = QPixmap::fromImage(image);
@@ -65,16 +80,24 @@ void LabelEditing::loadImage(const QImage &image)
     pixmapItem->setShapeMode(QGraphicsPixmapItem::BoundingRectShape);
     pixmapItem->setCacheMode(QGraphicsItem::DeviceCoordinateCache);
 
-    // 调整场景大小以适应图像
-    scene->setSceneRect(pixmap.rect());
-
-    // 添加已有的标注矩形
+    scene->setSceneRect(0, 0, pixmap.width(), pixmap.height());
     if (!label_info.empty()) {
         for (int i = 0; i < label_info.size(); ++i) {
-            label_info[i].syncFields();  // 确保兼容性字段同步
+            // 创建全新的LabelRectItem实例，确保与之前的实例完全隔离
             LabelRectItem *rectItem = new LabelRectItem(nullptr, label_info[i]);
-            rectItem->setRect(QRectF(label_info[i].point_x, label_info[i].point_y, label_info[i].width, label_info[i].height));
+            
+            // 确保坐标在有效范围内
+            qreal x = qBound(0.0, static_cast<qreal>(label_info[i].x), static_cast<qreal>(pixmap.width() - 1));
+            qreal y = qBound(0.0, static_cast<qreal>(label_info[i].y), static_cast<qreal>(pixmap.height() - 1));
+            qreal w = qBound(1.0, static_cast<qreal>(label_info[i].w), static_cast<qreal>(pixmap.width() - x));
+            qreal h = qBound(1.0, static_cast<qreal>(label_info[i].h), static_cast<qreal>(pixmap.height() - y));
+            
+            // 确保矩形项从干净的状态开始
+            rectItem->setPos(0, 0);
+            rectItem->setTransform(QTransform());
+            rectItem->setRect(QRectF(x, y, w, h));
             rectItem->setLabel(label_info[i].label);
+            
             QColor randomColor = QColor::fromRgb(
                 QRandomGenerator::global()->bounded(256),  // R
                 QRandomGenerator::global()->bounded(256),  // G
@@ -84,15 +107,24 @@ void LabelEditing::loadImage(const QImage &image)
             scene->addItem(rectItem);
             label_rect_item.push_back(rectItem);
         }
-    }
-
-    if(!label_info_add.empty()){
+    }    if(!label_info_add.empty()){
         for(int i = 0; i < label_info_add.size(); ++i){
             label_info_add[i].id = -i;
-            label_info_add[i].syncFields();  // 确保兼容性字段同步
+            // 创建全新的LabelRectItem实例，确保与之前的实例完全隔离
             LabelRectItem *rectItem = new LabelRectItem(nullptr, label_info_add[i]);
-            rectItem->setRect(QRectF(label_info_add[i].point_x, label_info_add[i].point_y, label_info_add[i].width, label_info_add[i].height));
+            
+            // 确保坐标在有效范围内
+            qreal x = qBound(0.0, static_cast<qreal>(label_info_add[i].x), static_cast<qreal>(pixmap.width() - 1));
+            qreal y = qBound(0.0, static_cast<qreal>(label_info_add[i].y), static_cast<qreal>(pixmap.height() - 1));
+            qreal w = qBound(1.0, static_cast<qreal>(label_info_add[i].w), static_cast<qreal>(pixmap.width() - x));
+            qreal h = qBound(1.0, static_cast<qreal>(label_info_add[i].h), static_cast<qreal>(pixmap.height() - y));
+            
+            // 确保矩形项从干净的状态开始
+            rectItem->setPos(0, 0);
+            rectItem->setTransform(QTransform());
+            rectItem->setRect(QRectF(x, y, w, h));
             rectItem->setLabel(label_info_add[i].label);
+            
             QColor randomColor = QColor::fromRgb(
                 QRandomGenerator::global()->bounded(256),  // R
                 QRandomGenerator::global()->bounded(256),  // G
@@ -129,19 +161,16 @@ void LabelEditing::setupLabelTable()
 
 void LabelEditing::updateLabelTable()
 {
-    qDebug() << "LabelEditing::updateLabelTable - 开始更新表格";
     labelTable->setRowCount(0);
 
     int row = 0;
     std::vector<LabelRectItem*> items = label_rect_item;
     items.insert(items.end(), label_rect_item_add.begin(), label_rect_item_add.end());
-    qDebug() << "LabelEditing::updateLabelTable - 总共" << items.size() << "个标签项";
     
     for (LabelRectItem* item : items) {
         try {
             auto itemInfo = item->getItemInfo();
             int id = std::get<0>(itemInfo);
-            qDebug() << "LabelEditing::updateLabelTable - 处理标签项，ID:" << id << "标签:" << item->getLabel();
 
             labelTable->insertRow(row);
             // ID
@@ -305,14 +334,12 @@ void LabelEditing::selectAndCenterRectItem(int labelId, int row)
         auto it = std::find_if(label_rect_item.begin(), label_rect_item.end(),
             [labelId](const LabelRectItem* label) { return label->getLabelInfo().id == labelId; });
         if (it != label_rect_item.end()) {
-            qDebug() << "LabelEditing::selectAndCenterRectItem - 找到标签项，ID:" << labelId;
             processRectItem(*it);
         }
         
         it = std::find_if(label_rect_item_add.begin(), label_rect_item_add.end(),
             [labelId](const LabelRectItem* label) { return label->getLabelInfo().id == labelId; });
         if (it != label_rect_item_add.end()) {
-            qDebug() << "LabelEditing::selectAndCenterRectItem - 找到标签项，ID:" << labelId;
             processRectItem(*it);
         }
     }
@@ -456,7 +483,6 @@ void LabelEditing::on_finishButton_clicked()
         
         // 发射标签添加信号
         Label newLabel = createRectItem->getLabelInfo();
-        newLabel.updateFromCompat();
         emit labelAdded(newLabel);
         createRectItem = nullptr;
     }else if(selectRectItem){
@@ -510,17 +536,34 @@ void LabelEditing::on_deleteButton_clicked()
 
 void LabelEditing::reloadItems()
 {
-    // 清除场景中的所有项
     scene->clear();
     
-    // 重新加载图像
+    label_rect_item.clear();
+    label_rect_item_add.clear();
+    
+    selectRectItem = nullptr;
+    createRectItem = nullptr;
+    rubberBand = nullptr;
+    
     QPixmap pixmap = QPixmap::fromImage(label_image);
     QGraphicsPixmapItem *pixmapItem = scene->addPixmap(pixmap);
     pixmapItem->setShapeMode(QGraphicsPixmapItem::BoundingRectShape);
     pixmapItem->setCacheMode(QGraphicsItem::DeviceCoordinateCache);
     
-    // 重新加载已有的标注矩形
-    for (auto& rectItem : label_rect_item) {
+    scene->setSceneRect(0, 0, pixmap.width(), pixmap.height());
+    for (const auto& labelInfo : label_info) {
+        LabelRectItem* rectItem = new LabelRectItem(nullptr, labelInfo);
+        
+        rectItem->setPos(0, 0);
+        rectItem->setTransform(QTransform());
+        
+        qreal x = qBound(0.0, labelInfo.x, static_cast<double>(pixmap.width() - 1));
+        qreal y = qBound(0.0, labelInfo.y, static_cast<double>(pixmap.height() - 1));
+        qreal w = qBound(1.0, labelInfo.w, static_cast<double>(pixmap.width() - x));
+        qreal h = qBound(1.0, labelInfo.h, static_cast<double>(pixmap.height() - y));
+        
+        rectItem->setRect(QRectF(x, y, w, h));
+        
         QColor randomColor = QColor::fromRgb(
             QRandomGenerator::global()->bounded(256),
             QRandomGenerator::global()->bounded(256),
@@ -528,20 +571,35 @@ void LabelEditing::reloadItems()
         );
         rectItem->setPen(QPen(randomColor, 2));
         scene->addItem(rectItem);
+        label_rect_item.push_back(rectItem);
     }
-    
-    // 重新加载新添加的标注矩形
-    for (size_t i = 0; i < label_rect_item_add.size(); ++i) {
+
+    for (const auto& labelInfo : label_info_add) {
+        LabelRectItem* rectItem = new LabelRectItem(nullptr, labelInfo);
+        
+        rectItem->setPos(0, 0);
+        rectItem->setTransform(QTransform());
+        
+        qreal x = qBound(0.0, labelInfo.x, static_cast<double>(pixmap.width() - 1));
+        qreal y = qBound(0.0, labelInfo.y, static_cast<double>(pixmap.height() - 1));
+        qreal w = qBound(1.0, labelInfo.w, static_cast<double>(pixmap.width() - x));
+        qreal h = qBound(1.0, labelInfo.h, static_cast<double>(pixmap.height() - y));
+        
+        rectItem->setRect(QRectF(x, y, w, h));
+        
         QColor randomColor = QColor::fromRgb(
             QRandomGenerator::global()->bounded(256),
             QRandomGenerator::global()->bounded(256),
             QRandomGenerator::global()->bounded(256)
         );
-        label_rect_item_add[i]->setPen(QPen(randomColor, 2));
-        scene->addItem(label_rect_item_add[i]);
+        rectItem->setPen(QPen(randomColor, 2));
+        scene->addItem(rectItem);
+        label_rect_item_add.push_back(rectItem);
     }
     
     updateLabelTable();
+    
+    fitInView(scene->sceneRect(), Qt::KeepAspectRatio);
 }
 
 void LabelEditing::wheelEvent(QWheelEvent *event)
@@ -643,33 +701,27 @@ LabelRectItem* LabelEditing::getRectItemById(int id) const
 
 void LabelEditing::setupUI()
 {
-    // 原有的按钮
     createRectButton = new QPushButton("创建矩形", this);
     createRectButton->setStyleSheet("background-color: blue;");
     editButton = new QPushButton("编辑/查看", this);
     finishButton = new QPushButton("保存矩形", this);
     deleteButton = new QPushButton("删除", this);  // 添加删除按钮
 
-    // 添加颜色选择按钮
     colorButton = new QPushButton("画笔颜色", this);
     colorButton->setStyleSheet(QString("background-color: %1").arg(currentColor.name()));
 
-    // 添加线宽选择下拉框
     lineWidthComboBox = new QComboBox(this);
     lineWidthComboBox->addItems({"0.1px", "0.3px", "0.5px", "0.7px", "1px", "2px", "3px", "4px", "5px"});
     lineWidthComboBox->setCurrentText("2px");
     
-    // 计算最长项的宽度
     int maxWidth = 0;
     QFontMetrics fm(lineWidthComboBox->font());
     for(int i = 0; i < lineWidthComboBox->count(); i++) {
         int width = fm.horizontalAdvance(lineWidthComboBox->itemText(i));
         maxWidth = qMax(maxWidth, width);
     }
-    // 添加一些额外的空间用于下拉箭头和边距
     lineWidthComboBox->setMinimumWidth(maxWidth + 40);
 
-    // 连接信号和槽
     connect(createRectButton, &QPushButton::clicked, this, &LabelEditing::on_createRectButton_clicked);
     connect(editButton, &QPushButton::clicked, this, &LabelEditing::on_editButton_clicked);
     connect(finishButton, &QPushButton::clicked, this, &LabelEditing::on_finishButton_clicked);
@@ -683,7 +735,6 @@ void LabelEditing::setupUI()
     });
     connect(lineWidthComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int index) {
-                // 根据索引计算实际线宽
                 switch(index) {
                 case 0: currentLineWidth = 0.1; break;
                 case 1: currentLineWidth = 0.3; break;
@@ -694,7 +745,6 @@ void LabelEditing::setupUI()
                 }
             });
 
-    // 设置按钮位置和大小，根据文本自动调整大小
     createRectButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     editButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     finishButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -762,7 +812,6 @@ void LabelEditing::setSelectModel()
 
 void LabelEditing::triggerTableRowClickById(int labelId)
 {
-    // 遍历表格的所有行，查找匹配的 label.id
     QMetaObject::invokeMethod(this, [this, labelId]() {
         for(int row = 0; row < labelTable->rowCount(); ++row) {
             QTableWidgetItem* idItem = labelTable->item(row, 0);
@@ -789,7 +838,35 @@ std::vector<Label> LabelEditing::getSelectedLabelItemInfos() const
 
 void LabelEditing::refreshTable()
 {
-    qDebug() << "LabelEditing::refreshTable - 开始刷新表格";
     updateLabelTable();
-    qDebug() << "LabelEditing::refreshTable - 表格刷新完成";
+}
+
+void LabelEditing::fullReset()
+{
+    selectRectItem = nullptr;
+    createRectItem = nullptr;
+    rubberBand = nullptr;
+    
+    label_rect_item.clear();
+    label_rect_item_add.clear();
+    
+    if (scene) {
+        scene->clear();
+        scene->setSceneRect(QRectF());  // 重置场景矩形
+    }
+    
+
+    label_info.clear();
+    label_info_add.clear();
+    delete_id.clear();
+    
+    is_editing = false;
+    is_add = false;
+    current_label_index = -1;
+    is_only_view = false;
+    is_select_model = false;
+    
+    if (labelTable) {
+        labelTable->setRowCount(0);
+    }
 }

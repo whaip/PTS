@@ -415,6 +415,12 @@ void AODeviceThread::shutdownDevice()
     channelStates_.clear();
 }
 
+double AODeviceThread::currentToVoltage(double current) const
+{
+    double voltage = 0.201 * current - 0.01107;
+    return voltage;
+}
+
 DeviceResult AODeviceThread::executeOperation(const DeviceOperation& operation)
 {
     DeviceResult result;
@@ -604,7 +610,7 @@ DeviceResult AODeviceThread::outputWaveform(const DeviceOperation& operation)
         QVariantMap config = configVar.toMap();
         int channel = config.value("channel").toInt();
         PXIe5711_testtype waveformType = static_cast<PXIe5711_testtype>(config.value("type").toInt());
-        double amplitude = config.value("amplitude").toDouble();
+        double amplitude = channel > 15 ? config.value("amplitude").toDouble() : currentToVoltage(config.value("amplitude").toDouble());
         double frequency = config.value("frequency", 1000.0).toDouble();
         double dutyCycle = config.value("dutyCycle", 0.5).toDouble();
         

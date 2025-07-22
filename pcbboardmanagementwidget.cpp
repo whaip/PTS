@@ -508,15 +508,10 @@ void PCBBoardManagementWidget::connectSignals()
 }
 
 // 核心实现：板卡选择改变时创建LabelEditing
-void PCBBoardManagementWidget::onBoardSelectionChanged(QTableWidgetItem* current, QTableWidgetItem* previous)
+void PCBBoardManagementWidget::onBoardSelectionChanged(QTableWidgetItem* current)
 {
-    Q_UNUSED(previous)
-    
-    qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 板卡选择改变";
-    
     try {
-        if (!current) {
-            qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 当前选择为空";            
+        if (!current) {        
             current_board_id_.clear();
             updateImageDisplay();
             return;
@@ -526,9 +521,8 @@ void PCBBoardManagementWidget::onBoardSelectionChanged(QTableWidgetItem* current
         qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 选中板卡ID:" << boardId;
         qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 当前行:" << current->row();
         qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 板卡名称:" << current->text();
-        
+
         if (boardId.isEmpty()) {
-            qDebug() << "PCBBoardManagementWidget::onBoardSelectionChanged - 板卡ID为空，尝试使用行索引";
             // 如果boardId为空，尝试从行数据获取
             if (board_table_ && current->row() >= 0) {
                 QTableWidgetItem* nameItem = board_table_->item(current->row(), 0);
@@ -578,8 +572,6 @@ void PCBBoardManagementWidget::displayBoardImage(const QString& boardId)
     if (current_board_image_.empty()) {
         current_components_.clear();
     } else {
-        
-        // 加载组件数据
         current_components_ = board_manager_->getComponents(boardId);
     }
     
@@ -588,19 +580,11 @@ void PCBBoardManagementWidget::displayBoardImage(const QString& boardId)
 
 void PCBBoardManagementWidget::updateImageDisplay()
 {
-    qDebug() << "PCBBoardManagementWidget::updateImageDisplay - 更新图片显示";
-    
     if (current_board_image_.empty()) {
-        qDebug() << "PCBBoardManagementWidget::updateImageDisplay - 当前图片为空";
-        // 清除现有的LabelEditing，显示占位符
         clearLabelEditing();
         return;
-    }
-    
-    qDebug() << "PCBBoardManagementWidget::updateImageDisplay - 当前图片尺寸:" 
-             << current_board_image_.cols << "x" << current_board_image_.rows;
-    
-    // 创建或更新LabelEditing
+    }  
+
     createOrUpdateLabelEditing();
 }
 
@@ -616,43 +600,58 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
         return;
     }
     QImage qimage = image.copy();
-    
-    // 准备标签数据
+      // 准备标签数据 - 确保深拷贝
     std::vector<Label> existingLabels;
     std::vector<Label> newLabels;
     std::vector<int> deleteIds;
     
-    // 将ComponentInfo转换为Label
-    for (const ComponentInfo& component : current_components_) {
-        Label label;
-        label.id = component.labelInfo.id;
-        label.label = component.componentName;
-        label.x = component.labelInfo.x;
-        label.y = component.labelInfo.y;
-        label.w = component.labelInfo.w;
-        label.h = component.labelInfo.h;
-        label.cls = component.labelInfo.cls;
-        label.confidence = component.labelInfo.confidence;
-        label.position_number = component.componentName;
-        label.notes = component.componentValue.toUtf8();
-        label.syncFields(); // 同步兼容性字段
+    // 深拷贝当前组件列表，避免数据污染
+    for(const auto& component : current_components_) {
+        Label copiedLabel;
+        copiedLabel.id = component.id;
+        copiedLabel.x = component.x;
+        copiedLabel.y = component.y;
+        copiedLabel.w = component.w;
+        copiedLabel.h = component.h;
+        copiedLabel.cls = component.cls;
+        copiedLabel.confidence = component.confidence;
+        copiedLabel.label = component.label;
+        copiedLabel.position_number = component.position_number;
+        copiedLabel.notes = component.notes;
         
-        existingLabels.push_back(label);
+        // 深拷贝parameters映射
+        copiedLabel.parameters.clear();
+        for(auto it = component.parameters.constBegin(); it != component.parameters.constEnd(); ++it) {
+            copiedLabel.parameters.insert(it.key(), it.value());
+        }
+        
+        existingLabels.push_back(copiedLabel);
     }
     
     // 查找分割器
     QSplitter* imageSplitter = image_display_panel_->findChild<QSplitter*>("imageSplitter");
     if (!imageSplitter) {
         qDebug() << "PCBBoardManagementWidget::createOrUpdateLabelEditing - 找不到分割器";
-        return;
-    }    // 地清除旧的LabelEditing
+        return;    
+    }
+    
+    // 完全清除旧的LabelEditing，确保断开所有信号连接
     if (label_editing_) {
+        // 显式断开所有信号连接，防止数据污染
+        disconnect(label_editing_, &LabelEditing::labelAdded, 
+                   this, &PCBBoardManagementWidget::onLabelAdded);
+        disconnect(label_editing_, &LabelEditing::labelUpdated, 
+                   this, &PCBBoardManagementWidget::onLabelUpdated);
+        disconnect(label_editing_, &LabelEditing::labelDeleted, 
+                   this, &PCBBoardManagementWidget::onLabelDeleted);
+        
+        label_editing_->fullReset();
         label_editing_->setParent(nullptr);
         label_editing_->deleteLater();
         label_editing_ = nullptr;
     }
     
-      try {        
+    try {        
         label_editing_ = new LabelEditing(this, qimage, existingLabels, 
                                         newLabels, deleteIds, label_table_);
         
@@ -662,7 +661,7 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
                 this, &PCBBoardManagementWidget::onLabelUpdated);
         connect(label_editing_, &LabelEditing::labelDeleted, 
                 this, &PCBBoardManagementWidget::onLabelDeleted);
-    
+
         
         if (imageSplitter->count() >= 2) {
             QWidget* oldWidget = imageSplitter->widget(0);
@@ -697,21 +696,27 @@ void PCBBoardManagementWidget::createOrUpdateLabelEditing()
 
 void PCBBoardManagementWidget::clearLabelEditing()
 {
-    // 查找分割器
     QSplitter* imageSplitter = image_display_panel_->findChild<QSplitter*>("imageSplitter");
     if (!imageSplitter) {
         return;
     }
     
-    // 安全地删除现有的LabelEditing
     if (label_editing_) {
-        qDebug() << "PCBBoardManagementWidget::clearLabelEditing - 删除LabelEditing";
+        // 显式断开所有信号连接，防止数据污染
+        disconnect(label_editing_, &LabelEditing::labelAdded, 
+                   this, &PCBBoardManagementWidget::onLabelAdded);
+        disconnect(label_editing_, &LabelEditing::labelUpdated, 
+                   this, &PCBBoardManagementWidget::onLabelUpdated);
+        disconnect(label_editing_, &LabelEditing::labelDeleted, 
+                   this, &PCBBoardManagementWidget::onLabelDeleted);
+        
+        label_editing_->fullReset();
+        
         label_editing_->setParent(nullptr);
         label_editing_->deleteLater();
         label_editing_ = nullptr;
     }
     
-    // 创建新的占位符widget
     QWidget* placeholderWidget = new QWidget();
     placeholderWidget->setObjectName("imageEditingWidget");
     placeholderWidget->setMinimumSize(400, 300);
@@ -721,36 +726,27 @@ void PCBBoardManagementWidget::clearLabelEditing()
     placeholderLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(placeholderLabel);
     
-    // 确保分割器中有正确的widget数量和顺序
     if (imageSplitter->count() >= 2) {
-        // 替换第一个widget（保持label_table_在第二个位置）
         QWidget* oldWidget = imageSplitter->widget(0);
         imageSplitter->replaceWidget(0, placeholderWidget);
         if (oldWidget) {
             oldWidget->deleteLater();
         }
     } else if (imageSplitter->count() == 1) {
-        // 如果只有一个widget，在前面插入占位符
         imageSplitter->insertWidget(0, placeholderWidget);
     } else {
-        // 如果没有widget，先添加占位符，再确保label_table_在第二个位置
         imageSplitter->addWidget(placeholderWidget);
         if (imageSplitter->indexOf(label_table_) == -1) {
             imageSplitter->addWidget(label_table_);
         }
     }
     
-    // 确保label_table_在正确的位置
     if (imageSplitter->indexOf(label_table_) != 1) {
-        // 如果label_table_不在第二个位置，移动它
         label_table_->setParent(nullptr);
         imageSplitter->addWidget(label_table_);
     }
     
-    // 重新设置分割器比例
     imageSplitter->setSizes({600, 300});
-    
-    qDebug() << "PCBBoardManagementWidget::clearLabelEditing - 完成，分割器widget数量:" << imageSplitter->count();
 }
 
 // 板卡创建方法实现
@@ -1781,9 +1777,13 @@ void PCBBoardManagementWidget::updateBoardList()
     board_table_->setRowCount(0);
     QList<PCBBoardInfo> boards = board_manager_->getAllBoards();
     
+    qDebug() << "PCBBoardManagementWidget::updateBoardList - 获取到" << boards.size() << "个板卡";
+    
     board_table_->setRowCount(boards.size());
     for (int i = 0; i < boards.size(); ++i) {
         const PCBBoardInfo& board = boards[i];
+        
+        qDebug() << "PCBBoardManagementWidget::updateBoardList - 板卡" << i << ": 名称=" << board.boardName << ", ID=" << board.boardId;
         
         QTableWidgetItem* nameItem = new QTableWidgetItem(board.boardName);
         nameItem->setData(Qt::UserRole, board.boardId);
@@ -1794,6 +1794,10 @@ void PCBBoardManagementWidget::updateBoardList()
         board_table_->setItem(i, 0, nameItem);
         board_table_->setItem(i, 1, modelItem);
         board_table_->setItem(i, 2, countItem);
+        
+        // 验证存储的数据
+        QString storedId = nameItem->data(Qt::UserRole).toString();
+        qDebug() << "PCBBoardManagementWidget::updateBoardList - 验证存储ID:" << storedId;
     }
     total_boards_label_->setText(QString::number(boards.size()));
 }
@@ -1972,14 +1976,14 @@ void PCBBoardManagementWidget::drawComponents(QPainter& painter)
     Q_UNUSED(painter)
 }
 
-void PCBBoardManagementWidget::drawComponent(QPainter& painter, const ComponentInfo& component, bool selected)
+void PCBBoardManagementWidget::drawComponent(QPainter& painter, const Label& label, bool selected)
 {
     Q_UNUSED(painter)
-    Q_UNUSED(component)
+    Q_UNUSED(label)
     Q_UNUSED(selected)
 }
 
-ComponentInfo* PCBBoardManagementWidget::getComponentAtPosition(const QPoint& pos)
+Label* PCBBoardManagementWidget::getComponentAtPosition(const QPoint& pos)
 {
     Q_UNUSED(pos)
     return nullptr;
@@ -1988,21 +1992,21 @@ ComponentInfo* PCBBoardManagementWidget::getComponentAtPosition(const QPoint& po
 // 标签操作同步槽函数实现
 void PCBBoardManagementWidget::onLabelAdded(const Label& label)
 {
-    qDebug() << "PCBBoardManagementWidget::onLabelAdded - 标签添加:";
+    qDebug() << "PCBBoardManagementWidget::onLabelAdded - 标签添加，当前板卡ID:" << current_board_id_;
+    
+    // 验证信号来源，防止旧实例的信号干扰
+    if (!label_editing_ || sender() != label_editing_) {
+        qWarning() << "PCBBoardManagementWidget::onLabelAdded - 信号来源无效，忽略操作";
+        return;
+    }
+    
     if (!board_manager_ || current_board_id_.isEmpty()) {
         qWarning() << "PCBBoardManagementWidget::onLabelAdded - 板卡管理器未初始化或无当前板卡";
         return;
     }
-    // 将Label转换为ComponentInfo
-    ComponentInfo component;
-    component.labelInfo = label;
-    component.componentName = label.label;
-    component.componentType = "Unknown";
-    component.componentValue = QString::fromUtf8(label.notes);
-    component.description = QString("通过标签编辑添加的元器件");
-    component.isRequired = true;
+
     // 记录旧ID以便后续替换
-    int oldId = component.labelInfo.id;
+    int oldId = label.id;
     // 监听数据库生成的新ID
     QMetaObject::Connection conn;
     conn = connect(board_manager_, &PCBBoardManager::componentAdded,
@@ -2021,7 +2025,7 @@ void PCBBoardManagementWidget::onLabelAdded(const Label& label)
             disconnect(conn);
         });
     // 添加到数据库
-    if (board_manager_->addComponent(current_board_id_, component)) {
+    if (board_manager_->addComponent(current_board_id_, label)) {
         qDebug() << "PCBBoardManagementWidget::onLabelAdded - 标签同步到数据库成功";
     } else {
         current_components_.removeLast();
@@ -2032,7 +2036,13 @@ void PCBBoardManagementWidget::onLabelAdded(const Label& label)
 
 void PCBBoardManagementWidget::onLabelUpdated(const Label& label)
 {
-    qDebug() << "PCBBoardManagementWidget::onLabelUpdated - 标签更新:" << label.label;
+    qDebug() << "PCBBoardManagementWidget::onLabelUpdated - 标签更新，当前板卡ID:" << current_board_id_;
+    
+    // 验证信号来源，防止旧实例的信号干扰
+    if (!label_editing_ || sender() != label_editing_) {
+        qWarning() << "PCBBoardManagementWidget::onLabelUpdated - 信号来源无效，忽略操作";
+        return;
+    }
     
     if (!board_manager_ || current_board_id_.isEmpty()) {
         qWarning() << "PCBBoardManagementWidget::onLabelUpdated - 板卡管理器未初始化或无当前板卡";
@@ -2041,17 +2051,13 @@ void PCBBoardManagementWidget::onLabelUpdated(const Label& label)
     
     // 在当前组件列表中查找对应的组件
     for (int i = 0; i < current_components_.size(); ++i) {
-        if (current_components_[i].labelInfo.id == label.id) {
+        if (current_components_[i].id == label.id) {
             // 更新组件信息
-            ComponentInfo& component = current_components_[i];
-            component.labelInfo = label;
-            component.componentName = label.label;
-            component.componentValue = QString::fromUtf8(label.notes);
-            
+            Label& component = current_components_[i];
+            component = label;
+
             // 更新数据库
-            if (board_manager_->updateComponent(current_board_id_, component)) {
-                qDebug() << "PCBBoardManagementWidget::onLabelUpdated - 标签更新同步到数据库成功";
-            } else {
+            if (!board_manager_->updateComponent(current_board_id_, component)) {
                 qWarning() << "PCBBoardManagementWidget::onLabelUpdated - 标签更新同步到数据库失败";
             }
             break;
@@ -2061,7 +2067,13 @@ void PCBBoardManagementWidget::onLabelUpdated(const Label& label)
 
 void PCBBoardManagementWidget::onLabelDeleted(int labelId)
 {
-    qDebug() << "PCBBoardManagementWidget::onLabelDeleted - 标签删除ID:" << labelId;
+    qDebug() << "PCBBoardManagementWidget::onLabelDeleted - 标签删除ID:" << labelId << "，当前板卡ID:" << current_board_id_;
+    
+    // 验证信号来源，防止旧实例的信号干扰
+    if (!label_editing_ || sender() != label_editing_) {
+        qWarning() << "PCBBoardManagementWidget::onLabelDeleted - 信号来源无效，忽略操作";
+        return;
+    }
     
     if (!board_manager_ || current_board_id_.isEmpty()) {
         qWarning() << "PCBBoardManagementWidget::onLabelDeleted - 板卡管理器未初始化或无当前板卡";
@@ -2070,7 +2082,7 @@ void PCBBoardManagementWidget::onLabelDeleted(int labelId)
     
     // 在当前组件列表中查找对应的组件
     for (int i = 0; i < current_components_.size(); ++i) {
-        if (current_components_[i].labelInfo.id == labelId) {
+        if (current_components_[i].id == labelId) {
             // 从数据库删除
             if (board_manager_->removeComponent(current_board_id_, labelId)) {
                 qDebug() << "PCBBoardManagementWidget::onLabelDeleted - 标签删除同步到数据库成功";
@@ -2096,7 +2108,7 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
         return false;
     }
     QVector<ComponentType> supportedTypes = diagnostic_manager_->getSupportedComponentTypes();
-    QVector<ComponentInfo> componentInfos;
+    QVector<Label> componentInfos;
     for (auto& component : selectedComponents) {
         QString componentType = getComponentTypeName(component.cls);
         ComponentType type = stringToComponentType(componentType);
@@ -2104,8 +2116,8 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
             QMessageBox::warning(this, "错误", QString("系统当前不支持的%1类型！").arg(componentType));
             continue;
         }
-        ComponentInfo componentInfo = board_manager_->getComponent(current_board_id_, component.id);
-        componentInfos.append(componentInfo);
+        Label labelInfo = board_manager_->getComponent(current_board_id_, component.id);
+        componentInfos.append(labelInfo);
     }
     if (componentInfos.empty()) {
         QMessageBox::warning(this, "错误", "没有有效的元器件！");
@@ -2120,7 +2132,7 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
     std::vector<QTableWidget*> tables;
     for (auto& component : componentInfos) {
         QMap<QString, QVariant> requirement = diagnostic_manager_->getRequiredParameters(
-            stringToComponentType(getComponentTypeName(component.labelInfo.cls)));
+            stringToComponentType(getComponentTypeName(component.cls)));
         QWidget* page = new QWidget(&paramDialog);
         QVBoxLayout* pageLayout = new QVBoxLayout(page);
         QTableWidget* table = new QTableWidget(page);
@@ -2132,8 +2144,8 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
         for (auto it = requirement.constBegin(); it != requirement.constEnd(); ++it) {
             const QString& paramName = it.key();
             const QVariant defaultValue = it.value();
-            QVariant value = component.labelInfo.parameters.contains(paramName) ?
-                              component.labelInfo.parameters.value(paramName) : defaultValue;
+            QVariant value = component.parameters.contains(paramName) ?
+                              component.parameters.value(paramName) : defaultValue;
             table->insertRow(row);
             table->setItem(row, 0, new QTableWidgetItem(paramName));
             QWidget* editor = nullptr;
@@ -2177,7 +2189,7 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
             row++;
         }
         pageLayout->addWidget(table);
-        tabWidget->addTab(page, QString("元件%1").arg(component.labelInfo.id));
+        tabWidget->addTab(page, QString("元件%1").arg(component.id));
         tables.push_back(table);
     }
     vLayout->addWidget(tabWidget);
@@ -2191,7 +2203,7 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
     // 用户确认，保存所有修改
     for (int i = 0; i < tables.size(); ++i) {
         QTableWidget* table = tables[i];
-        ComponentInfo& component = componentInfos[i];
+        Label& component = componentInfos[i];
         for (int r = 0; r < table->rowCount(); ++r) {
             QString pName = table->item(r, 0)->text();
             QWidget* w = table->cellWidget(r, 1);
@@ -2201,7 +2213,7 @@ bool PCBBoardManagementWidget::onEditDiagnoseInfo()
             else if (auto dsb = qobject_cast<QDoubleSpinBox*>(w)) newVal = dsb->value();
             else if (auto combo = qobject_cast<QComboBox*>(w)) newVal = combo->currentText();
             else if (auto le = qobject_cast<QLineEdit*>(w)) newVal = le->text();
-            component.labelInfo.parameters[pName] = newVal;
+            component.parameters[pName] = newVal;
         }
         board_manager_->updateComponent(current_board_id_, component);
     }
@@ -2224,11 +2236,11 @@ void PCBBoardManagementWidget::onDiagnoseSelectedComponents()
         if (!supportedTypes.contains(type)) {
             continue;
         }
-        ComponentInfo componentInfo = board_manager_->getComponent(current_board_id_, component.id);
+        Label componentInfo = board_manager_->getComponent(current_board_id_, component.id);
         ComponentSpec diagnoseSpec;
-        diagnoseSpec.reference = componentInfo.labelInfo.label + "(ID:" + QString::number(componentInfo.labelInfo.id) + ")";
-        diagnoseSpec.description = componentInfo.labelInfo.notes;
-        diagnoseSpec.params = componentInfo.labelInfo.parameters;
+        diagnoseSpec.reference = componentInfo.label + "(ID:" + QString::number(componentInfo.id) + ")";
+        diagnoseSpec.description = componentInfo.notes;
+        diagnoseSpec.params = componentInfo.parameters;
         diagnoseSpec.type = type;
         diagnoseSpecs.append(diagnoseSpec);
     }
