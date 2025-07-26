@@ -20,7 +20,7 @@ class LabelEditing : public QGraphicsView
     Q_OBJECT
 
 public:
-    LabelEditing(QWidget *parent, const QImage &image, std::vector<Label> label_info, std::vector<Label> label_info_add, std::vector<int> &delete_id, QTableWidget*& labelTable);
+    LabelEditing(QWidget *parent, const QImage &image, const std::vector<Label> &label_info, const std::vector<Label> &label_info_add, std::vector<int> &delete_id, QTableWidget*& labelTable);
     ~LabelEditing();
 
     void loadImage(const QImage &image);
@@ -40,10 +40,11 @@ public:
     // 添加获取所有被选中标签信息的方法
     std::vector<Label> getSelectedLabelItemInfos() const;
 
-    LabelRectItem* getRectItemById(int id) const;
-
-    // 外部调用以刷新表格内容（内部调用 updateLabelTable）
+    LabelRectItem* getRectItemById(int id) const;    // 外部调用以刷新表格内容（内部调用 updateLabelTable）
     Q_INVOKABLE void refreshTable();
+    
+    // 完全清理和重置组件状态（用于板卡切换）
+    void fullReset();
 
 public slots:
     void on_createRectButton_clicked();

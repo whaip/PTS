@@ -67,7 +67,7 @@ public slots:
     bool onEditDiagnoseInfo();
     
     // 界面更新
-    void onBoardSelectionChanged(QTableWidgetItem* current, QTableWidgetItem* previous);
+    void onBoardSelectionChanged(QTableWidgetItem* current);
     void onImageZoomChanged(int value);
     // 数据更新
     void onBoardAdded(const QString& boardId);
@@ -127,8 +127,8 @@ private:
     
     // 元器件可视化
     void drawComponents(QPainter& painter);
-    void drawComponent(QPainter& painter, const ComponentInfo& component, bool selected = false);
-    ComponentInfo* getComponentAtPosition(const QPoint& pos);
+    void drawComponent(QPainter& painter, const Label& component, bool selected = false);
+    Label* getComponentAtPosition(const QPoint& pos);
 
     // 获取所有被选中的元件
     std::vector<Label> getSelectedComponents() const;
@@ -183,7 +183,7 @@ private:
     QLabel* total_boards_label_;
       // 状态信息
     QString current_board_id_;
-    QList<ComponentInfo> current_components_;
+    QList<Label> current_components_;
     cv::Mat current_board_image_;
     QList<PCBBoardInfo> identification_candidates_;
     QString selected_candidate_id_;
@@ -196,7 +196,7 @@ private:
     QPoint image_offset_;
     bool dragging_;
     QPoint last_drag_pos_;
-    ComponentInfo* selected_component_;
+    Label* selected_component_;
     bool drawing_component_;
     QRect drawing_rect_;// 右键菜单
     QMenu* board_context_menu_;

@@ -92,74 +92,6 @@ PCBBoardInfo PCBBoardInfo::fromJson(const QJsonObject& json) {
     return board;
 }
 
-// ComponentInfo JSON序列化实现
-QJsonObject ComponentInfo::toJson() const {
-    QJsonObject obj;
-    
-    // 基础标签信息
-    obj["id"] = labelInfo.id;
-    obj["x"] = labelInfo.x;
-    obj["y"] = labelInfo.y;
-    obj["w"] = labelInfo.w;
-    obj["h"] = labelInfo.h;
-    obj["cls"] = labelInfo.cls;
-    obj["confidence"] = labelInfo.confidence;
-    obj["label"] = labelInfo.label;
-    obj["position_number"] = labelInfo.position_number;
-    obj["notes"] = QString::fromUtf8(labelInfo.notes);
-    
-    // 扩展信息
-    obj["componentName"] = componentName;
-    obj["componentValue"] = componentValue;
-    obj["componentPackage"] = componentPackage;
-    obj["manufacturer"] = manufacturer;
-    obj["partNumber"] = partNumber;
-    obj["description"] = description;
-    obj["isRequired"] = isRequired;
-    
-    // 序列化参数信息
-    QJsonObject paramsObj;
-    for (auto it = parameters.constBegin(); it != parameters.constEnd(); ++it) {
-        paramsObj.insert(it.key(), QJsonValue::fromVariant(it.value()));
-    }
-    obj["parameters"] = paramsObj;
-    
-    return obj;
-}
-
-ComponentInfo ComponentInfo::fromJson(const QJsonObject& json) {
-    ComponentInfo component;
-    
-    // 基础标签信息
-    component.labelInfo.id = json["id"].toInt();
-    component.labelInfo.x = json["x"].toDouble();
-    component.labelInfo.y = json["y"].toDouble();
-    component.labelInfo.w = json["w"].toDouble();
-    component.labelInfo.h = json["h"].toDouble();
-    component.labelInfo.cls = json["cls"].toInt();
-    component.labelInfo.confidence = json["confidence"].toDouble();
-    component.labelInfo.label = json["label"].toString();
-    component.labelInfo.position_number = json["position_number"].toString();
-    component.labelInfo.notes = json["notes"].toString().toUtf8();
-    
-    // 扩展信息
-    component.componentName = json["componentName"].toString();
-    component.componentValue = json["componentValue"].toString();
-    component.componentPackage = json["componentPackage"].toString();
-    component.manufacturer = json["manufacturer"].toString();
-    component.partNumber = json["partNumber"].toString();
-    component.description = json["description"].toString();
-    component.isRequired = json["isRequired"].toBool();
-
-    if (json.contains("parameters") && json["parameters"].isObject()) {
-        QJsonObject paramsObj = json["parameters"].toObject();
-        for (auto it = paramsObj.constBegin(); it != paramsObj.constEnd(); ++it) {
-            component.parameters.insert(it.key(), it.value().toVariant());
-        }
-    }
-    return component;
-}
-
 PCBBoardManager::PCBBoardManager(QObject *parent)
     : QObject(parent)
     , identification_watcher_(nullptr)
@@ -353,12 +285,12 @@ QStringList PCBBoardManager::getAllBoardModels() const {
     return models;
 }
 
-bool PCBBoardManager::addComponent(const QString& boardId, const ComponentInfo& component) {
+bool PCBBoardManager::addComponent(const QString& boardId, const Label& component) {
     QMutexLocker locker(&boards_mutex_);
     
     for (int i = 0; i < boards_.size(); ++i) {
         if (boards_[i].boardId == boardId) {
-            Label newLabel = component.labelInfo;
+            Label newLabel = component;
             newLabel.id = generateComponentId(boardId);
             boards_[i].components.push_back(newLabel);
             boards_[i].updateTime = QDateTime::currentDateTime();
@@ -373,19 +305,19 @@ bool PCBBoardManager::addComponent(const QString& boardId, const ComponentInfo& 
     return false;
 }
 
-bool PCBBoardManager::updateComponent(const QString& boardId, const ComponentInfo& component) {
+bool PCBBoardManager::updateComponent(const QString& boardId, const Label& component) {
     QMutexLocker locker(&boards_mutex_);
     
     for (int i = 0; i < boards_.size(); ++i) {
         if (boards_[i].boardId == boardId) {
             for (auto& comp : boards_[i].components) {
-                if (comp.id == component.labelInfo.id) {
-                    comp = component.labelInfo;
+                if (comp.id == component.id) {
+                    comp = component;
                     boards_[i].updateTime = QDateTime::currentDateTime();
                     
                     // 发射信号需要在mutex外执行
                     locker.unlock();
-                    emit componentUpdated(boardId, component.labelInfo.id);
+                    emit componentUpdated(boardId, component.id);
                     return true;
                 }
             }
@@ -419,16 +351,14 @@ bool PCBBoardManager::removeComponent(const QString& boardId, int componentId) {
     return false;
 }
 
-QList<ComponentInfo> PCBBoardManager::getComponents(const QString& boardId) const {
+QList<Label> PCBBoardManager::getComponents(const QString& boardId) const {
     QMutexLocker locker(&boards_mutex_);
     
-    QList<ComponentInfo> result;
+    QList<Label> result;
     for (const auto& board : boards_) {
         if (board.boardId == boardId) {
             for (const auto& label : board.components) {
-                ComponentInfo component(label);
-                component.componentName = label.label.isEmpty() ? QString("Component_%1").arg(label.id) : label.label;
-                result.append(component);
+                result.append(label);
             }
             break;
         }
@@ -437,21 +367,21 @@ QList<ComponentInfo> PCBBoardManager::getComponents(const QString& boardId) cons
     return result;
 }
 
-ComponentInfo PCBBoardManager::getComponent(const QString& boardId, int componentId) const {
+Label PCBBoardManager::getComponent(const QString& boardId, int componentId) const {
     QMutexLocker locker(&boards_mutex_);
     
     for (const auto& board : boards_) {
         if (board.boardId == boardId) {
             for (const auto& label : board.components) {
                 if (label.id == componentId) {
-                    return ComponentInfo(label);
+                    return label;
                 }
             }
             break;
         }
     }
-    
-    return ComponentInfo();
+
+    return Label();
 }
 
 QList<PCBBoardInfo> PCBBoardManager::identifyBoard(const cv::Mat& inputImage, double threshold) {
@@ -526,11 +456,10 @@ std::vector<Label> PCBBoardManager::detectComponents(const cv::Mat& boardImage) 
     return components;
 }
 
-cv::Mat PCBBoardManager::createAnnotatedImage(const cv::Mat& originalImage, const QList<ComponentInfo>& components) {
+cv::Mat PCBBoardManager::createAnnotatedImage(const cv::Mat& originalImage, const QList<Label>& components) {
     cv::Mat result = originalImage.clone();
     
-    for (const auto& component : components) {
-        const Label& label = component.labelInfo;
+    for (const auto& label : components) {
         
         // 绘制边界框
         cv::Scalar color(0, 255, 0); // 绿色
@@ -538,7 +467,7 @@ cv::Mat PCBBoardManager::createAnnotatedImage(const cv::Mat& originalImage, cons
                      cv::Point(label.x + label.w, label.y + label.h), color, 2);
         
         // 绘制标签
-        QString labelText = component.componentName.isEmpty() ? label.label : component.componentName;
+        QString labelText = label.label.isEmpty() ? QString("Component_%1").arg(label.id) : label.label;
         cv::putText(result, labelText.toStdString(), cv::Point(label.x, label.y - 10),
                    cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
     }
@@ -1106,35 +1035,6 @@ void PCBBoardManager::createBoardAsync(const QString& boardName, const QString& 
         QMutexLocker locker(&cancel_mutex_);
         creation_cancelled_ = false;
     }
-
-    // 创建进度报告定时器
-    // QTimer* progressTimer = new QTimer(this);
-    // progressTimer->setInterval(500);
-
-    // // 进度报告
-    // int progressValue = 20;
-    // connect(progressTimer, &QTimer::timeout, [this, progressTimer, &progressValue]() {
-    //     if (creation_cancelled_) {
-    //         progressTimer->stop();
-    //         progressTimer->deleteLater();
-    //         return;
-    //     }
-    //     progressValue = qMin(progressValue + 8, 80);
-    //     emit boardCreationProgress(progressValue, "正在创建板卡...");
-    //     if (progressValue >= 80) {
-    //         progressTimer->stop();
-    //     }
-    // });
-
-    // // 启动定时器
-    // progressTimer->start();
-
-    // // 清理定时器连接
-    // connect(creation_watcher_, &QFutureWatcher<QString>::finished,
-    //         progressTimer, [progressTimer]() {
-    //             progressTimer->stop();
-    //             progressTimer->deleteLater();
-    //         });
 
     // 启动异步任务
     auto future = QtConcurrent::run([this, boardName, boardModel, boardImage, description]() -> QString {

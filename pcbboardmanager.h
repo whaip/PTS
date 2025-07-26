@@ -66,27 +66,6 @@ struct PCBBoardInfo {
     static PCBBoardInfo fromJson(const QJsonObject& json);
 };
 
-// 元器件信息结构体（扩展Label）
-struct ComponentInfo {
-    Label labelInfo;              // 基础标签信息
-    QString componentName;        // 元器件名称
-    QString componentType;        // 元器件类型
-    QString componentValue;       // 元器件参数值
-    QString componentPackage;     // 封装类型
-    QString manufacturer;         // 制造商
-    QString partNumber;           // 器件编号
-    QString description;          // 描述
-    bool isRequired;              // 是否必需
-    QMap<QString, QVariant> parameters;
-
-    ComponentInfo() : isRequired(true) {}
-    ComponentInfo(const Label& label) : labelInfo(label), isRequired(true) {}
-
-    // JSON序列化
-    QJsonObject toJson() const;
-    static ComponentInfo fromJson(const QJsonObject& json);
-};
-
 class PCBBoardManager : public QObject
 {
     Q_OBJECT
@@ -109,11 +88,11 @@ public:
     QStringList getAllBoardModels() const;
     
     // 元器件管理
-    bool addComponent(const QString& boardId, const ComponentInfo& component);
-    bool updateComponent(const QString& boardId, const ComponentInfo& component);
+    bool addComponent(const QString& boardId, const Label& component);
+    bool updateComponent(const QString& boardId, const Label& component);
     bool removeComponent(const QString& boardId, int componentId);
-    QList<ComponentInfo> getComponents(const QString& boardId) const;
-    ComponentInfo getComponent(const QString& boardId, int componentId) const;
+    QList<Label> getComponents(const QString& boardId) const;
+    Label getComponent(const QString& boardId, int componentId) const;
       // 板卡识别
     QList<PCBBoardInfo> identifyBoard(const cv::Mat& inputImage, double threshold = 0.3);
     PCBBoardInfo getBestMatch(const cv::Mat& inputImage, double threshold = 0.3);
@@ -124,7 +103,7 @@ public:
     
     // 元器件检测
     std::vector<Label> detectComponents(const cv::Mat& boardImage);
-    cv::Mat createAnnotatedImage(const cv::Mat& originalImage, const QList<ComponentInfo>& components);
+    cv::Mat createAnnotatedImage(const cv::Mat& originalImage, const QList<Label>& components);
     
     // 异步元器件检测
     void detectComponentsAsync(const cv::Mat& boardImage, const QString& boardId = "");

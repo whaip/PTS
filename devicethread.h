@@ -134,6 +134,7 @@ private:
     QSet<int> enabledChannels_;        // 记录已启用的通道
 
     bool initializeChannel();
+    double currentToVoltage(double current) const;
     
     // 新增的波形配置和输出方法
     DeviceResult configureChannelWithRestart(const DeviceOperation& operation);
