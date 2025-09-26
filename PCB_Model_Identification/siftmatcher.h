@@ -8,6 +8,7 @@
 #include <opencv2/cudafeatures2d.hpp>
 #include <vector>
 #include <string>
+#include "pcb_extract.h"
 
 #define SIFT_MATCHER (SiftMatcher::getInstance())
 

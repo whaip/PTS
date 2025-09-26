@@ -92,9 +92,14 @@ bool SiftMatcher::checkGPU() {
 }
 
 cv::Mat SiftMatcher::extractDescriptor(const cv::Mat& image, int rotation) {
+    cv::Mat extracted = PCB_EXTRACT->extract(image, "PCB");
+    if (extracted.empty()) {
+        std::cout << "Warning: Failed to extract PCB from image" << std::endl;
+        return cv::Mat();
+    }
     // 转换为灰度图
     cv::Mat gray;
-    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(extracted, gray, cv::COLOR_BGR2GRAY);
     
     // 图像预处理：增强对比度和去噪
     cv::Mat enhanced;

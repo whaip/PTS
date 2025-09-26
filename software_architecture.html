@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>软件系统架构图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 40px;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #fafafa;
+            border-radius: 8px;
+        }
+        .instructions {
+            background-color: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 25px 0;
+            border-left: 5px solid #2196f3;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PCB故障检测软件系统架构图</h1>
+        
+        <div class="instructions">
+            <strong>使用说明：</strong><br>
+            1. 右键点击下方的图表<br>
+            2. 选择"另存为图片"或使用截图工具<br>
+            3. 将图片插入到Word文档中
+        </div>
+
+        <div class="mermaid">
+graph TB
+    subgraph "应用层 (Application Layer)"
+        A1[MainWindow<br/>主控界面]
+        A2[TestSequence<br/>Manager<br/>测试序列管理]
+        A3[RealtimePCB<br/>Analyzer<br/>实时分析器]
+        A4[Result<br/>Visualization<br/>结果可视化]
+    end
+    
+    subgraph "服务层 (Service Layer)"
+        B1[FaultDiagnostic<br/>故障诊断服务]
+        B2[PCBIdentifier<br/>Service<br/>识别服务]
+        B3[PCBDetection<br/>Manager<br/>检测管理服务]
+        B4[PCBBoard<br/>Manager<br/>板卡管理服务]
+    end
+    
+    subgraph "设备层 (Device Layer)"
+        C1[DeviceManager<br/>设备管理器]
+        C2[CameraManager<br/>摄像头管理器]
+        C3[DeviceThread<br/>Pool<br/>设备线程池]
+        C4[DeviceSync<br/>Controller<br/>同步控制器]
+    end
+    
+    subgraph "驱动适配层 (Driver Layer)"
+        D1[JY5711<br/>Driver<br/>Interface]
+        D2[JY5322/5323<br/>Driver<br/>Interface]
+        D3[JY8902<br/>Driver<br/>Interface]
+        D4[Camera<br/>Driver<br/>Interface]
+    end
+    
+    %% 连接关系 - 保持原有相对位置
+    A1 --> B4
+    A2 --> B3
+    A3 --> B2
+    A4 --> B1
+    
+    B1 --> C4
+    B2 --> C3
+    B3 --> C2
+    B4 --> C1
+    
+    C1 --> D1
+    C2 --> D4
+    C3 --> D2
+    C4 --> D3
+    
+    %% 样式设置
+    style A1 fill:#e3f2fd
+    style A2 fill:#e3f2fd
+    style A3 fill:#e3f2fd
+    style A4 fill:#e3f2fd
+    
+    style B1 fill:#f3e5f5
+    style B2 fill:#f3e5f5
+    style B3 fill:#f3e5f5
+    style B4 fill:#f3e5f5
+    
+    style C1 fill:#e8f5e8
+    style C2 fill:#e8f5e8
+    style C3 fill:#e8f5e8
+    style C4 fill:#e8f5e8
+    
+    style D1 fill:#fff3e0
+    style D2 fill:#fff3e0
+    style D3 fill:#fff3e0
+    style D4 fill:#fff3e0
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                nodeSpacing: 80,
+                rankSpacing: 100,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html> 

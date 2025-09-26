@@ -1095,7 +1095,7 @@ void PCBBoardManagementWidget::onCreateBoard()
         // 启动摄像头预览
         try {
             if (camera_manager_->startCamera(CameraType::HD_CAMERA)) {
-                camera_manager_->setHDCameraParams(8192, 4608, 30);
+                camera_manager_->setHDCameraParams(1920, 1080, 30);
                 cameraTimer->start(33); // ~30 FPS
                 cameraPreview->setText("");
             } else {

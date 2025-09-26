@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <QString>
+#include <QByteArray>
 #include "ClassList.h"
 using namespace std;
 
@@ -44,6 +46,11 @@ private:
     void print_float_data(const float* const pdata, int data_num_per_line = 6, int data_num = 300);
     std::vector<std::vector<float>> float2vector(const float* const pdata, int data_num_per_line = 6, int data_num = 100, float conf = 0.6);
     void draw_box(cv::Mat& img, const std::vector<std::vector<float>>& info);
+    // 在透视展开后的坐标系中得到的检测框，映射回原图并绘制
+    void draw_box_mapped(cv::Mat& original,
+                         const std::vector<std::vector<float>>& info,
+                         const cv::Size& warped_size,
+                         const cv::Mat& Hinv);
     std::vector<std::string> class_name = {"Capacitor", "IC", "LED", "Resistor", "battery", "buzzer", "clock", "connector", "diode", "display", "fuse", "inductor", "potentiometer", "relay", "switch", "transistor"};
     std::vector<cv::Scalar> color = {
         cv::Scalar(193, 182, 255),

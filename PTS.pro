@@ -41,6 +41,7 @@ win32 {
 
 SOURCES += \
     PCB_Model_Identification/ImageDialog/imageflowdialog.cpp \
+    PCB_Model_Identification/pcb_extract.cpp \
     main.cpp \
     mainwindow.cpp \
     devicemanager.cpp \
@@ -88,6 +89,7 @@ SOURCES += \
 HEADERS += \
     PCB_Model_Identification/ImageDialog/imagedialog.h \
     PCB_Model_Identification/ImageDialog/imageflowdialog.h \
+    PCB_Model_Identification/pcb_extract.h \
     mainwindow.h \
     devicemanager.h \
     devicethread.h \

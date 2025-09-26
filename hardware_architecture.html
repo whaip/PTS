@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>硬件系统架构图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 40px;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #fafafa;
+            border-radius: 8px;
+        }
+        .instructions {
+            background-color: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 25px 0;
+            border-left: 5px solid #2196f3;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PCB故障检测硬件系统架构图</h1>
+        
+        <div class="instructions">
+            <strong>使用说明：</strong><br>
+            1. 右键点击下方的图表<br>
+            2. 选择"另存为图片"或使用截图工具<br>
+            3. 将图片插入到Word文档中
+        </div>
+
+        <div class="mermaid">
+graph TB
+    subgraph "主控计算机系统"
+        A1[DeviceManager<br/>设备管理器]
+        A2[SyncController<br/>同步控制器]
+        A3[DataProcessor<br/>数据处理器]
+        
+        A1 --- A2
+        A2 --- A3
+    end
+    
+    %% 不可见节点用于布局控制
+    A1 -.->|invisible| B1
+    A2 -.->|invisible| B2
+    A3 -.->|invisible| C1
+    
+    subgraph "信号处理层"
+        B1[JY5711 AO<br/>模拟输出设备<br/>• 信号激励<br/>• 波形生成]
+        B2[Sync Trigger<br/>Distribution Hub<br/>同步触发分配器]
+        B3[HD Camera<br/>高清摄像头<br/>• 视觉检测<br/>• 目标定位]
+        B4[Thermal Camera<br/>红外热成像<br/>• 温度监测<br/>• 热点分析]
+    end
+    
+    subgraph "数据采集层"
+        C1[JY5322 DAQ<br/>数据采集系统1<br/>• 多通道采集<br/>• 高速采样]
+        C2[JY5323 DAQ<br/>数据采集系统2<br/>• 多通道采集<br/>• 高速采样]
+        C3[JY8902 DMM<br/>数字万用表<br/>• 精密测量<br/>• 参数分析]
+    end
+    
+    subgraph "测试夹具层"
+        D1[Test Fixture<br/>测试夹具<br/>• PCB固定<br/>• 探针接触]
+    end
+    
+    %% 连接关系
+    A1 -->|USB/Ethernet| B1
+    A1 -->|Thunderbolt| C1
+    A1 -->|Thunderbolt| C2
+    A1 -->|Thunderbolt| C3
+    A2 -->|Trigger Signal| B2
+    A3 -->|Data Stream| B3
+    
+    B2 --> B4
+    B1 --> D1
+    B3 --> D1
+    
+    C1 -.->|Sync Link| C2
+    C2 -.->|Sync Link| C1
+    
+    C1 --> D1
+    C2 --> D1
+    C3 --> D1
+    
+    %% 样式设置
+    style A1 fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style A2 fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style A3 fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    
+    style B1 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style B2 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style B3 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style B4 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    
+    style C1 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    style C2 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    style C3 fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    
+    style D1 fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                nodeSpacing: 80,
+                rankSpacing: 100,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html> 
