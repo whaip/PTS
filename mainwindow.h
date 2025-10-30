@@ -93,28 +93,30 @@ private slots:
     void showWiringGuideForComponent(const ComponentSpec& component);  // 为特定元件显示接线引导
     void proceedToNextBatchTest(); 
     void onDiagnoseComponents(const QList<ComponentSpec>& specs);
+    void applyThemeDark();
+    void applyThemeLight();
 
 private:
-    Ui::MainWindow *ui;    // 核心组件
+    Ui::MainWindow *ui; 
     DeviceManager* device_manager_;
     ComponentDiagnosticManager* diagnostic_manager;
     FaultDiagnostic* fault_diagnostic_;
     TestSequenceManager* sequence_manager_;
     ResultExporter* result_exporter_;
-    PCBIdentifier* pcb_identifier_;           // 新增：PCB识别器
-    CameraControlWidget* camera_control_;     // 新增：相机控制组件
-    RealtimePCBAnalyzerWidget* pcb_analyzer_; // 新增：PCB综合分析器
-    PCBDetectionManager* detection_manager_;    // 新增：检测数据管理器
-    PCBBoardManagementWidget* board_management_widget_; // 新增：PCB板卡管理窗口
-    PCBBoardManager* board_manager_;            // 新增：PCB板卡管理器
-    DeviceManagerTestWindow* device_test_window_;  // 新增：设备管理器测试窗口
-    QTimer* status_timer_;    // 新增：接线引导相关成员
+    PCBIdentifier* pcb_identifier_;           
+    CameraControlWidget* camera_control_;     
+    RealtimePCBAnalyzerWidget* pcb_analyzer_;
+    PCBDetectionManager* detection_manager_;
+    PCBBoardManagementWidget* board_management_widget_;
+    PCBBoardManager* board_manager_;            
+    DeviceManagerTestWindow* device_test_window_; 
+    QTimer* status_timer_;    
     PortManager* port_manager_;
     WiringResourceManager* wiring_resource_manager_;
     WiringGuideDialog* current_wiring_dialog_;
     WiringTaskGenerator* task_generator_;
-    QString current_task_id_;  // 保存当前执行的任务ID
-    QString main_batch_task_id_;  // 保存批量测试的主任务ID
+    QString current_task_id_;  
+    QString main_batch_task_id_; 
 
     // UI组件
     QTabWidget* main_tabs_;
@@ -198,6 +200,9 @@ private:
     void startBatchTestWithUnifiedWiring(const QVector<ComponentSpec>& batchComponent);
     void onBatchWiringCompleted(const WiringScheme& scheme, const QMap<QString, QVector<PortInfo>>& allocatedPorts);
     void executeBatchTestWithPreAllocatedWiring(const ComponentSpec& specs);
+    QString loadQssFromResource(const QString& resourcePath) const;
+    void createThemeMenu();
 };
 
 #endif // MAINWINDOW_H
+

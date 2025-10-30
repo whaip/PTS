@@ -200,7 +200,6 @@ void WiringGuideDialog::setupPortSelectionPage()
 
     // 状态显示
     portStatusLabel_ = new QLabel("请选择测试端口");
-    portStatusLabel_->setStyleSheet("QLabel { color: blue; font-weight: bold; }");
     rightLayout->addWidget(portStatusLabel_);
 
     // 添加到主布局
@@ -397,10 +396,8 @@ void WiringGuideDialog::updatePortTable()
     // 更新状态标签
     if (selectedPorts.isEmpty()) {
         portStatusLabel_->setText("请选择测试端口");
-        portStatusLabel_->setStyleSheet("QLabel { color: blue; font-weight: bold; }");
     } else {
         portStatusLabel_->setText(QString("已选择 %1 个端口").arg(selectedPorts.size()));
-        portStatusLabel_->setStyleSheet("QLabel { color: green; font-weight: bold; }");
     }
 }
 

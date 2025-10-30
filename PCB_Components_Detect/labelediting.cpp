@@ -4,6 +4,7 @@
 #include <QInputDialog>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QButtonGroup>
 #include <QtCore>
 
 LabelEditing::LabelEditing(QWidget *parent, const QImage &image, const std::vector<Label> &label_info, const std::vector<Label> &label_info_add, std::vector<int>& delete_id, QTableWidget*& labelTable)
@@ -461,19 +462,23 @@ void LabelEditing::mouseMoveEvent(QMouseEvent *event)
 
 void LabelEditing::on_createRectButton_clicked()
 {
-    createRectButton->setStyleSheet("background-color: blue;");
-    editButton->setStyleSheet("");
+    // 使用选中与否的逻辑表现，不设置局部样式
     viewport()->setCursor(Qt::CrossCursor); // 只改变视图部分的鼠标形状为十字形
     clearAllSelection();
     is_editing = false;
+    // 同步按钮选中态
+    if (!createRectButton->isChecked()) createRectButton->setChecked(true);
+    if (editButton->isChecked()) editButton->setChecked(false);
 }
 
 void LabelEditing::on_editButton_clicked()
 {
-    createRectButton->setStyleSheet("");
-    editButton->setStyleSheet("background-color: blue;");
+    
     viewport()->setCursor(Qt::ArrowCursor); // 只改变视图部分的鼠标形状为箭头形
     is_editing = true;
+    // 同步按钮选中态
+    if (!editButton->isChecked()) editButton->setChecked(true);
+    if (createRectButton->isChecked()) createRectButton->setChecked(false);
 }
 
 void LabelEditing::on_finishButton_clicked()
@@ -496,6 +501,7 @@ void LabelEditing::on_finishButton_clicked()
 
 void LabelEditing::on_deleteButton_clicked()
 {
+    if(selectRectItem == nullptr) return;
     if (selectRectItem) {
         if (selectRectItem == createRectItem) {
             createRectItem = nullptr;
@@ -702,13 +708,11 @@ LabelRectItem* LabelEditing::getRectItemById(int id) const
 void LabelEditing::setupUI()
 {
     createRectButton = new QPushButton("创建矩形", this);
-    createRectButton->setStyleSheet("background-color: blue;");
     editButton = new QPushButton("编辑/查看", this);
     finishButton = new QPushButton("保存矩形", this);
     deleteButton = new QPushButton("删除", this);  // 添加删除按钮
 
     colorButton = new QPushButton("画笔颜色", this);
-    colorButton->setStyleSheet(QString("background-color: %1").arg(currentColor.name()));
 
     lineWidthComboBox = new QComboBox(this);
     lineWidthComboBox->addItems({"0.1px", "0.3px", "0.5px", "0.7px", "1px", "2px", "3px", "4px", "5px"});
@@ -721,6 +725,14 @@ void LabelEditing::setupUI()
         maxWidth = qMax(maxWidth, width);
     }
     lineWidthComboBox->setMinimumWidth(maxWidth + 40);
+
+    // 模式按钮可切换并互斥，方便显示选中态
+    createRectButton->setCheckable(true);
+    editButton->setCheckable(true);
+    QButtonGroup* modeGroup = new QButtonGroup(this);
+    modeGroup->setExclusive(true);
+    modeGroup->addButton(createRectButton);
+    modeGroup->addButton(editButton);
 
     connect(createRectButton, &QPushButton::clicked, this, &LabelEditing::on_createRectButton_clicked);
     connect(editButton, &QPushButton::clicked, this, &LabelEditing::on_editButton_clicked);
@@ -769,6 +781,9 @@ void LabelEditing::setupUI()
     colorButton->setGeometry(nextX, 10, colorButton->width(), 30);
     nextX += colorButton->width() + 10;
     lineWidthComboBox->setGeometry(nextX, 10, lineWidthComboBox->minimumWidth(), 30);
+
+    // 初始高亮“创建矩形”模式
+    createRectButton->setChecked(true);
 }
 
 void LabelEditing::updateRectItemStyle(LabelRectItem* item)

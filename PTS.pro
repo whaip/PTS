@@ -139,6 +139,8 @@ HEADERS += \
 FORMS += \
     mainwindow.ui
     
+RESOURCES += resources.qrc
+    
 win32 {
     CONFIG(debug, debug|release) {
         DESTDIR = $$PWD/build/debug

@@ -286,7 +286,7 @@ void BaseComponentDiagnostic::logWarning(const QString& message) const
 
 void BaseComponentDiagnostic::logError(const QString& message) const
 {
-    qCritical() << QString("[%1] %2").arg(getComponentTypeName()).arg(message);
+    qDebug() << QString("[%1] %2").arg(getComponentTypeName()).arg(message);
 }
 
 BaseComponentDiagnostic* BaseComponentDiagnostic::createDiagnostic(ComponentType type, DeviceManager* deviceManager, QObject* parent)

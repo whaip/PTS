@@ -14,13 +14,8 @@ LabelManagerDialog::LabelManagerDialog(QWidget *parent,
     setWindowTitle("设备标签管理");
     resize(900, 700);
 
-    QVBoxLayout *mainLayout = new QVBoxLayout(this);    if (Addlabels.size() == 0) {  // 如果新增标签为空，即为设备原有标签的编辑，则从数据库中获取标签，否则为新建设备
-        // TODO: Implement database functionality
-        // Database db("LabelManager", this);
-        // QString errorMessage;
-        // if (!db.get_deviceelement(deviceId, "", labelInfo, errorMessage)) {
-        //     QMessageBox::warning(this, "错误", "获取设备标签失败: " + errorMessage);
-        // }
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);    
+    if (Addlabels.size() == 0) {
         QMessageBox::information(this, "提示", "数据库功能暂未实现，请先添加标签");
     }
 

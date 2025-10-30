@@ -170,7 +170,6 @@ void RealtimePCBAnalyzerWidget::setupUI()
     
     // 状态栏
     status_label_ = new QLabel("就绪");
-    status_label_->setStyleSheet("QLabel { background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc; }");
     
     // 添加到主布局
     main_layout->addWidget(main_splitter);
@@ -187,8 +186,7 @@ void RealtimePCBAnalyzerWidget::setupControlPanel()
     stop_button_ = new QPushButton("停止分析");
     stop_button_->setEnabled(false);
     
-    start_button_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }");
-    stop_button_->setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px; }");
+    // 使用全局主题，不设置局部样式
     
     // 分析模式选择
     analysis_mode_combo_ = new QComboBox;
@@ -290,9 +288,7 @@ void RealtimePCBAnalyzerWidget::setupDisplayPanel()
     image_label_ = new QLabel;
     image_label_->setAlignment(Qt::AlignCenter);
     image_label_->setMinimumSize(800, 600);
-    image_label_->setStyleSheet("QLabel { background-color: #2b2b2b; border: 2px solid #555; }");
     image_label_->setText("等待摄像头图像...");
-    image_label_->setStyleSheet("QLabel { background-color: #2b2b2b; color: white; border: 2px solid #555; }");
     
     image_scroll_area_ = new QScrollArea;
     image_scroll_area_->setWidget(image_label_);
@@ -316,7 +312,6 @@ void RealtimePCBAnalyzerWidget::setupPCBResultTab()
     auto* layout = new QGridLayout(pcb_tab_);
     
     pcb_model_label_ = new QLabel("模型: 未识别");
-    pcb_model_label_->setStyleSheet("QLabel { font-weight: bold; font-size: 14px; }");
     
     pcb_confidence_bar_ = new QProgressBar;
     pcb_confidence_bar_->setRange(0, 100);
@@ -340,7 +335,6 @@ void RealtimePCBAnalyzerWidget::setupComponentResultTab()
     auto* layout = new QVBoxLayout(component_tab_);
     
     total_components_label_ = new QLabel("检测到的元件总数: 0");
-    total_components_label_->setStyleSheet("QLabel { font-weight: bold; font-size: 14px; }");
     layout->addWidget(total_components_label_);
     
     // 创建元件统计表格
@@ -823,10 +817,12 @@ void RealtimePCBAnalyzerWidget::updatePCBIdentificationDisplay(const RealtimeIde
         pcb_match_count_label_->setText(QString("匹配点数: %1").arg(result.matchCount));
         
         // 设置置信度条颜色
-        QString color = result.confidence > 70 ? "#4CAF50" :   // 绿色
-                       result.confidence > 40 ? "#FF9800" :   // 橙色  
-                                               "#F44336";     // 红色
-        pcb_confidence_bar_->setStyleSheet(QString("QProgressBar::chunk { background-color: %1; }").arg(color));
+        QPalette pal = pcb_confidence_bar_->palette();
+        QColor barColor = result.confidence > 70 ? QColor(76,175,80)
+                         : result.confidence > 40 ? QColor(255,152,0)
+                         : QColor(244,67,54);
+        pal.setColor(QPalette::Highlight, barColor);
+        pcb_confidence_bar_->setPalette(pal);
     } else {
         pcb_model_label_->setText("模型: 未识别");
         pcb_confidence_bar_->setValue(0);

@@ -154,8 +154,7 @@ void CameraControlWidget::setupHDCameraPage()
     stopRealtimePCBButton_ = new QPushButton("停止实时识别");
     stopRealtimePCBButton_->setEnabled(false);
     
-    startRealtimePCBButton_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
-    stopRealtimePCBButton_->setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }");
+    // 使用全局主题，不设置局部样式
     
     realtimeLayout->addWidget(startRealtimePCBButton_, 0, 0);
     realtimeLayout->addWidget(stopRealtimePCBButton_, 0, 1);
@@ -176,7 +175,6 @@ void CameraControlWidget::setupHDCameraPage()
     realtimeLayout->addWidget(realtimeThresholdSpin_, 2, 1);
     
     realtimeResultLabel_ = new QLabel("识别结果: 等待中...");
-    realtimeResultLabel_->setStyleSheet("QLabel { font-weight: bold; }");
     realtimeLayout->addWidget(realtimeResultLabel_, 3, 0, 1, 2);
     
     realtimeConfidenceLabel_ = new QLabel("置信度: 0%");

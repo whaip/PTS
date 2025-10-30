@@ -74,7 +74,6 @@ void IRImageDisplay::initializeUI()
     m_displayLabel = std::make_unique<QLabel>(this);
     m_displayLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_displayLabel->setAlignment(Qt::AlignCenter);
-    m_displayLabel->setStyleSheet("QLabel { border: 1px solid gray; background-color: black; }");
     
     // 设置布局
     QVBoxLayout *layout = new QVBoxLayout(this);
@@ -90,23 +89,10 @@ void IRImageDisplay::initializeUI()
 
 void IRImageDisplay::setupLabels()
 {
-    QString labelStyle = "QLabel { "
-                        "background-color: rgba(0, 0, 0, 200); "
-                        "color: white; "
-                        "padding: 5px; "
-                        "border-radius: 3px; "
-                        "font-weight: bold; "
-                        "}";
-    
     // 创建温度标签
     m_maxTempLabel = std::make_unique<QLabel>(this);
     m_minTempLabel = std::make_unique<QLabel>(this);
     m_centerTempLabel = std::make_unique<QLabel>(this);
-    
-    // 设置样式
-    m_maxTempLabel->setStyleSheet(labelStyle);
-    m_minTempLabel->setStyleSheet(labelStyle);
-    m_centerTempLabel->setStyleSheet(labelStyle);
     
     // 设置属性
     m_maxTempLabel->setAttribute(Qt::WA_TransparentForMouseEvents);

@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QApplication>
+#include <QFile>
+#include <QMenu>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QJsonDocument>
@@ -135,6 +137,9 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle("PCB元件故障诊断系统 v1.0");
     resize(1200, 800);
 
+    // 主题菜单与默认深色主题
+    createThemeMenu();
+    applyThemeDark();
 }
 
 MainWindow::~MainWindow()
@@ -663,6 +668,9 @@ void MainWindow::setupMenuBar()
             "支持设备: JY5711, JY5320, JY8902\n\n"
             "Copyright © 2025");
     });
+
+    // 追加主题菜单
+    createThemeMenu();
 }
 
 void MainWindow::initializeSystem()
@@ -689,6 +697,51 @@ void MainWindow::initializeSystem()
         init_button_->setEnabled(true);
         init_button_->setText("初始化系统");
         QMessageBox::critical(this, "错误", "设备初始化失败！\n" + errorMessage);
+    }
+}
+
+// 读取资源中的QSS
+QString MainWindow::loadQssFromResource(const QString& resourcePath) const
+{
+    QFile f(resourcePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+    QString qss = QString::fromUtf8(f.readAll());
+    f.close();
+    return qss;
+}
+
+// 应用深色主题
+void MainWindow::applyThemeDark()
+{
+    qApp->setStyleSheet(loadQssFromResource(":/qss/dark.qss"));
+}
+
+// 应用浅色主题
+void MainWindow::applyThemeLight()
+{
+    qApp->setStyleSheet(loadQssFromResource(":/qss/light.qss"));
+}
+
+// 创建主题菜单
+void MainWindow::createThemeMenu()
+{
+    QMenuBar* mb = menuBar();
+    QMenu* themeMenu = nullptr;
+    // 若已存在则不重复添加
+    for (QAction* act : mb->actions()) {
+        if (act->menu() && act->menu()->title() == QStringLiteral("主题")) {
+            themeMenu = act->menu();
+            break;
+        }
+    }
+    if (!themeMenu) {
+        themeMenu = mb->addMenu(QStringLiteral("主题"));
+        QAction* darkAct = themeMenu->addAction(QStringLiteral("深色主题"));
+        QAction* lightAct = themeMenu->addAction(QStringLiteral("浅色主题"));
+        connect(darkAct, &QAction::triggered, this, &MainWindow::applyThemeDark);
+        connect(lightAct, &QAction::triggered, this, &MainWindow::applyThemeLight);
     }
 }
 
@@ -2050,3 +2103,4 @@ void MainWindow::onDiagnoseComponents(const QList<ComponentSpec>& specs)
     populateComponentTable();
     main_tabs_->setCurrentWidget(batch_test_page_);
 }
+

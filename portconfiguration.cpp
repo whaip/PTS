@@ -50,7 +50,6 @@ void PortConfigurationDialog::setupUI()
     // 状态栏
     QHBoxLayout* statusLayout = new QHBoxLayout();
     statusLabel_ = new QLabel("请配置端口映射");
-    statusLabel_->setStyleSheet("QLabel { color: blue; }");
     statusLayout->addWidget(statusLabel_);
     statusLayout->addStretch();
     
@@ -148,10 +147,8 @@ void PortConfigurationDialog::setupPortMappingPage()
         if (portConfig.autoAssignPorts(testScheme_, currentConfig_)) {
             createPortMappingTable();
             statusLabel_->setText("自动分配完成");
-            statusLabel_->setStyleSheet("QLabel { color: green; }");
         } else {
             statusLabel_->setText("自动分配失败");
-            statusLabel_->setStyleSheet("QLabel { color: red; }");
         }
     });
     
@@ -160,7 +157,6 @@ void PortConfigurationDialog::setupPortMappingPage()
         currentConfig_.inputPorts.clear();
         createPortMappingTable();
         statusLabel_->setText("请重新配置端口映射");
-        statusLabel_->setStyleSheet("QLabel { color: blue; }");
     });
 }
 
@@ -342,10 +338,8 @@ void PortConfigurationDialog::validateConfiguration()
     
     if (configurationValid_) {
         statusLabel_->setText("配置有效");
-        statusLabel_->setStyleSheet("QLabel { color: green; }");
     } else {
         statusLabel_->setText(QString("配置错误: %1").arg(errors.join("; ")));
-        statusLabel_->setStyleSheet("QLabel { color: red; }");
     }
 }
 

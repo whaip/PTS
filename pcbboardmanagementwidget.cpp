@@ -146,19 +146,9 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     
     identify_file_button_ = new QPushButton("从文件识别");
     identify_file_button_->setMinimumHeight(35);
-    identify_file_button_->setStyleSheet(
-        "QPushButton { font-size: 12px; font-weight: bold; background-color: #4CAF50; color: white; border: none; border-radius: 5px; }"
-        "QPushButton:hover { background-color: #45a049; }"
-        "QPushButton:pressed { background-color: #3d8b40; }"
-    );
     
     identify_camera_button_ = new QPushButton("摄像头识别");
     identify_camera_button_->setMinimumHeight(35);
-    identify_camera_button_->setStyleSheet(
-        "QPushButton { font-size: 12px; font-weight: bold; background-color: #2196F3; color: white; border: none; border-radius: 5px; }"
-        "QPushButton:hover { background-color: #1976D2; }"
-        "QPushButton:pressed { background-color: #1565C0; }"
-    );
     
     controlLayout->addWidget(identify_file_button_);
     controlLayout->addWidget(identify_camera_button_);
@@ -180,20 +170,12 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     
     QLabel* imageTitle = new QLabel("待识别图像");
     imageTitle->setAlignment(Qt::AlignCenter);
-    imageTitle->setStyleSheet(
-        "font-weight: bold; font-size: 14px; color: #333; "
-        "background-color: #f0f0f0; padding: 8px; border-radius: 5px; margin-bottom: 5px;"
-    );
     imageLayout->addWidget(imageTitle);
     
     identification_image_label_ = new QLabel();
     identification_image_label_->setMinimumSize(380, 300);
     identification_image_label_->setScaledContents(false);
     identification_image_label_->setAlignment(Qt::AlignCenter);
-    identification_image_label_->setStyleSheet(
-        "border: 2px dashed #ccc; background-color: #fafafa; "
-        "font-size: 12px; color: #666; border-radius: 8px;"
-    );
     identification_image_label_->setText("点击\"从文件识别\"选择图片\n或点击\"摄像头识别\"使用摄像头");
     imageLayout->addWidget(identification_image_label_);
     
@@ -203,16 +185,12 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     imageInfoLayout->setContentsMargins(5, 5, 5, 5);
     
     QLabel* sizeLabel = new QLabel("图像尺寸:");
-    sizeLabel->setStyleSheet("font-weight: bold; color: #555;");
     sizeValueLabel = new QLabel("未加载");
     sizeValueLabel->setObjectName("imageSizeLabel");
-    sizeValueLabel->setStyleSheet("color: #333;");
     
     QLabel* formatLabel = new QLabel("图像格式:");
-    formatLabel->setStyleSheet("font-weight: bold; color: #555;");
     formatValueLabel = new QLabel("未知");
     formatValueLabel->setObjectName("imageFormatLabel");
-    formatValueLabel->setStyleSheet("color: #333;");
     
     imageInfoLayout->addWidget(sizeLabel, 0, 0);
     imageInfoLayout->addWidget(sizeValueLabel, 0, 1);
@@ -231,10 +209,6 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     
     QLabel* resultsTitle = new QLabel("识别结果");
     resultsTitle->setAlignment(Qt::AlignCenter);
-    resultsTitle->setStyleSheet(
-        "font-weight: bold; font-size: 14px; color: #333; "
-        "background-color: #f0f0f0; padding: 8px; border-radius: 5px; margin-bottom: 5px;"
-    );
     resultsLayout->addWidget(resultsTitle);
     
     // 识别统计信息
@@ -252,30 +226,6 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     candidates_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     candidates_table_->setAlternatingRowColors(true);
     candidates_table_->setGridStyle(Qt::SolidLine);
-    candidates_table_->setStyleSheet(
-        "QTableWidget { "
-        "   background-color: white; "
-        "   border: 1px solid #ddd; "
-        "   border-radius: 5px; "
-        "   gridline-color: #e0e0e0; "
-        "} "
-        "QTableWidget::item { "
-        "   padding: 8px; "
-        "   border: none; "
-        "} "
-        "QTableWidget::item:selected { "
-        "   background-color: #e3f2fd; "
-        "   color: #1976d2; "
-        "} "
-        "QHeaderView::section { "
-        "   background-color: #f5f5f5; "
-        "   padding: 8px; "
-        "   border: none; "
-        "   border-right: 1px solid #ddd; "
-        "   font-weight: bold; "
-        "   color: #333; "
-        "}"
-    );
     
     // 设置表格列宽
     candidates_table_->setColumnWidth(0, 120);
@@ -292,30 +242,9 @@ void PCBBoardManagementWidget::setupIdentificationTab()
     confirm_identification_button_ = new QPushButton("确认选择");
     confirm_identification_button_->setEnabled(false);
     confirm_identification_button_->setMinimumHeight(35);
-    confirm_identification_button_->setStyleSheet(
-        "QPushButton { "
-        "   font-size: 12px; font-weight: bold; "
-        "   background-color: #FF9800; color: white; "
-        "   border: none; border-radius: 5px; "
-        "   padding: 8px 20px; "
-        "} "
-        "QPushButton:hover { background-color: #F57C00; } "
-        "QPushButton:pressed { background-color: #E65100; } "
-        "QPushButton:disabled { background-color: #ccc; color: #666; }"
-    );
     
     QPushButton* clearButton = new QPushButton("清除结果");
     clearButton->setMinimumHeight(35);
-    clearButton->setStyleSheet(
-        "QPushButton { "
-        "   font-size: 12px; font-weight: bold; "
-        "   background-color: #9E9E9E; color: white; "
-        "   border: none; border-radius: 5px; "
-        "   padding: 8px 20px; "
-        "} "
-        "QPushButton:hover { background-color: #757575; } "
-        "QPushButton:pressed { background-color: #616161; }"
-    );
     
     connect(clearButton, &QPushButton::clicked, this, [this]() {
         candidates_table_->setRowCount(0);
@@ -413,7 +342,6 @@ void PCBBoardManagementWidget::setupImageDisplayPanel()
     QWidget* imageWidget = new QWidget();
     imageWidget->setObjectName("imageEditingWidget");
     imageWidget->setMinimumSize(400, 300);
-    imageWidget->setStyleSheet("border: 1px solid gray; background-color: #f0f0f0;");
     QVBoxLayout* imageLayout = new QVBoxLayout(imageWidget);
     QLabel* placeholderLabel = new QLabel("选择板卡以显示图片和标签编辑");
     placeholderLabel->setAlignment(Qt::AlignCenter);
