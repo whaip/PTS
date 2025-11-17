@@ -73,7 +73,6 @@ protected:
     
 private:
     // 电容器特有的分析方法
-    double calculateCapacitance(double frequency, double voltage, double current, double phase) const;
     double calculateESR(double voltage, double current, double phase) const;
     bool isOpenCircuit(double capacitance, double expectedCapacitance) const;
     bool isShortCircuit(double capacitance) const;

@@ -141,8 +141,8 @@ ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const Componen
                 DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
                 configOp.parameters["mode"] = "multi";
                 configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
-                configOp.parameters["sampleRate"] = 200000.0;
-                configOp.parameters["samplesPerChannel"] = 200000;
+                configOp.parameters["sampleRate"] = 20000.0;          // 电流采样率20kHz
+                configOp.parameters["samplesPerChannel"] = 20000;     // 1秒数据量，便于频域估计
                 configOp.parameters["rangeMin"] = -10;
                 configOp.parameters["rangeMax"] = 10;
                 configOp.timeout = 10000;
@@ -155,8 +155,8 @@ ComponentTestConfig CapacitorDiagnostic::configureDataAcquisition(const Componen
                 DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
                 configOp.parameters["mode"] = "multi";
                 configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
-                configOp.parameters["sampleRate"] = 1000000.0;
-                configOp.parameters["samplesPerChannel"] = 1000000;
+                configOp.parameters["sampleRate"] = 1000000.0;        // 电压采样率1MHz
+                configOp.parameters["samplesPerChannel"] = 1000000;   // 1秒数据量
                 configOp.parameters["rangeMin"] = -10;
                 configOp.parameters["rangeMax"] = 10;
                 configOp.timeout = 10000;
@@ -365,36 +365,34 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
             throw std::runtime_error("电压或电流测量数据为空");
         }
         
-        // 基于电压电流计算电容值和ESR
+        // 频率参数（激励频率）
+        const double testFreq = component.params.value("测试频率/Hz", 1000.0).toDouble();
+        // 采样率设定：电压1MHz，电流20kHz（与采集配置一致）
+        const double fsVoltage = 1e6;
+        const double fsCurrent = 2e4;
+
+        // 单频DFT获取电压/电流的复相量（不同采样率分别处理）
+        const ComplexVal Vc = singleToneDFT(voltages, fsVoltage, testFreq);
+        const ComplexVal Ic = singleToneDFT(currents, fsCurrent, testFreq);
+
+        // 计算复阻抗 Z = V / I
+        const ComplexVal Z = complexDiv(Vc, Ic);
+        const double impedance = qSqrt(Z.re * Z.re + Z.im * Z.im);
+        const double measuredESR = Z.re;            // ESR 为复阻抗实部
+        const double phaseDiffRad = qAtan2(Z.im, Z.re); // Z 的相角 = V/I 的相角 = φV - φI
+        const double phaseDiffDeg = rad2deg(phaseDiffRad);
+
+        // 电容值来自容抗的绝对值 |Xc| = |Im(Z)|
+        double calculatedCapacitance = 0.0;
+        if (testFreq > 0 && qFabs(Z.im) > 0) {
+            const double Xc = qFabs(Z.im);
+            calculatedCapacitance = 1.0 / (2.0 * M_PI * testFreq * Xc);
+        }
+
+        // 平均值记录（用于报告展示，不参与主计算）
         double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
         double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-        
-        // 获取测试频率（使用第一个频率或默认1kHz）
-        double testFreq = component.params.value("测试频率/Hz", 1000.0).toDouble();
-        
-        // 计算阻抗 Z = V/I
-        double impedance = (avgCurrent != 0) ? avgVoltage / avgCurrent : 0.0;
-        
-        // 计算电容值 C = 1/(2πfZ) （假设纯容性）
-        double calculatedCapacitance = 0.0;
-        if (testFreq > 0 && impedance > 0) {
-            calculatedCapacitance = 1.0 / (2 * M_PI * testFreq * impedance);
-        }
-        
-        double measuredESR = 0.0;
-        if (!voltages.isEmpty() && !currents.isEmpty()) {
-            // 计算平均电压和电流
-            double avgVoltage = std::accumulate(voltages.begin(), voltages.end(), 0.0) / voltages.size();
-            double avgCurrent = std::accumulate(currents.begin(), currents.end(), 0.0) / currents.size();
-            
-            // 估算ESR（简化计算，实际ESR通常是阻抗的一部分）
-            double esr = impedance * 0.1; // 简化设ESR为阻抗的10%
-            measuredESR = esr;
-            
-            logInfo(QString("计算得到 阻抗: %1 Ω, ESR: %2 Ω")
-                   .arg(impedance).arg(esr));
-        }
-        
+
         // 从component.params中获取规格参数
         double nominalCapacitance = component.params.value("标称值", 1e-6).toDouble();
         double tolerancePercent = component.params.value("容差/%", 10.0).toDouble();
@@ -410,9 +408,9 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         result.measurements["测量ESR"] = measuredESR;
         result.measurements["最大ESR规格"] = maxESR;
         result.measurements["容差"] = tolerancePercent;
-        // result.measurements["损耗角正切值"] = measuredTanDelta;
         result.measurements["测试频率"] = testFreq;
         result.measurements["计算阻抗"] = impedance;
+        result.measurements["相位差/度"] = phaseDiffDeg;
         result.measurements["平均电压"] = avgVoltage;
         result.measurements["平均电流"] = avgCurrent;
         result.measurements["最高温度"] = testData.thermalidata.maxTemp;
@@ -451,21 +449,12 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
             result.recommendations.append("电容可能老化或品质降低");
             hasFault = true;
         }
-        
-        // // 5. 检查损耗角正切值
-        // if (measuredTanDelta > 0.1) { // tan δ > 0.1 认为损耗过大
-        //     result.faultTypes.append("损耗过大");
-        //     result.recommendations.append("损耗角正切值过高，介质损耗较大");
-        //     result.recommendations.append("电容可能老化或品质不良");
-        //     hasFault = true;
-        // }
-        
-        // 6. 计算品质因数
+
+        // 6. 计算品质因数（基于复阻抗）
         if (testFreq > 0 && calculatedCapacitance > 0 && measuredESR > 0) {
             double qualityFactor = calculateQualityFactor(calculatedCapacitance, measuredESR, testFreq);
             result.measurements["quality_factor"] = qualityFactor;
-            
-            if (qualityFactor < 10) { // Q值过低
+            if (qualityFactor < 10) {
                 result.faultTypes.append("品质因数过低");
                 result.recommendations.append("品质因数过低，损耗较大");
             }
@@ -483,10 +472,10 @@ ComponentDiagnosticResult CapacitorDiagnostic::analyzeFaults(const ComponentSpec
         result.isPassed = !hasFault;
         result.healthScore = calculateHealthScore(result.measurements, component);
         result.confidence = result.isPassed ? 0.90 : 0.85;
-        
+
         // 生成分析总结
         result.summary = generateDiagnosticSummary(component, result);
-        
+
         if (!hasFault) {
             result.recommendations.append("电容器工作正常");
         }
@@ -554,18 +543,37 @@ void CapacitorDiagnostic::postTestCleanup()
 
 // === 私有方法实现 ===
 
-double CapacitorDiagnostic::calculateCapacitance(double frequency, double voltage, double current, double phase) const
-{
-    if (frequency <= 0 || voltage <= 0 || current <= 0) {
-        return 0.0;
+// 单频DFT工具与复数运算（用于相位/复阻抗计算）
+namespace {
+    struct ComplexVal { double re{0.0}; double im{0.0}; };
+
+    inline ComplexVal complexDiv(const ComplexVal& a, const ComplexVal& b) {
+        const double den = b.re * b.re + b.im * b.im;
+        if (den <= 0) return {0.0, 0.0};
+        return { (a.re * b.re + a.im * b.im) / den,
+                 (a.im * b.re - a.re * b.im) / den };
     }
-    
-    // C = I / (2πfV) 对于理想电容器
-    // 考虑相位修正
-    double phaseRad = phase * M_PI / 180.0;
-    double reactiveCurrent = current * qSin(qAbs(phaseRad));
-    
-    return reactiveCurrent / (2 * M_PI * frequency * voltage);
+
+    inline ComplexVal singleToneDFT(const QVector<double>& x, double fs, double f0) {
+        const int N = x.size();
+        if (N <= 0 || fs <= 0 || f0 <= 0) return {0.0, 0.0};
+        // 去直流 + Hann窗，降低谱泄漏
+        double mean = 0.0;
+        for (double v : x) mean += v;
+        mean /= N;
+        const double wScale = 2.0 * M_PI / (N - 1.0);
+        const double theta = 2.0 * M_PI * f0 / fs;
+        double re = 0.0, im = 0.0;
+        for (int n = 0; n < N; ++n) {
+            const double xn = (x[n] - mean) * (0.5 * (1.0 - qCos(wScale * n))); // Hann
+            const double ang = theta * n;
+            re += xn * qCos(ang);
+            im -= xn * qSin(ang); // e^{-j ang}
+        }
+        return {re, im};
+    }
+
+    inline double rad2deg(double rad) { return rad * 180.0 / M_PI; }
 }
 
 double CapacitorDiagnostic::calculateESR(double voltage, double current, double phase) const

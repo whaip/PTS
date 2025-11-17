@@ -4,6 +4,7 @@
 #include <QtMath>
 #include <QThread>
 #include <QRandomGenerator>
+#include <limits>
 
 ResistorDiagnostic::ResistorDiagnostic(DeviceManager* deviceManager, QObject* parent)
     : BaseComponentDiagnostic(deviceManager, parent)
@@ -198,7 +199,7 @@ ComponentTestConfig ResistorDiagnostic::configureDataAcquisition(const Component
             configOp.timeout = 10000;
 
 
-                config.parameters["JY5323"] = configOp;
+            config.parameters["JY5323"] = configOp;
             }
             break;
         default:
@@ -557,25 +558,36 @@ double ResistorDiagnostic::calculateResistance(const QVector<double>& voltages, 
     int validPoints = 0;
 
     for (int i = 0; i < voltages.size(); ++i) {
-        if (qAbs(currents[i]) > 1e-12) { // 避免除零
+        if (qAbs(currents[i]) > 1e-12) { // 避免除零且过滤近似开路点
             sumR += voltages[i] / currents[i];
             validPoints++;
         }
     }
 
-    return validPoints > 0 ? sumR / validPoints : 0.0;
+    // 无有效点：电流几乎为0，视为开路，返回无穷大
+    if (validPoints == 0) {
+        return std::numeric_limits<double>::infinity();
+    }
+    return sumR / validPoints;
 }
 
 bool ResistorDiagnostic::isOpenCircuit(double resistance, double expectedResistance) const
 {
-    // 如果测量电阻小于期望值的10%，认为是开路
-    return resistance <= 1e-6;
+    // 开路：计算电阻为无穷大或远高于标称值 (>= max(10MΩ, 标称值 * 50))
+    const double absThreshold = 1e7;          // 10 MΩ 绝对阈值
+    const double relFactor    = 50.0;         // 相对倍数阈值
+    const double highThreshold = qMax(absThreshold, expectedResistance * relFactor);
+    return qIsInf(resistance) || resistance >= highThreshold;
 }
 
 bool ResistorDiagnostic::isShortCircuit(double voltage, double current) const
 {
-    // 如果电阻小于1mΩ，认为是短路
-    return voltage <= 1e-3 && current >= 1e-3;
+    // 短路：计算得到的等效电阻 <= 1 mΩ
+    if (qAbs(current) < 1e-6) { // 电流太小无法判定短路
+        return false;
+    }
+    double r = voltage / current;
+    return r <= 1e-3; // 1 mΩ 阈值
 }
 
 bool ResistorDiagnostic::isOutOfTolerance(double measured, double expected, double tolerancePercent) const
