@@ -13,9 +13,10 @@
 #include "componentdiagnosticmanager.h"
 #include "Components/resistordiagnostic.h"
 #include "Components/capacitordiagnostic.h"
-// #include "Components/inductordiagnostic.h"
-// #include "Components/diodediagnostic.h"
-// #include "Components/icdiagnostic.h"
+#include "Components/inductordiagnostic.h"
+#include "Components/icdiagnostic.h"
+#include "Components/diodediagnostic.h"
+#include "Components/optocouplerdiagnostic.h"
 
 /**
  * @namespace ComponentDiagnosticFramework

@@ -61,224 +61,253 @@ QVector<PortRequirement> DiodeDiagnostic::getPortRequirements(const ComponentSpe
     Q_UNUSED(component)
     
     QVector<PortRequirement> requirements;
-    
-    // 阳极端口（正极）
-    PortRequirement anodePort;
-    anodePort.portType = PortType::ANALOG_OUTPUT;
-    anodePort.count = 1;
-    anodePort.description = "二极管阳极（正极）";
-    anodePort.specs["minVoltage"] = -60.0;  // 支持击穿测试
-    anodePort.specs["maxVoltage"] = 10.0;
-    anodePort.specs["minCurrent"] = -0.1;
-    anodePort.specs["maxCurrent"] = 0.2;    // 支持正向大电流
-    requirements.append(anodePort);
-    
-    // 阴极端口（负极）
-    PortRequirement cathodePort;
-    cathodePort.portType = PortType::ANALOG_INPUT;
-    cathodePort.count = 1;
-    cathodePort.description = "二极管阴极（负极）";
-    cathodePort.specs["minVoltage"] = -5.0;
-    cathodePort.specs["maxVoltage"] = 5.0;
-    cathodePort.specs["minCurrent"] = -0.1;
-    cathodePort.specs["maxCurrent"] = 0.2;
-    requirements.append(cathodePort);
-    
-    // 如果启用动态测试，需要额外的脉冲端口
-    if (dynamicTestEnabled_) {
-        PortRequirement pulsePort;
-        pulsePort.portType = PortType::DIGITAL_OUTPUT;
-        pulsePort.count = 1;
-        pulsePort.description = "脉冲发生器端口";
-        pulsePort.specs["minVoltage"] = -5.0;
-        pulsePort.specs["maxVoltage"] = 5.0;
-        pulsePort.specs["minCurrent"] = -0.01;
-        pulsePort.specs["maxCurrent"] = 0.01;
-        requirements.append(pulsePort);
+
+    // 1. 模拟输出端口（JY5711）- 提供测试/偏置电压
+    {
+        PortRequirement analogOut;
+        analogOut.portType = PortType::ANALOG_OUTPUT;
+        analogOut.count = 1;
+        analogOut.description = "模拟输出端口 - 提供二极管测试/偏置电压 (JY5711)";
+        analogOut.specs["minVoltage"] = -60.0; // 齐纳反向测试需较大负电压
+        analogOut.specs["maxVoltage"] = 10.0;
+        analogOut.specs["minCurrent"] = -0.2;
+        analogOut.specs["maxCurrent"] = 0.2;
+        requirements.append(analogOut);
     }
-    
+
+    // 2. 电压测量端口（JY5322）- 测量二极管两端电压
+    {
+        PortRequirement voltMeas;
+        voltMeas.portType = PortType::DIGITAL_INPUT; // 与电阻实现保持一致的端口类型声明
+        voltMeas.count = 1;
+        voltMeas.description = "电压测量端口 - 测量二极管两端电压 (JY5322)";
+        requirements.append(voltMeas);
+    }
+
+    // 3. 电流测量端口（JY5323）- 测量流经二极管的电流
+    {
+        PortRequirement currMeas;
+        currMeas.portType = PortType::ANALOG_INPUT;
+        currMeas.count = 1;
+        currMeas.description = "电流测量端口 - 测量流经二极管的电流 (JY5323)";
+        requirements.append(currMeas);
+    }
+
     return requirements;
 }
 
 QVector<WiringConnection> DiodeDiagnostic::generateWiringScheme(const ComponentSpec& component, const QVector<PortInfo>& allocatedPorts) const
 {
-    Q_UNUSED(component)
-    
     QVector<WiringConnection> connections;
-    
-    if (allocatedPorts.size() >= 2) {
-        // 阳极连接
-        WiringConnection anodeConn;
-        anodeConn.componentPin = "ANODE";
-        anodeConn.targetPort = allocatedPorts[0];
-        anodeConn.wireColor = "RED";
-        anodeConn.instruction = "连接二极管阳极（正极）到测试端子";
-        anodeConn.isRequired = true;
-        connections.append(anodeConn);
-        
-        // 阴极连接
-        WiringConnection cathodeConn;
-        cathodeConn.componentPin = "CATHODE";
-        cathodeConn.targetPort = allocatedPorts[1];
-        cathodeConn.wireColor = "BLACK";
-        cathodeConn.instruction = "连接二极管阴极（负极）到测试端子";
-        cathodeConn.isRequired = true;
-        connections.append(cathodeConn);
-        
-        // 动态测试连接（如果启用且有第三个端口）
-        if (dynamicTestEnabled_ && allocatedPorts.size() >= 3) {
-            WiringConnection pulseConn;
-            pulseConn.componentPin = "PULSE_GEN";
-            pulseConn.targetPort = allocatedPorts[2];
-            pulseConn.wireColor = "YELLOW";
-            pulseConn.instruction = "连接脉冲发生器到二极管阳极（AC耦合）";
-            pulseConn.isRequired = false;
-            connections.append(pulseConn);
+
+    if (allocatedPorts.size() < 3) {
+        qWarning() << "分配的端口数量不足，齐纳二极管测试需要3个端口";
+        return connections;
+    }
+
+    // 参照电阻器接线风格，按端口类型生成接线说明
+    for (const auto& port : allocatedPorts) {
+        switch (port.portType) {
+        case PortType::ANALOG_OUTPUT: {
+            WiringConnection conn;
+            conn.component = component.reference;
+            conn.componentPin = "阳极(+)"; // 默认将AO端接到阳极，进行正/反向偏置
+            conn.targetPort = port;
+            conn.wireColor = "红色";
+            conn.instruction = QString("将模拟输出端口%1连接到二极管%2的阳极(+)用于施加偏置电压")
+                                    .arg(port.portNumber)
+                                    .arg(component.reference);
+            conn.isRequired = true;
+            connections.append(conn);
+            break;
+        }
+        case PortType::DIGITAL_INPUT: { // 电压测量
+            WiringConnection conn;
+            conn.component = component.reference;
+            conn.componentPin = "阴极(-)"; // 采集二极管两端电压
+            conn.targetPort = port;
+            conn.wireColor = "黑色";
+            conn.instruction = QString("将电压测量端口%1连接到二极管%2的阴极(-)以测量管压降")
+                                    .arg(port.portNumber)
+                                    .arg(component.reference);
+            conn.isRequired = true;
+            connections.append(conn);
+            break;
+        }
+        case PortType::ANALOG_INPUT: { // 电流测量
+            WiringConnection conn;
+            conn.component = component.reference;
+            conn.componentPin = "电流测量回路";
+            conn.targetPort = port;
+            conn.wireColor = "绿色";
+            conn.instruction = QString("将模拟输入端口%1串入二极管%2测试回路以测量电流 (JY5323)")
+                                    .arg(port.portNumber)
+                                    .arg(component.reference);
+            conn.isRequired = true;
+            connections.append(conn);
+            break;
+        }
+        default:
+            break;
         }
     }
-    
+
     return connections;
 }
 
 ComponentTestConfig DiodeDiagnostic::configureDataAcquisition(const ComponentSpec& component, const QVector<PortInfo>& ports) const
 {
     ComponentTestConfig config;
-    
-    // if (!getDeviceManager()) {
-    //     return config;
-    // }
-    
-    // try {
-    //     config.testName = "二极管特性测试";
-    //     config.timeout = 30000;  // 30秒超时
-        
-    //     // 设置端口配置
-    //     for (const auto& port : ports) {
-    //         PortConfig portConfig;
-    //         portConfig.deviceName = port.deviceName;
-    //         portConfig.channel = port.portNumber;
-    //         config.portConfigs.append(portConfig);
-    //     }
-        
-    //     // 配置SMU（源测量单元）进行I-V测量
-    //     config.parameters["mode"] = "VOLTAGE_SOURCE";
-    //     config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, forwardMaxVoltage_};
-    //     config.parameters["current_range"] = QVariantList{-forwardMaxCurrent_, forwardMaxCurrent_};
-    //     config.parameters["compliance_current"] = forwardMaxCurrent_;
-    //     config.parameters["measurement_speed"] = "MEDIUM";
-    //     config.parameters["auto_range"] = true;
-        
-    //     // 根据二极管类型调整参数
-    //     if (component.parameters.contains("type")) {
-    //         QString diodeType = component.parameters["type"];
-            
-    //         if (diodeType.contains("SCHOTTKY")) {
-    //             // 肖特基二极管：低正向压降，高频特性好
-    //             config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 1.0};
-    //             config.parameters["measurement_speed"] = "FAST";
-    //         } else if (diodeType.contains("ZENER")) {
-    //             // 齐纳二极管：需要测试击穿特性
-    //             config.parameters["voltage_range"] = QVariantList{-20.0, forwardMaxVoltage_};
-    //         } else if (diodeType.contains("LED")) {
-    //             // LED：较高正向压降
-    //             config.parameters["voltage_range"] = QVariantList{reverseMaxVoltage_, 5.0};
-    //         }
-    //     }
-        
-    //     return config;
-        
-    // } catch (const std::exception& e) {
-    //     qWarning() << "Configuration failed:" << e.what();
-    //     return config;
-    // }
+
+    if (ports.isEmpty()) {
+        qWarning() << "未分配端口";
+        return config;
+    }
+
+    config.testName = QString("齐纳二极管测试_%1").arg(component.reference);
+
+    // 参考电阻器配置方式，分别为三类设备准备配置操作
+    DeviceOperation op5711(DeviceCommand::CONFIGURE_CHANNEL);
+    op5711.parameters["sampleRate"] = 100000.0;
+    op5711.parameters["samplesPerChannel"] = 100000.0;
+    QVariantList waveforms;
+
+    for (const auto& port : ports) {
+        switch (port.portType) {
+        case PortType::ANALOG_OUTPUT: {
+            // 5711: 输出偏置/扫压波形（此处采用高电平占空方式，范围覆盖负电压）
+            QVariantMap ch;
+            ch["channel"] = port.portNumber;
+            ch["type"] = static_cast<int>(PXIe5711_testtype::HighLevelWave);
+            ch["amplitude"] = 6;               // 6V 占空输出（设备内部解释）
+            ch["frequency"] = 1000;            // 1kHz
+            ch["lowRange"] = -20.0;            // 允许负压
+            ch["highRange"] = 10.0;
+            waveforms.append(ch);
+            break;
+        }
+        case PortType::DIGITAL_INPUT: {
+            // 5322: 电压测量
+            DeviceOperation cfg(DeviceCommand::CONFIGURE_CHANNEL);
+            cfg.parameters["mode"] = "multi";
+            cfg.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
+            cfg.parameters["sampleRate"] = 1000000.0;
+            cfg.parameters["samplesPerChannel"] = 1000000;
+            cfg.parameters["rangeMin"] = -20.0;
+            cfg.parameters["rangeMax"] = 20.0;
+            cfg.timeout = 10000;
+            config.parameters["JY5322"] = cfg;
+            break;
+        }
+        case PortType::ANALOG_INPUT: {
+            // 5323: 电流测量
+            DeviceOperation cfg(DeviceCommand::CONFIGURE_CHANNEL);
+            cfg.parameters["mode"] = "multi";
+            cfg.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
+            cfg.parameters["sampleRate"] = 200000.0;
+            cfg.parameters["samplesPerChannel"] = 200000;
+            cfg.parameters["rangeMin"] = -1.0;  // 电流范围
+            cfg.parameters["rangeMax"] = 1.0;
+            cfg.timeout = 10000;
+            config.parameters["JY5323"] = cfg;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    op5711.parameters["waveforms"] = waveforms;
+    op5711.parameters["channelCount"] = waveforms.size();
+    if (waveforms.size() > 0) {
+        config.parameters["JY5711"] = op5711;
+    }
+
+    config.TemperatureThreshold = 60.0;
     return config;
 }
 
 TestData DiodeDiagnostic::executeDataAcquisition(const ComponentTestConfig& config)
 {
     TestData data;
-    
-    // try {
-    //     QMap<QString, QVariant> measurement;
-        
-    //     // 1. 正向I-V特性测量
-    //     QMap<double, double> forwardIV = measureIVCurve(forwardMaxCurrent_, forwardMaxVoltage_, forwardCurrentSteps_, false);
-    //     measurement["forward_iv_curve"] = QVariant::fromValue(forwardIV);
-        
-    //     // 2. 反向I-V特性测量
-    //     QMap<double, double> reverseIV = measureIVCurve(leakageThreshold_, reverseMaxVoltage_, 20, true);
-    //     measurement["reverse_iv_curve"] = QVariant::fromValue(reverseIV);
-        
-    //     // 3. 开启电压检测
-    //     double thresholdVoltage = detectThresholdVoltage(FORWARD_CURRENT_THRESHOLD);
-    //     measurement["threshold_voltage"] = thresholdVoltage;
-        
-    //     // 4. 标准电流下的正向压降
-    //     QVector<double> testCurrents = {0.001, 0.01, 0.1}; // 1mA, 10mA, 100mA
-    //     QMap<double, double> forwardDrops;
-    //     for (double current : testCurrents) {
-    //         if (current <= forwardMaxCurrent_) {
-    //             double vf = measureForwardDrop(current);
-    //             if (vf > 0) {
-    //                 forwardDrops[current] = vf;
-    //             }
-    //         }
-    //     }
-    //     measurement["forward_drops"] = QVariant::fromValue(forwardDrops);
-        
-    //     // 5. 反向漏电流测量
-    //     QVector<double> reverseVoltages = {-1.0, -5.0, -10.0};
-    //     QMap<double, double> leakageCurrents;
-    //     for (double voltage : reverseVoltages) {
-    //         if (voltage >= reverseMaxVoltage_) {
-    //             double leakage = measureReverseCurrent(voltage);
-    //             if (leakage >= 0) {
-    //                 leakageCurrents[voltage] = leakage;
-    //             }
-    //         }
-    //     }
-    //     measurement["leakage_currents"] = QVariant::fromValue(leakageCurrents);
-        
-    //     // 6. 结电容测量
-    //     double junctionCapacitance = measureJunctionCapacitance(capacitanceFrequency_, capacitanceDCBias_, capacitanceACVoltage_);
-    //     measurement["junction_capacitance"] = junctionCapacitance;
-        
-    //     // 7. 击穿电压测试（如果启用）
-    //     if (breakdownTestEnabled_) {
-    //         double breakdownVoltage = measureBreakdownVoltage(breakdownCurrentLimit_);
-    //         measurement["breakdown_voltage"] = breakdownVoltage;
-    //     }
-        
-    //     // 8. 动态特性测试（如果启用）
-    //     if (dynamicTestEnabled_) {
-    //         QMap<QString, double> switchingTimes = measureSwitchingTimes(pulseAmplitude_, 1000.0);
-    //         measurement["switching_times"] = QVariant::fromValue(switchingTimes);
-    //     }
-        
-    //     // 9. 计算二极管参数
-    //     if (!forwardIV.isEmpty()) {
-    //         double idealityFactor = calculateIdealityFactor(forwardIV);
-    //         double saturationCurrent = calculateSaturationCurrent(forwardIV);
-    //         double seriesResistance = calculateSeriesResistance(forwardIV);
-            
-    //         measurement["ideality_factor"] = idealityFactor;
-    //         measurement["saturation_current"] = saturationCurrent;
-    //         measurement["series_resistance"] = seriesResistance;
-    //     }
-        
-    //     // 10. 二极管类型检测
-    //     QString detectedType = detectDiodeType(forwardIV);
-    //     measurement["detected_type"] = detectedType;
-        
-    //     data.measurements.append(measurement);
-    //     data.timestamp = QDateTime::currentDateTime();
-    //     data.valid = true;
-        
-    // } catch (const std::exception& e) {
-    //     data.errorMessage = QString("Data acquisition failed: %1").arg(e.what());
-    //     data.valid = false;
-    // }
-    
+    data.testId = config.testName;
+    data.timestamp = QDateTime::currentDateTime();
+    data.valid = false;
+
+    if (!getDeviceManager() || !getDeviceManager()->isSystemReady()) {
+        data.errorMessage = "设备管理器未就绪";
+        return data;
+    }
+
+    // 启用红外温度监控，与电阻实现保持一致
+    getDeviceManager()->setTemperatureThreshold(config.TemperatureThreshold);
+    if (getDeviceManager()->getCameraManager()) {
+        getDeviceManager()->getCameraManager()->startCamera(CameraType::IR_CAMERA);
+    }
+
+    try {
+        // 设备配置
+        for (auto it = config.parameters.begin(); it != config.parameters.end(); ++it) {
+            if (!getDeviceManager()->submitOperation(it.key(), it.value())) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), getDeviceManager()->getLastError()).toStdString());
+            }
+            DeviceResult cfgRes = getDeviceManager()->waitForResult(it.key(), 10000);
+            if (!cfgRes.success) {
+                throw std::runtime_error(QString("设备 %1 配置失败: %2").arg(it.key(), cfgRes.error).toStdString());
+            }
+        }
+
+        // 如果存在JY5711波形，执行写入
+        if (config.parameters.contains("JY5711")) {
+            DeviceOperation writeOp(DeviceCommand::WRITE_DATA);
+            writeOp.parameters["waveforms"] = config.parameters["JY5711"].parameters["waveforms"];
+            writeOp.parameters["sampleRate"] = config.parameters["JY5711"].parameters["sampleRate"];
+            writeOp.parameters["samplesPerChannel"] = config.parameters["JY5711"].parameters["samplesPerChannel"];
+            if (!getDeviceManager()->submitOperation("JY5711", writeOp)) {
+                throw std::runtime_error(QString("JY5711写入数据失败: %1").arg(getDeviceManager()->getLastError()).toStdString());
+            }
+            DeviceResult wr = getDeviceManager()->waitForResult("JY5711", 15000);
+            if (!wr.success) {
+                throw std::runtime_error(QString("JY5711写入数据失败: %1").arg(wr.error).toStdString());
+            }
+        }
+
+        // 按齐纳需求执行反向I-V和击穿测量（通过通用SMU接口）
+        QMap<QString, QVariant> measurement;
+
+        // 反向I-V扫压
+        QMap<double, double> reverseIV = measureIVCurve(breakdownCurrentLimit_, reverseMaxVoltage_, 30, true);
+        if (!reverseIV.isEmpty()) {
+            measurement["reverse_iv_curve"] = QVariant::fromValue(reverseIV);
+        }
+
+        // 漏电流点测
+        QVector<double> testVs = { -1.0, -2.0, -5.0, -10.0, -15.0, -20.0 };
+        QMap<double, double> leakage;
+        for (double v : testVs) {
+            if (v >= reverseMaxVoltage_) {
+                double i = measureReverseCurrent(v);
+                if (i >= 0) leakage[v] = i;
+            }
+        }
+        if (!leakage.isEmpty()) {
+            measurement["leakage_currents"] = QVariant::fromValue(leakage);
+        }
+
+        // 击穿电压
+        double vz = measureBreakdownVoltage(breakdownCurrentLimit_);
+        measurement["breakdown_voltage"] = vz;
+        measurement["detected_type"] = QString("ZENER");
+
+        data.measurements.append(measurement);
+        data.timestamp = QDateTime::currentDateTime();
+        data.valid = true;
+    } catch (const std::exception& e) {
+        data.errorMessage = QString("数据采集异常: %1").arg(e.what());
+        qWarning() << data.errorMessage;
+        data.valid = false;
+    }
+
     return data;
 }
 

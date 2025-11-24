@@ -190,13 +190,13 @@ ComponentTestConfig ResistorDiagnostic::configureDataAcquisition(const Component
         case PortType::ANALOG_INPUT:
             {
                 DeviceOperation configOp(DeviceCommand::CONFIGURE_CHANNEL);
-            configOp.parameters["mode"] = "multi";
-            configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
-            configOp.parameters["sampleRate"] = 200000.0;               // 采样率200kHz
-            configOp.parameters["samplesPerChannel"] = 200000;          // 缓冲区大小
-            configOp.parameters["rangeMin"] = -10.0;
-            configOp.parameters["rangeMax"] = 10.0;
-            configOp.timeout = 10000;
+                configOp.parameters["mode"] = "multi";
+                configOp.parameters["channels"] = QVariant::fromValue(QVector<int>({port.portNumber}));
+                configOp.parameters["sampleRate"] = 200000.0;               // 采样率200kHz
+                configOp.parameters["samplesPerChannel"] = 200000;          // 缓冲区大小
+                configOp.parameters["rangeMin"] = -10.0;
+                configOp.parameters["rangeMax"] = 10.0;
+                configOp.timeout = 10000;
 
 
             config.parameters["JY5323"] = configOp;

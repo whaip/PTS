@@ -1,4 +1,5 @@
 #include "componentdiagnosticframework.h"
+#include "Components/optocouplerdiagnostic.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -119,6 +120,21 @@ BaseComponentDiagnostic* createComponentDiagnostic(ComponentType type, DeviceMan
             qWarning() << "不支持的组件类型:" << static_cast<int>(type);
             return nullptr;
     }
+}
+
+BaseComponentDiagnostic* createDiagnostic(const ComponentSpec& component, DeviceManager* deviceManager, QObject* parent)
+{
+    if (!deviceManager) {
+        return nullptr;
+    }
+
+    // ...existing code for other types...
+    if (component.type == ComponentType::IC && component.name.contains("OPTO", Qt::CaseInsensitive)) {
+        return new OptocouplerDiagnostic(deviceManager, parent);
+    }
+    // ...existing code...
+    
+    return createComponentDiagnostic(component.type, deviceManager, parent);
 }
 
 QString getComponentTypeDisplayName(ComponentType type)
