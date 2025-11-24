@@ -17,6 +17,7 @@
 #include "Components/icdiagnostic.h"
 #include "Components/diodediagnostic.h"
 #include "Components/optocouplerdiagnostic.h"
+#include "Components/dcdcdiagnostic.h"
 
 /**
  * @namespace ComponentDiagnosticFramework

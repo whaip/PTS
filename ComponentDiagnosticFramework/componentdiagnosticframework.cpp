@@ -128,12 +128,17 @@ BaseComponentDiagnostic* createDiagnostic(const ComponentSpec& component, Device
         return nullptr;
     }
 
-    // ...existing code for other types...
+    // DC/DC模块：名称包含"DC/DC"或"DCDC"，且类型为IC
+    if (component.type == ComponentType::IC && (component.name.contains("DC/DC", Qt::CaseInsensitive)
+        || component.name.contains("DCDC", Qt::CaseInsensitive))) {
+        return new DcdcDiagnostic(deviceManager, parent);
+    }
+
+    // 光耦：名称包含"OPTO"，且类型为IC
     if (component.type == ComponentType::IC && component.name.contains("OPTO", Qt::CaseInsensitive)) {
         return new OptocouplerDiagnostic(deviceManager, parent);
     }
-    // ...existing code...
-    
+
     return createComponentDiagnostic(component.type, deviceManager, parent);
 }
 
